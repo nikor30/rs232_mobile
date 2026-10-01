@@ -1,4 +1,4 @@
-# RS232-WLAN-Konsole (rs323_mobile)
+# RS232-WLAN-Konsole (rs232_mobile)
 
 Projektgedächtnis für Claude-Sitzungen. Die ausführliche Fassung ist `HANDOVER.md` — zuerst lesen.
 
