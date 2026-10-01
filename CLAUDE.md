@@ -12,7 +12,7 @@ Mobiler serieller Konsolenserver auf ESP32: WLAN-Hotspot, `http://192.168.4.1`, 
 - `hardware/pcb/` — KiCad-Tochterplatine + Generator-Skripte; `hardware/gehaeuse/` — OpenSCAD/STL
 - `diagramme/` — PNGs + matplotlib-Quellen
 - `tests/` — Host-Unittests (g++, laufen auf dem PC), Anleitung in `tests/README.md`
-- Doku: `firmware/MOCKUP.md` (meistgebraucht), `firmware/PANEL.md`, `firmware/README.md`
+- Doku: `firmware/MOCKUP.md` (meistgebraucht), `firmware/WAVESHARE.md`, `firmware/PANEL.md`, `firmware/README.md`
 
 ## Bauen
 
@@ -21,13 +21,17 @@ cd firmware
 pio run -e esp32dev-max3232 -t upload    # Mockup, Arduino-Core 2.0.17
 pio run -e t-rss3                        # LilyGO T-RSS3, Core 2.0.17
 pio run -e viewe-5inch -t upload         # 5"-Panel, Core 3.1.1 (pioarduino)
+pio run -e waveshare-s3-lcd2 -t upload   # Waveshare ESP32-S3-Touch-LCD-2, Core 2.0.17
 ```
+
+Auf dem Raspberry Pi liegt PlatformIO in `/root/.local/share/pio-venv/bin/pio`; das Waveshare-Board hängt dort an `/dev/ttyACM0`.
 
 `src/web_assets.h` wird vor jedem Build von `tools/embed_web.py` aus `web/` erzeugt — nicht von Hand ändern. Hardwareprofile stehen in `src/config.h`.
 
 ## Verifikationsstand
 
-- Am Gerät erprobt: nur das Mockup (ESP32 DevKit + MAX3232).
+- Am Gerät erprobt: das Mockup (ESP32 DevKit + MAX3232).
+- Waveshare ESP32-S3-Touch-LCD-2 (seit 1. Oktober 2026): Boot, Hotspot, LCD, Touch, Lagesensor und Bluetooth-Kopplung am Gerät geprüft; Oberfläche ungesehen, SD-Karte unzuverlässig, serieller Port ohne MAX3232. Details und offene Punkte: `firmware/WAVESHARE.md`.
 - Übersetzt, nie gelaufen: alles auf dem VIEWE-Panel, mbedTLS-3-Pfade (802.1X/PKCS#12 auf Core 3), LBO-Auswertung.
 - Nicht gebaut: I²C-Tochterplatine; SC16IS752-Treiber fehlt in der Firmware.
 

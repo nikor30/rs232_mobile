@@ -47,6 +47,7 @@ struct Settings {
   bool     httpsEnabled = false; // web UI additionally over TLS on port 443
   bool     httpsLanOnly = false; // in the LAN (station mode) redirect plain HTTP to HTTPS
   uint8_t  httpsCert = 0;        // 0 = own HTTPS certificate (device CA if none), 1 = 802.1X client certificate
+  bool     bleEnabled = true;    // Bluetooth LE console (boards with HAS_BLE), switched on the touch display
 };
 
 extern Settings settings;

@@ -34,10 +34,6 @@ void begin() {
 #if !LED_IS_WS2812 && PIN_LED >= 0
   pinMode(PIN_LED, OUTPUT);
 #endif
-#ifdef PIN_LCD_BL
-  pinMode(PIN_LCD_BL, OUTPUT);            // LCD is not driven: keep the backlight dark
-  digitalWrite(PIN_LCD_BL, LOW);
-#endif
   set(0, 0, 0);
 }
 

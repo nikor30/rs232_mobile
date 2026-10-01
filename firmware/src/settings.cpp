@@ -130,6 +130,7 @@ void load() {
   settings.httpsEnabled = prefs.getBool("https", false);
   settings.httpsLanOnly = prefs.getBool("httpsLan", false);
   settings.httpsCert    = prefs.getUChar("httpsCrt", 0);
+  settings.bleEnabled   = prefs.getBool("ble", true);
   settings.hostname = prefs.getString("host", DEFAULT_HOSTNAME);
   settings.webPass  = prefs.getString("webPass", "");
   settings.oledType = prefs.getUChar("oled", 0);
@@ -206,6 +207,7 @@ void save() {
   prefs.putBool("https", settings.httpsEnabled);
   prefs.putBool("httpsLan", settings.httpsLanOnly);
   prefs.putUChar("httpsCrt", settings.httpsCert);
+  prefs.putBool("ble", settings.bleEnabled);
   prefs.putString("host", settings.hostname);
   prefs.putString("webPass", settings.webPass);
   prefs.putUChar("oled", settings.oledType);

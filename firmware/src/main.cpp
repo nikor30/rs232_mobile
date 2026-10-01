@@ -23,6 +23,7 @@
 #include "certs.h"
 #include "gui.h"
 #include "sdcard.h"
+#include "ble.h"
 
 // Certificate parsing (PKCS#12, key check) runs in the loop task and needs more
 // than the 8 kB Arduino default.
@@ -125,6 +126,7 @@ static void onSerial(uint8_t port, const uint8_t *data, size_t len) {
   Net::onSerialData(port, data, len);
   Gui::onSerialData(port, data, len);
   Sd::write(port, data, len);
+  Ble::onSerialData(port, data, len);
 }
 
 // ------------------------------------------------------------------ setup / loop
@@ -160,13 +162,17 @@ void setup() {
   Certs::begin();
   Bridge::begin(onSerial, Net::onMessage);
   Net::begin();
+  Ble::begin();
 
   Serial.printf("\n%s v%s (%s)\n", FW_NAME, FW_VERSION, BOARD_NAME);
 #if HAS_PANEL
   Serial.printf("Panel  : %s\n", oled ? "ok" : "Fehler");
   Serial.printf("SD     : %s\n", Sd::typeName());
 #else
-  Serial.printf("OLED   : %s\n", oled ? "ok" : "nicht gefunden");
+  Serial.printf("%s : %s\n", HAS_SPI_LCD ? "LCD   " : "OLED  ", oled ? "ok" : "nicht gefunden");
+#if HAS_SDCARD
+  Serial.printf("SD     : %s\n", Sd::typeName());
+#endif
 #endif
   Serial.printf("WLAN   : %s  Passwort: %s\n", settings.apSsid.c_str(), settings.apPass.c_str());
   Serial.printf("Web-UI : http://%s/  (http://%s.local/)\n", Net::apIp().c_str(), settings.hostname.c_str());
@@ -199,6 +205,7 @@ void loop() {
   Display::loop();
   Gui::loop();
   Sd::loop();
+  Ble::loop();
   Led::loop(Net::webClients() + (Net::tcpConnected() ? 1 : 0), Power::low(), Bridge::autobaudRunning());
 
   // one-time low battery notice (with hysteresis)

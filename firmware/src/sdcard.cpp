@@ -12,7 +12,11 @@ static const uint32_t FLUSH_MS = 2000;     // SD writes are slow: collect, then 
 static const size_t   BUF_SIZE = 1024;
 
 static bool ok = false;
+#if SD_SHARES_LCD_BUS
+static SPIClass &spi = SPI;                // LovyanGFX has opened this bus for the LCD
+#else
 static SPIClass spi(HSPI);
+#endif
 
 struct Log {
   File f;
@@ -39,10 +43,19 @@ const char *typeName() {
 }
 
 bool begin() {
+#if !SD_SHARES_LCD_BUS
   spi.begin(PIN_SD_SCLK, PIN_SD_MISO, PIN_SD_MOSI, PIN_SD_CS);
+#endif
   // 20 MHz is conservative: the card shares its pins with nothing else here, but
   // long ribbon wiring on these panel boards does not like the full 40 MHz.
-  ok = SD.begin(PIN_SD_CS, spi, 20000000);
+  // A card that kept its power through a reset sometimes misses the first
+  // attempt, so try again, slower.
+  for (uint32_t hz : {20000000u, 10000000u, 4000000u}) {
+    ok = SD.begin(PIN_SD_CS, spi, hz);
+    if (ok) break;
+    SD.end();
+    delay(100);
+  }
   if (!ok) {
     Serial.println("[SD]   keine Karte gefunden");
     return false;

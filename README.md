@@ -5,7 +5,7 @@ Mobiler serieller Konsolenserver auf ESP32-Basis: mit dem WLAN-Hotspot des Gerä
 Firmware-Stand: **v1.7.1**
 
 - [`HANDOVER.md`](HANDOVER.md) — Projektstand, Erfahrungswissen, offene Punkte
-- [`firmware/`](firmware/) — PlatformIO-Projekt ([Mockup](firmware/MOCKUP.md), [5″-Panel](firmware/PANEL.md), [T-RSS3](firmware/README.md))
+- [`firmware/`](firmware/) — PlatformIO-Projekt ([Mockup](firmware/MOCKUP.md), [Waveshare 2″](firmware/WAVESHARE.md), [5″-Panel](firmware/PANEL.md), [T-RSS3](firmware/README.md))
 - [`hardware/`](hardware/) — KiCad-Tochterplatine und Gehäuse
 - [`diagramme/`](diagramme/) — Verdrahtungs- und Schaltpläne
 - [`tests/`](tests/) — Host-Unittests

@@ -1,7 +1,8 @@
 #pragma once
 #include <Arduino.h>
 
-// 128x64 I2C OLED (SSD1306 0.96" or SH1106 1.3")
+// 128x64 I2C OLED (SSD1306 0.96" or SH1106 1.3"). Boards with an SPI colour LCD
+// implement the same interface in lcd_ui.cpp (their own screens, touch operated).
 // Pages: status -> ports (only with 2+ ports) -> WiFi QR (join AP) -> URL QR -> device info
 namespace Display {
   enum Page : uint8_t { PAGE_STATUS = 0, PAGE_PORTS, PAGE_WIFI_QR, PAGE_URL_QR, PAGE_INFO, PAGE_COUNT };

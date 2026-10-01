@@ -1,7 +1,7 @@
 #include "display.h"
 #include "config.h"      // HAS_PANEL must be known before the guard below
 
-#if !HAS_PANEL   // boards with an RGB panel use gui.cpp instead of this OLED code
+#if !HAS_PANEL && !HAS_SPI_LCD   // RGB panel boards use gui.cpp, SPI LCD boards lcd_ui.cpp
 #include "settings.h"
 #include "power.h"
 #include "net.h"
@@ -324,7 +324,7 @@ void loop() {
 
 }  // namespace Display
 
-#else   // ---------------------------------------------- board has an RGB panel
+#elif HAS_PANEL   // ------------------------------------ board has an RGB panel
 
 // The 5" panel board has no small OLED; these keep main.cpp and net.cpp free of
 // #if noise. Messages land on the touch GUI via Gui::message().

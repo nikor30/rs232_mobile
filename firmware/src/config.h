@@ -92,17 +92,33 @@
 #elif defined(BOARD_WAVESHARE_S3_LCD2)
 // --------------------------------------- Waveshare ESP32-S3-Touch-LCD-2 (2", 240x320)
 // ESP32-S3R8, 16 MB flash, ST7789T3 on SPI, CST816D touch, USB-C on the native
-// USB port. Second mock-up board. The LCD is not driven yet (it is neither the
-// OLED nor an RGB panel), so the firmware runs headless here: web UI only, the
-// backlight is held off. Display pins (LovyanGFX board config): SCLK 39, MOSI 38,
-// MISO 40, DC 42, CS 45, touch SDA 48 / SCL 47.
+// USB port, QMI8658 accelerometer, SD slot, LiPo connector. Second mock-up board
+// with its own colour touch interface (lcd_ui.cpp) and a Bluetooth LE console.
 #define BOARD_NAME      "Waveshare ESP32-S3-Touch-LCD-2"
 #define PIN_LED         -1  // no status LED on the board
 #define LED_IS_WS2812    0
+#define HAS_SPI_LCD      1
+#define HAS_BLE          1
+#define HAS_SDCARD       1
+#define PIN_LCD_SCLK    39  // display pins as in the LovyanGFX board configuration
+#define PIN_LCD_MOSI    38
+#define PIN_LCD_MISO    40
+#define PIN_LCD_DC      42
+#define PIN_LCD_CS      45
 #define PIN_LCD_BL       1  // backlight, active high
+#define PIN_SD_CS       41  // SD slot on the LCD's SPI lines
+#define PIN_SD_MOSI     PIN_LCD_MOSI
+#define PIN_SD_SCLK     PIN_LCD_SCLK
+#define PIN_SD_MISO     PIN_LCD_MISO
+#define SD_SHARES_LCD_BUS 1
+// Display rotation (0..3) for "this accelerometer axis points up"; the opposite
+// direction is the rotation plus two. DEFAULT is used while the board lies flat.
+#define IMU_ROT_DEFAULT  3
+#define IMU_ROT_X_POS    0
+#define IMU_ROT_Y_POS    1
 #define PIN_KEY          0  // BOOT button (usable after start-up)
 #define PIN_EXT_KEY     -1
-#define PIN_I2C_SDA     48  // touch + IMU bus; an OLED on 0x3C/0x3D would be found here
+#define PIN_I2C_SDA     48  // touch (CST816D, 0x15) + accelerometer (QMI8658)
 #define PIN_I2C_SCL     47
 
 // Serial is the USB-C port, so the UART pads TXD (IO43) / RXD (IO44) are free for
@@ -110,15 +126,15 @@
 #define PORT_DEFAULT_PINS {{44, 43}, {44, 43}, {44, 43}, {44, 43}}
 #define PINS_RX  {43, 44}
 #define PINS_TX  {43, 44}
-#define PINS_ADC {-1}
-#define PIN_NAMES "43:TXD,44:RXD"
+#define PINS_ADC {5}              // battery voltage divider of the LiPo connector
+#define PIN_NAMES "43:TXD,44:RXD,5:BAT"
 #define PIN_PREFIX "IO"
 
 #define BAT_PIN_DEFAULT  -1
 #define BAT_TYPE_DEFAULT  0
 #define BAT_DIV_DEFAULT  30
 #ifndef FIXED_AP_PASS
-#define FIXED_AP_PASS  "rs232mockup"   // no display to read a generated password from
+#define FIXED_AP_PASS  "rs232mockup"
 #endif
 #define CPU_MHZ          240
 #define TX_POWER_DEFAULT 34       // WIFI_POWER_8_5dBm, as on the DevKit mock-up
@@ -159,6 +175,15 @@
 // ---- Feature flags (set by the board profiles above) -------------------------
 #ifndef HAS_PANEL
 #define HAS_PANEL        0        // 1 = LVGL GUI on an RGB panel instead of the small OLED
+#endif
+#ifndef HAS_SPI_LCD
+#define HAS_SPI_LCD      0        // 1 = SPI colour LCD with touch, own screens in lcd_ui.cpp
+#endif
+#ifndef HAS_BLE
+#define HAS_BLE          0        // 1 = serial console over Bluetooth LE (ble.cpp)
+#endif
+#ifndef SD_SHARES_LCD_BUS
+#define SD_SHARES_LCD_BUS 0       // 1 = SD card on the SPI bus the LCD driver has opened
 #endif
 #ifndef HAS_SDCARD
 #define HAS_SDCARD       0
