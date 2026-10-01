@@ -13,7 +13,9 @@ static uint8_t cr = 255, cg = 255, cb = 255;   // last written colour
 void set(uint8_t r, uint8_t g, uint8_t b) {
   if (r == cr && g == cg && b == cb) return;
   cr = r; cg = g; cb = b;
-#if LED_IS_WS2812
+#if PIN_LED < 0
+  return;                                 // board without a status LED
+#elif LED_IS_WS2812
 #if ESP_ARDUINO_VERSION_MAJOR >= 3
   rgbLedWrite(PIN_LED, r, g, b);          // core 2 called this neopixelWrite()
 #else
@@ -29,8 +31,12 @@ __attribute__((unused)) static uint8_t scale(uint8_t v) {
 }
 
 void begin() {
-#if !LED_IS_WS2812
+#if !LED_IS_WS2812 && PIN_LED >= 0
   pinMode(PIN_LED, OUTPUT);
+#endif
+#ifdef PIN_LCD_BL
+  pinMode(PIN_LCD_BL, OUTPUT);            // LCD is not driven: keep the backlight dark
+  digitalWrite(PIN_LCD_BL, LOW);
 #endif
   set(0, 0, 0);
 }

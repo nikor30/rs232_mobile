@@ -2,10 +2,12 @@
 // ============================================================================
 //  RS232 Web Console - hardware + default configuration
 //
-//  Two hardware profiles (selected in platformio.ini):
-//    default              LilyGO T-RSS3 (ESP32-S3, isolated RS232, WS2812)
-//    BOARD_ESP32_DEVKIT   mock-up: ESP32 DevKit (WROOM-32, 30 pin) + MAX3232
-//                         module "HW-044" with DB9 female
+//  Hardware profiles (selected in platformio.ini):
+//    default                  LilyGO T-RSS3 (ESP32-S3, isolated RS232, WS2812)
+//    BOARD_ESP32_DEVKIT       mock-up: ESP32 DevKit (WROOM-32, 30 pin) + MAX3232
+//                             module "HW-044" with DB9 female
+//    BOARD_VIEWE_5INCH        VIEWE 5" touch panel
+//    BOARD_WAVESHARE_S3_LCD2  mock-up: Waveshare ESP32-S3-Touch-LCD-2
 // ============================================================================
 
 #define FW_NAME     "RS232 Web Console"
@@ -86,6 +88,43 @@
 #define BAT_DIV_DEFAULT  20
 #define CPU_MHZ          240
 #define TX_POWER_DEFAULT 44       // WIFI_POWER_11dBm
+
+#elif defined(BOARD_WAVESHARE_S3_LCD2)
+// --------------------------------------- Waveshare ESP32-S3-Touch-LCD-2 (2", 240x320)
+// ESP32-S3R8, 16 MB flash, ST7789T3 on SPI, CST816D touch, USB-C on the native
+// USB port. Second mock-up board. The LCD is not driven yet (it is neither the
+// OLED nor an RGB panel), so the firmware runs headless here: web UI only, the
+// backlight is held off. Display pins (LovyanGFX board config): SCLK 39, MOSI 38,
+// MISO 40, DC 42, CS 45, touch SDA 48 / SCL 47.
+#define BOARD_NAME      "Waveshare ESP32-S3-Touch-LCD-2"
+#define PIN_LED         -1  // no status LED on the board
+#define LED_IS_WS2812    0
+#define PIN_LCD_BL       1  // backlight, active high
+#define PIN_KEY          0  // BOOT button (usable after start-up)
+#define PIN_EXT_KEY     -1
+#define PIN_I2C_SDA     48  // touch + IMU bus; an OLED on 0x3C/0x3D would be found here
+#define PIN_I2C_SCL     47
+
+// Serial is the USB-C port, so the UART pads TXD (IO43) / RXD (IO44) are free for
+// port 1. Further header pins are left out until the pinout is confirmed.
+#define PORT_DEFAULT_PINS {{44, 43}, {44, 43}, {44, 43}, {44, 43}}
+#define PINS_RX  {43, 44}
+#define PINS_TX  {43, 44}
+#define PINS_ADC {-1}
+#define PIN_NAMES "43:TXD,44:RXD"
+#define PIN_PREFIX "IO"
+
+#define BAT_PIN_DEFAULT  -1
+#define BAT_TYPE_DEFAULT  0
+#define BAT_DIV_DEFAULT  30
+#ifndef FIXED_AP_PASS
+#define FIXED_AP_PASS  "rs232mockup"   // no display to read a generated password from
+#endif
+#define CPU_MHZ          240
+#define TX_POWER_DEFAULT 34       // WIFI_POWER_8_5dBm, as on the DevKit mock-up
+#ifndef DEBUG_NET_LOG
+#define DEBUG_NET_LOG    1
+#endif
 
 #else
 // ---------------------------------------------------------------- LilyGO T-RSS3
