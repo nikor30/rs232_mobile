@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
+<meta name="theme-color" content="#0b0f14">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="format-detection" content="telephone=no,address=no,email=no">
+<title>RS232 Console</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="xterm.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="bar">
+  <span id="dot" class="dot off" title="Verbindung"></span>
+  <span id="host" class="host">rs232</span>
+  <button id="serChip" class="chip" type="button" title="Serielle Einstellungen">-- ---</button>
+  <span id="batChip" class="chip static" title="Akku" hidden>--</span>
+  <span class="grow"></span>
+  <button id="btnBreak" class="chip warn" type="button" title="BREAK senden (2x tippen)">Break</button>
+  <button id="btnMenu" class="icon" type="button" aria-label="Menü">
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+</header>
+
+<nav id="portbar" aria-label="Ports" hidden></nav>
+
+<main id="term"></main>
+
+<div id="runbar" hidden>
+  <div class="runinfo">
+    <span id="runText">…</span>
+    <progress id="runProg" max="100" value="0"></progress>
+  </div>
+  <button id="runStop" class="btn danger" type="button">Abbrechen</button>
+</div>
+
+<form id="inbar" autocomplete="off">
+  <input id="cmd" type="text" placeholder="Befehl eingeben …" autocapitalize="off" autocorrect="off"
+         autocomplete="off" spellcheck="false" enterkeyhint="send" aria-label="Eingabezeile">
+  <button id="cmdSend" type="submit" class="btn primary">Senden</button>
+</form>
+
+<nav id="keys" aria-label="Sondertasten"></nav>
+
+<div id="toast" role="status" aria-live="polite"></div>
+
+<!-- variables of a config ({{NAME}}) -->
+<div id="varsDlg" class="modal" hidden>
+  <form id="varsForm" class="modal-box" autocomplete="off">
+    <h3 id="varsTitle">Werte eintragen</h3>
+    <div id="varsFields"></div>
+    <div class="row">
+      <button class="btn primary" type="submit">Abspielen</button>
+      <button id="varsCancel" class="btn" type="button">Abbrechen</button>
+    </div>
+  </form>
+</div>
+
+<section id="panel" hidden>
+  <div class="panel-head">
+    <div class="tabs" role="tablist">
+      <button type="button" data-tab="serial" class="active">Seriell</button>
+      <button type="button" data-tab="session">Sitzung</button>
+      <button type="button" data-tab="configs">Konfig</button>
+      <button type="button" data-tab="ports">Ports</button>
+      <button type="button" data-tab="net">Netz</button>
+      <button type="button" data-tab="device">Gerät</button>
+      <button type="button" data-tab="setup">Setup</button>
+    </div>
+    <button id="btnClose" class="icon" type="button" aria-label="Schließen">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    </button>
+  </div>
+
+  <div class="panel-body">
+    <!-- ============ Seriell ============ -->
+    <div class="tab" data-tab="serial">
+      <p class="portline" id="sPortInfo">Port 1</p>
+      <div class="grid2">
+        <label>Baudrate
+          <select id="sBaud">
+            <option>1200</option><option>2400</option><option>4800</option>
+            <option selected>9600</option><option>19200</option><option>38400</option>
+            <option>57600</option><option>115200</option><option>230400</option>
+            <option value="custom">andere …</option>
+          </select>
+        </label>
+        <label id="sBaudCustomWrap" hidden>Baud (frei)
+          <input id="sBaudCustom" type="number" min="300" max="1000000" inputmode="numeric">
+        </label>
+        <label>Datenbits
+          <select id="sBits"><option>8</option><option>7</option><option>6</option><option>5</option></select>
+        </label>
+        <label>Parität
+          <select id="sParity"><option value="N">None</option><option value="E">Even</option><option value="O">Odd</option></select>
+        </label>
+        <label>Stopbits
+          <select id="sStop"><option>1</option><option>2</option></select>
+        </label>
+      </div>
+      <label class="check"><input id="sSwap" type="checkbox"> RX/TX am TTL-Pegelwandler tauschen</label>
+      <p class="hint">Nur für den Fall, dass die Beschriftung TXD/RXD am Modul andersherum gemeint ist als verdrahtet (zeigt sich beim Loopback-Test). Das tauscht die beiden Leitungen <b>zwischen ESP32 und Pegelwandler</b> – auf der DB9-Seite ändert sich dadurch nichts. Eine fehlende Kreuzung im Kabel (Nullmodem) lässt sich damit also <b>nicht</b> ausgleichen, dafür braucht es einen gekreuzten Adapter.</p>
+      <label class="inline">Zeilenende beim Senden
+        <select id="sEol"><option value="cr">CR (\r) – Cisco, Fortinet …</option><option value="crlf">CR+LF</option><option value="lf">LF</option></select>
+      </label>
+      <div class="row">
+        <button id="sApply" class="btn primary" type="button">Übernehmen</button>
+        <button id="sAuto" class="btn" type="button">Auto-Baud</button>
+      </div>
+      <p class="hint">Auto-Baud sendet ein Enter mit 9600, 115200, 19200, 38400 und 57600 Baud (8N1, Software-UART bis 38400) und nimmt die erste Rate mit lesbarer Antwort. Kommt gar nichts zurück, meldet er <b>„Leitung stumm"</b> – dann fehlt die Kreuzung (Pin 2/3), die Masse (Pin 5) oder die Gegenstelle sendet nicht. Kommen Zeichen an, die nur unlesbar sind, meldet er das mit Byte-Zahl: Dann stimmt die Verdrahtung und es geht um Datenbits, Parität oder Störungen.</p>
+      <h3>Break</h3>
+      <div class="row">
+        <label class="inline">Dauer
+          <select id="sBreakMs"><option value="250">250 ms</option><option value="500" selected>500 ms</option><option value="1000">1000 ms</option></select>
+        </label>
+        <button id="sBreak" class="btn warn" type="button">Break senden</button>
+      </div>
+      <p class="hint">Für Passwort-Recovery (ROMmon) innerhalb der ersten Sekunden nach dem Einschalten senden.</p>
+    </div>
+
+    <!-- ============ Sitzung ============ -->
+    <div class="tab" data-tab="session" hidden>
+      <h3>Mitschnitt</h3>
+      <p class="hint" id="logInfo">0 kB aufgezeichnet</p>
+      <label class="check"><input id="logClean" type="checkbox" checked> Steuerzeichen und „--More--“ bereinigen</label>
+      <div class="row">
+        <button id="logSave" class="btn primary" type="button">Log speichern</button>
+        <button id="logClear" class="btn" type="button">Log + Terminal leeren</button>
+      </div>
+      <h3>Darstellung</h3>
+      <label class="check"><input id="termOnly" type="checkbox"> Nur Terminal (Eingabezeile und Sondertasten ausblenden)</label>
+      <p class="hint">Dann füllt das Terminal das ganze Fenster und jede Taste geht sofort raus – wie in PuTTY. Der Cursor blinkt, solange die Sitzung steht. Verlauf mit ↑/↓ und Tab-Ergänzung übernimmt dann das angeschlossene Gerät selbst. Am Handy bleibt die Eingabezeile sinnvoll, dort ist der Haken standardmäßig aus.</p>
+      <div class="row">
+        <button id="fontMinus" class="btn" type="button">A−</button>
+        <span id="fontSize" class="val">14 px</span>
+        <button id="fontPlus" class="btn" type="button">A+</button>
+      </div>
+      <h3>Datei senden (XMODEM / YMODEM)</h3>
+      <input id="xfFile" type="file">
+      <div class="row">
+        <label class="inline">Protokoll
+          <select id="xfProto">
+            <option value="x1k">XMODEM-1K</option>
+            <option value="x">XMODEM (128 Byte)</option>
+            <option value="y">YMODEM</option>
+          </select>
+        </label>
+        <button id="xfStart" class="btn primary" type="button">Senden</button>
+      </div>
+      <p class="hint">Am Gerät den Empfang starten, z. B. Cisco ROMmon <code>xmodem -c flash:datei.bin</code>, IOS <code>copy xmodem: flash:</code>, U-Boot <code>loadx</code> / <code>loady</code>. Die Reihenfolge ist egal, das Gerät wartet bis zu 2 Minuten auf den Empfänger. XMODEM-1K schaltet selbst auf 128-Byte-Blöcke zurück, wenn der Empfänger keine 1K-Blöcke kann. Während der Übertragung das Display anlassen.</p>
+    </div>
+
+    <!-- ============ Konfig ============ -->
+    <div class="tab" data-tab="configs" hidden>
+      <h3>Gespeichert auf dem Gerät</h3>
+      <div id="cfgList" class="list"></div>
+      <p class="hint" id="cfgInfo"></p>
+      <h3 id="cfgEditTitle">Neue Konfiguration</h3>
+      <label>Name <input id="cfgName" maxlength="48" placeholder="z. B. C9300 Grundkonfig"></label>
+      <textarea id="cfgText" rows="10" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off"
+        placeholder="enable&#10;configure terminal&#10;hostname {{HOSTNAME}}&#10;…&#10;end&#10;write memory"></textarea>
+      <div class="row">
+        <button id="cfgSave" class="btn" type="button">Speichern</button>
+        <button id="cfgNew" class="btn" type="button">Neu</button>
+        <button id="cfgDelete" class="btn danger" type="button" hidden>Löschen</button>
+        <label class="btn filebtn">Datei laden …<input id="cfgFile" type="file" accept=".txt,.cfg,.conf,text/plain"></label>
+      </div>
+      <h3>Abspielen</h3>
+      <div class="grid2">
+        <label>Nach jeder Zeile
+          <select id="playMode">
+            <option value="prompt">auf Prompt warten</option>
+            <option value="delay">feste Pause</option>
+          </select>
+        </label>
+        <label>Pause (ms)
+          <select id="playDelay"><option value="50">50</option><option value="150" selected>150</option><option value="500">500</option><option value="1000">1000</option></select>
+        </label>
+      </div>
+      <label class="check"><input id="playStop" type="checkbox" checked> Bei Fehlermeldung anhalten (<code>% Invalid</code>, <code>% Incomplete</code> …)</label>
+      <div class="row">
+        <button id="cfgPlay" class="btn primary" type="button">Auf Port 1 abspielen</button>
+      </div>
+      <p class="hint">Jede Zeile wird mit Enter gesendet. <code>{{NAME}}</code> wird vor dem Start abgefragt. Steuerzeilen: <code>@expect Text</code> wartet auf eine Ausgabe (z. B. <code>@expect initial configuration dialog</code>), <code>@pause 5</code> wartet 5 s, <code>@break</code> sendet BREAK, <code>@timeout 120</code> setzt die Wartezeit für die folgenden Zeilen.</p>
+    </div>
+
+    <!-- ============ Ports ============ -->
+    <div class="tab" data-tab="ports" hidden>
+      <p class="hint" id="portsIntro">Bis zu 4 MAX3232-Module. Ports 1–2 laufen über Hardware-UARTs, Ports 3–4 über Software-UARTs (bis 38400 Baud, für Konsolen reicht das). Jedes Modul: VCC an 3V3, GND an GND.</p>
+      <div id="portCards"></div>
+      <h3>Akku-Messung</h3>
+      <div class="grid2">
+        <label>Messung an
+          <select id="batPin"><option value="-1">aus</option></select>
+        </label>
+        <label>Akku
+          <select id="batType"><option value="0">LiPo 1 Zelle (3,0–4,2 V)</option><option value="1">NiCd/NiMH 4 Zellen (4,8 V)</option></select>
+        </label>
+        <label>Spannungsteiler
+          <select id="batDiv"><option value="20">2:1 (2 gleiche Widerstände)</option><option value="30">3:1 (3 gleiche Widerstände)</option></select>
+        </label>
+        <label>Warnleitung (LBO)
+          <select id="batLbo"><option value="-1">aus</option></select>
+        </label>
+      </div>
+      <p class="hint">Hat dein Lade-/Boost-Board einen <b>Low-Battery-Ausgang</b> (z. B. <code>LBO</code> am Adafruit PowerBoost, offener Kollektor, zieht unter 3,2 V auf Masse), kannst du ihn hier auf einen freien Pin legen. Das Gerät warnt dann anhand dieser Leitung – auch ganz ohne Spannungsteiler.</p>
+      <p class="hint" id="batHint">Akku-Plus → Widerstand → Mess-Pin → Widerstand → GND. Für den 4,8-V-Pack 3:1 nehmen: 3× 100 kΩ, zwei davon in Reihe vom Akku-Plus zum Pin, einer vom Pin nach GND.</p>
+      <div class="row">
+        <button id="portsSave" class="btn primary" type="button">Speichern &amp; Neustart</button>
+      </div>
+    </div>
+
+    <!-- ============ Netz (WLAN-Client 802.1X, HTTPS, Zertifikate) ============ -->
+    <div class="tab" data-tab="net" hidden>
+      <form id="netForm" autocomplete="off">
+        <h3>WLAN-Client (optional)</h3>
+        <p class="hint">Das Gerät bleibt immer als Hotspot erreichbar. Zusätzlich kann es sich in ein vorhandenes WLAN einbuchen – auch in ein Firmennetz mit 802.1X.</p>
+        <div class="grid2">
+          <label>SSID <input name="staSsid" maxlength="32" placeholder="aus"></label>
+          <label>Sicherheit
+            <select name="staAuth">
+              <option value="0">WPA2/WPA3-Personal (Passwort)</option>
+              <option value="1">WPA2/WPA3-Enterprise · EAP-TLS (Zertifikat)</option>
+              <option value="2">WPA2/WPA3-Enterprise · PEAP-MSCHAPv2</option>
+              <option value="3">WPA2/WPA3-Enterprise · EAP-TTLS</option>
+            </select>
+          </label>
+        </div>
+        <div class="grid2">
+          <label data-auth="0">WLAN-Passwort <input name="staPass" type="password" maxlength="63" placeholder="unverändert"></label>
+          <label data-auth="123">Identität (außen) <input name="staIdentity" maxlength="64" placeholder="aus dem Zertifikat / Benutzername"></label>
+          <label data-auth="23">Benutzer <input name="staUser" maxlength="64" placeholder="benutzer@firma.de"></label>
+          <label data-auth="23">Passwort <input name="staEapPass" type="password" maxlength="63" placeholder="unverändert"></label>
+          <label data-auth="3">Innere Methode
+            <select name="staPhase2"><option value="0">MSCHAPv2</option><option value="1">PAP</option></select>
+          </label>
+        </div>
+        <label class="check" data-auth="123"><input name="staCaCheck" type="checkbox"> RADIUS-Server mit dem CA-Zertifikat prüfen (empfohlen)</label>
+        <label class="check"><input name="staClear" type="checkbox"> WLAN-Client abschalten</label>
+        <p class="hint" id="netWarn" hidden></p>
+
+        <h3>Web-Oberfläche verschlüsseln (HTTPS)</h3>
+        <label class="check"><input name="httpsEnabled" type="checkbox"> HTTPS auf Port 443 einschalten</label>
+        <div class="grid2">
+          <label>Zertifikat dafür
+            <select name="httpsCert">
+              <option value="0">eigenes HTTPS-Zertifikat (sonst vom Gerät erzeugt)</option>
+              <option value="1">802.1X-Client-Zertifikat mitbenutzen</option>
+            </select>
+          </label>
+        </div>
+        <label class="check"><input name="httpsLanOnly" type="checkbox"> Im Firmennetz nur HTTPS zulassen (HTTP wird umgeleitet)</label>
+        <p class="hint">Im eigenen Hotspot bleibt HTTP erreichbar – sonst funktioniert die automatische Anmeldeseite am iPhone nicht.</p>
+        <div class="row">
+          <button class="btn primary" type="submit">Speichern &amp; Neustart</button>
+        </div>
+      </form>
+
+      <h3>Zertifikate</h3>
+      <p class="hint">Formate: <code>.p12</code>/<code>.pfx</code> (mit Passwort), <code>.pem</code>, <code>.crt</code>/<code>.cer</code> (DER oder Base64), <code>.p7b</code>, einzelner Schlüssel. Private Schlüssel liegen unverschlüsselt im Flash – nur Gerätezertifikate verwenden, die sich sperren lassen.</p>
+      <div id="tlsCards"></div>
+
+      <h3>Schlüssel und Antrag auf dem Gerät erzeugen (CSR)</h3>
+      <p class="hint">Der private Schlüssel bleibt auf dem Gerät. Den Antrag von der Firmen-CA signieren lassen und das Zertifikat oben wieder hochladen – der Schlüssel wird automatisch zugeordnet.</p>
+      <div class="grid2">
+        <label>Name (CN oder ganzer DN) <input id="csrSubject" maxlength="120" placeholder="CN=rs232-01,O=Firma,C=DE"></label>
+        <label>Weitere Namen (SAN) <input id="csrSan" maxlength="200" placeholder="rs232-01.firma.de, 10.0.0.5"></label>
+        <label>Schlüssel
+          <select id="csrKey"><option value="1">RSA 2048 (dauert ~30 s)</option><option value="0">ECDSA P-256 (schnell)</option></select>
+        </label>
+      </div>
+      <div class="row">
+        <button id="csrStart" class="btn" type="button">Antrag erzeugen</button>
+        <button id="csrDownload" class="btn" type="button" hidden>Antrag herunterladen</button>
+        <span id="csrInfo" class="hint"></span>
+      </div>
+
+      <h3>Gerät als Zertifizierungsstelle</h3>
+      <p class="hint" id="devCaInfo">Wenn kein eigenes HTTPS-Zertifikat hochgeladen wurde, stellt sich das Gerät selbst eines aus. Damit iPhone/iPad und Browser es akzeptieren, muss die Geräte-CA einmal installiert und als vertrauenswürdig markiert werden (iOS: Einstellungen → Profil geladen → Installieren, danach Einstellungen → Allgemein → Info → Zertifikatsvertrauenseinstellungen).</p>
+      <div class="row">
+        <button id="devCaDownload" class="btn" type="button">Geräte-CA herunterladen</button>
+      </div>
+    </div>
+
+    <!-- ============ Gerät ============ -->
+    <div class="tab" data-tab="device" hidden>
+      <table class="kv">
+        <tr><th>Akku</th><td id="dBat">–</td></tr>
+        <tr><th>WLAN (AP)</th><td id="dAp">–</td></tr>
+        <tr><th>LAN (Client)</th><td id="dSta">–</td></tr>
+        <tr><th>HTTPS</th><td id="dHttps">–</td></tr>
+        <tr><th>Verbindungen</th><td id="dClients">–</td></tr>
+        <tr><th>Ports</th><td id="dPorts">–</td></tr>
+        <tr><th>Laufzeit</th><td id="dUp">–</td></tr>
+        <tr><th>Firmware</th><td id="dFw">–</td></tr>
+        <tr><th>Hardware</th><td id="dBoard">–</td></tr>
+        <tr><th>Freier RAM</th><td id="dHeap">–</td></tr>
+      </table>
+      <div class="row">
+        <button id="devReboot" class="btn" type="button">Neustart</button>
+      </div>
+    </div>
+
+    <!-- ============ Setup ============ -->
+    <div class="tab" data-tab="setup" hidden>
+      <form id="setupForm" autocomplete="off">
+        <h3>WLAN-Hotspot</h3>
+        <div class="grid2">
+          <label>SSID <input name="apSsid" maxlength="32" required></label>
+          <label>Neues Passwort <input name="apPass" type="password" minlength="8" maxlength="63" placeholder="unverändert"></label>
+        </div>
+        <div class="grid2">
+          <label>Kanal
+            <select name="apChannel"><option value="0">Auto (ruhigster von 1/6/11)</option><option value="1">1</option><option value="6">6</option><option value="11">11</option></select>
+          </label>
+          <label>Sendeleistung
+            <select name="txPower"><option value="34">8,5 dBm (Nahbereich)</option><option value="44">11 dBm</option><option value="60">15 dBm</option><option value="78">19,5 dBm (max.)</option></select>
+          </label>
+        </div>
+        <h3>Zugriff</h3>
+        <div class="grid2">
+          <label>Hostname <input name="hostname" maxlength="31" pattern="[A-Za-z0-9\-]+" required></label>
+          <label>Web-Passwort (User „admin“) <input name="webPass" type="password" maxlength="63" placeholder="unverändert / keins"></label>
+        </div>
+        <label class="check"><input name="webPassClear" type="checkbox"> Web-Passwort entfernen</label>
+        <label class="check"><input name="tcpEnabled" type="checkbox"> Raw-TCP / Telnet (Port 1 = <span id="tcpPort">2000</span>, Port 2 = 2001 …; PuTTY „Raw“ oder „Telnet“, nc, telnet)</label>
+        <label class="check"><input name="tcpLan" type="checkbox"> … auch aus dem LAN erreichbar (sonst nur über den eigenen Hotspot)</label>
+        <p class="hint">Raw-TCP kennt keine Anmeldung: Wer die LAN-IP und den Port kennt, sitzt direkt auf der Konsole des angeschlossenen Geräts – auch mitten in einer laufenden Sitzung. Im Firmennetz also nur einschalten, wenn das Segment vertrauenswürdig ist, und das Web-Passwort trotzdem setzen (das schützt nur die Weboberfläche). Ohne Haken gilt weiterhin: nur vom Hotspot 192.168.4.x aus.</p>
+        <h3>Anzeige</h3>
+        <div class="grid2">
+          <label>OLED
+            <select name="oledType"><option value="0">SSD1306 0,96″</option><option value="1">SH1106 1,3″</option></select>
+          </label>
+          <label>Aus nach (s, 0 = nie) <input name="displayTimeout" type="number" min="0" max="3600" inputmode="numeric"></label>
+          <label>OLED-Helligkeit <input name="oledBrightness" type="range" min="0" max="255"></label>
+          <label>Status-LED <input name="ledBrightness" type="range" min="0" max="80"></label>
+        </div>
+        <label class="check"><input name="oledFlip" type="checkbox"> OLED um 180° drehen</label>
+        <p class="hint">OLEDs haben keine Hintergrundbeleuchtung, die Helligkeit ist der Kontrastwert des Panels – ganz unten wird es deutlich dunkler, oben herum ändert sich wenig. Die Vorschau läuft live mit, gespeichert wird erst mit „Speichern &amp; Neustart“. Beim DevKit-Mockup ist die Status-LED nur an/aus, der Regler wirkt dort lediglich als Schalter (0 = aus).</p>
+        <div class="row">
+          <button class="btn primary" type="submit">Speichern &amp; Neustart</button>
+        </div>
+      </form>
+
+      <p class="hint">WLAN-Client (auch 802.1X), HTTPS und Zertifikate stehen im Tab <b>Netz</b>.</p>
+
+      <h3>Firmware-Update</h3>
+      <p class="hint">Die OTA-Datei (<code>…ota-update.bin</code> bzw. <code>firmware.bin</code>) auswählen.</p>
+      <div class="row">
+        <input id="fwFile" type="file" accept=".bin,application/octet-stream">
+        <button id="fwUpload" class="btn" type="button">Hochladen</button>
+      </div>
+      <progress id="fwProg" max="100" value="0" hidden></progress>
+
+      <h3>Zurücksetzen</h3>
+      <div class="row">
+        <button id="factory" class="btn danger" type="button">Werksreset</button>
+      </div>
+      <p class="hint">Löscht alle Einstellungen, erzeugt ein neues Hotspot-Passwort (steht danach auf dem OLED). Gespeicherte Konfigurationen bleiben erhalten.</p>
+    </div>
+  </div>
+</section>
+
+<script src="xterm.js"></script>
+<script src="addon-fit.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

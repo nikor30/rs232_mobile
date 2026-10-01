@@ -1,0 +1,7 @@
+.pio/
+.vscode/
+*.pyc
+node_modules/
+tests/extracted.inc
+tests/t
+tests/t2
