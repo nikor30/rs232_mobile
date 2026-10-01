@@ -16,4 +16,8 @@ namespace Display {
   uint8_t page();
   void applyBrightness();        // push settings.oledBrightness to the panel (contrast, 0..255)
   void message(const char *line1, const char *line2, uint32_t ms);   // overlay box
+  // Boards whose SD card sits on the display's SPI lines: whoever talks on that
+  // bus holds this lock (recursive). Defined in lcd_ui.cpp only.
+  void busLock();
+  void busUnlock();
 }
