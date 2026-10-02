@@ -19,10 +19,14 @@ Stand 2. Oktober 2026: gebaut, geflasht und am Board geprüft, soweit unten ange
 
 ## Bedienung
 
-- **Wischen** oder die Pfeile oben wechseln die Seite: Status, Terminal, WLAN (QR), Web-UI (QR), Bluetooth, Info. Die BOOT-Taste blättert ebenfalls.
+- **Wischen** oder die Pfeile oben wechseln die Seite: Status, Terminal, Skripte, WLAN (QR), Web-UI (QR), Bluetooth, System, Info, Setup. Die BOOT-Taste blättert ebenfalls.
 - **Status**: Schnittstelle, RX/TX-Zähler, Netz. Tasten: Baudrate weiterschalten, Auto-Baud, BREAK.
 - **Terminal**: Live-Ansicht der seriellen Leitung (52×19 Zeichen quer, 39×29 hoch), gespeist aus dem Replay-Puffer. Escape-Sequenzen werden verworfen, nicht ausgewertet. Tasten: Enter, Ctrl-C, BREAK, REC (nur mit SD-Karte).
+- **Skripte**: die in der Weboberfläche (Reiter Konfig) gespeicherten Konfigurationen. Antippen wählt aus, erst „Senden an Port N" spielt ab — zeilenweise, mit Warten auf den Prompt, Stopp bei Fehlermeldung, Steuerzeilen `@pause`, `@expect`, `@break`, `@timeout` wie im Browser (`src/player.cpp`). Konfigurationen mit `{{Variablen}}` gehen nur in der Weboberfläche.
 - **Bluetooth**: zeigt die sechsstellige PIN und schaltet Bluetooth ein/aus (wird gespeichert).
+- **System**: CPU-Last je Kern, RAM, PSRAM als Balken; dazu freier Speicher, größter Block, längste Pause der Hauptschleife, Zeichenzeit, Chip-Temperatur, Laufzeit. Die CPU-Last ist eine Schätzung aus der Leerlaufzeit (Auflösung 1 ms).
+- **Info**: Firmware, Hostname, Clients, Raw-TCP, Akku, SD-Karte, Lage, Board.
+- **Setup**: Helligkeit, Abschaltzeit des Displays, WLAN-Client. „Netz waehlen" sucht Netze; ein verschlüsseltes Netz öffnet die Bildschirmtastatur (QWERTZ, drei Ebenen), ein offenes fragt nach. Gespeichert wird wie in der Weboberfläche, mit Neustart. 802.1X bleibt der Weboberfläche vorbehalten.
 - Das Display dreht sich zur oberen Kante; liegt das Board flach, bleibt die letzte Lage. Bewegung und Berührung wecken das dunkle Display; die erste Berührung weckt nur.
 - Helligkeit und Abschaltzeit kommen aus den vorhandenen Display-Einstellungen der Weboberfläche.
 
@@ -68,6 +72,9 @@ Bleibt die Hauptschleife länger als 3 s stehen, meldet der UI-Task das von sich
 
 ## Erfahrungswissen
 
+- **`Serial.setTxTimeoutMs(0)` blockiert, statt nie zu blockieren.** Die Schreibschleife der USB-Seriell-Klasse (Core 2.0.17) zählt den Wert herunter und läuft bei 0 über. Steckt das Board an einem Rechner, der den Port nicht geöffnet hat, bleibt `setup()` in der ersten längeren Log-Ausgabe hängen: kein Hotspot, kein Bluetooth, eingefrorene Anzeige. Das war sehr wahrscheinlich auch das „Einfrieren nach einigen Berührungen" (jede Berührung schrieb eine Logzeile). Jetzt 5 ms. Betrifft alle Boards mit USB-CDC, auch das T-RSS3.
+- **WLAN-Station plus Bluetooth braucht Modem-Sleep.** Ohne ihn bricht der WLAN-Treiber mit `abort()` ab, sobald die Station startet — auch beim bloßen Netz-Scan aus dem Hotspot-Betrieb.
+- **Offene Netze nie mit einem einzigen Tippen verbinden.** Beim Testen ist genau das passiert; seitdem fragt die Oberfläche nach.
 - **Vorzeichenlose Zeitvergleiche über Task- oder Funktionsgrenzen sind eine Falle.** `now - lastActivity > timeout` schaltete das Display bei jeder Berührung ab, weil `lastActivity` nach `now` gestempelt wurde und die Differenz überlief. Immer `(int32_t)(now - x)` vergleichen.
 - **Der CST816 antwortet nicht auf jede Abfrage**, auch wenn der Finger aufliegt. Ohne Haltezeit (120 ms) zerfällt eine Berührung in mehrere Taps.
 - **`SD.usedBytes()` läuft die ganze Belegungstabelle ab** — Sekunden. Nie pro Bild aufrufen; die Werte werden beim Einbinden und nach einem Mitschnitt gemerkt.
@@ -88,22 +95,26 @@ Beobachtet mit einer 1-GB-SDSC-Karte:
 - Per Messung ausgeschlossen: der ESP32 selbst (IO40 ist kein Ausgang), das LCD (Software-Reset ändert nichts, es liest ohnehin über MOSI), ein unterbrochener Lesevorgang.
 - Nur Strom weg holt die Karte zurück.
 
-Zwei Erklärungen sind übrig, keine ist bewiesen:
+Beide naheliegenden Erklärungen sind inzwischen widerlegt:
 
-1. Der LCD-Takt von 40 MHz lag über dem, was die Karte verträgt (25 MHz), und hat sie im Betrieb aus dem Tritt gebracht. Deshalb steht `LCD_SPI_HZ` jetzt auf 20 MHz.
-2. Beim Reset schweben Takt und Chip-Select, und die Karte fängt sich dabei etwas ein.
+1. *Der LCD-Takt von 40 MHz ist zu schnell für die Karte.* Mit 20 MHz fiel sie genauso aus.
+2. *Der Reset bringt sie aus dem Tritt.* Sie fiel auch im laufenden Betrieb aus, ohne jeden Reset: eingeschaltet, eingebunden, nach spätestens 254 s tot (`K+ !254s` im Verlauf).
 
-Die Firmware führt dazu Buch (`[DIAG] SD: ... Verlauf:` in `lcd_debug.py status`, im Flash gespeichert): `K+`/`K-xx` Start nach Einschalten, `R+`/`R-xx` Start nach Reset (xx = Antwort der Karte), `!<n>s` Karte fiel nach n Sekunden Betrieb aus. Fällt sie im Betrieb aus, ist es Erklärung 1; überlebt sie den Betrieb, aber nicht den Reset, Erklärung 2.
+Was bleibt: Diese Karte verträgt den Datenverkehr des Displays auf den gemeinsamen Leitungen nicht, obwohl ihr Chip-Select dabei inaktiv ist. Ob das an dieser einen (alten) Karte liegt oder am Aufbau, ist offen — **als Nächstes eine andere Karte probieren (SDHC, 8–32 GB)**.
+
+Die Firmware führt Buch (`[DIAG] SD: ... Verlauf:` in `lcd_debug.py status`, im Flash gespeichert): `K+`/`K-xx` Start nach Einschalten, `R+`/`R-xx` Start nach Reset (xx = Antwort der Karte), `!<n>s` Karte fiel nach n Sekunden Betrieb aus (geprüft wird alle 20 s mit einem Sektor-Lesen).
 
 Weitere Regeln, die dabei entstanden sind: Die Karte wird **vor** dem LCD gestartet (`Display::begin()` ruft `Sd::begin()`), und eine nach dem Start eingesteckte Karte lässt sich auf der Info-Seite einbinden.
 
 ## Offen
 
-1. SD-Karte: nach dem nächsten Einschalten den Verlauf lesen (siehe oben) und die Ursache festnageln.
-2. Oberfläche mit echtem Finger prüfen — die Vorversion fror nach einigen Berührungen ein; die Ursache wurde nicht gefunden, die Oberfläche seither neu aufgebaut. `lcd_debug.py status` zeigt, welcher Task steht, falls es wieder passiert.
-3. In vier Minuten Test wurde eine Berührung registriert, die niemand gemacht hat. Beobachten.
-4. Bluetooth Richtung Gerät → Handy mit Loopback (TXD–RXD gebrückt) und mit einer Handy-App prüfen.
-5. MAX3232 an IO43/IO44 anschließen, echter Konsolenzugriff.
-6. Akkumessung an IO5 bestätigen.
-7. SD-Mitschnitte sind nur am Display bedienbar, nicht in der Weboberfläche.
-8. Die Envs `esp32dev-max3232` und `viewe-5inch` wurden mit den Änderungen an `sdcard.cpp`, `settings` und `main.cpp` nicht neu gebaut.
+1. SD-Karte: mit einer anderen Karte gegenprüfen (siehe oben).
+2. Der Fix für das Blockieren ohne USB-Leser ist aus dem Code der USB-Klasse hergeleitet und im Betrieb ohne geöffneten Port geprüft, aber nicht mit einem echten Aus- und Einstecken.
+3. WLAN-Beitritt: Suchen, Tastatur, Nachfrage, Speichern und Wieder-Ausschalten sind geprüft; ein erfolgreicher Verbindungsaufbau mit einem echten Schlüssel nicht.
+4. Skripte: Ablauf geprüft, aber ohne angeschlossenes Gerät (jede Zeile wartet dann 2 s auf eine Antwort).
+5. Bluetooth Richtung Gerät → Handy mit Loopback (TXD–RXD gebrückt) und mit einer Handy-App prüfen.
+6. MAX3232 an IO43/IO44 anschließen, echter Konsolenzugriff.
+7. Akkumessung an IO5 bestätigen.
+8. SD-Mitschnitte sind nur am Display bedienbar, nicht in der Weboberfläche.
+9. Die Envs `esp32dev-max3232` und `viewe-5inch` wurden mit den Änderungen nicht neu gebaut.
+10. Baudraten-Wechsel am Display gelten bis zum Neustart (wie bei der BOOT-Taste), sie werden nicht gespeichert.

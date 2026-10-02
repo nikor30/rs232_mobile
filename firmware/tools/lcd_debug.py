@@ -6,7 +6,9 @@ Talks to the firmware over the USB serial port without resetting the board:
     lcd_debug.py status                 health of both tasks, SD, Bluetooth
     lcd_debug.py shot out.png           screenshot of what the display shows
     lcd_debug.py tap 160 200            a touch at that position
-    lcd_debug.py screen 1               0 Status, 1 Terminal, 2 WLAN, 3 Web-UI, 4 Bluetooth, 5 Info
+    lcd_debug.py screen 1               0 Status, 1 Terminal, 2 Skripte, 3 WLAN, 4 Web-UI, 5 Bluetooth,
+                                        6 System, 7 Info, 8 Setup
+    lcd_debug.py cfgtest                store a small configuration "Demo" to try the Skripte page
     lcd_debug.py rot 0                  force a rotation (0..3)
     lcd_debug.py wake | off
     lcd_debug.py listen 20              print the log for 20 seconds
@@ -123,6 +125,9 @@ def main(argv):
         elif c in ("screen", "rot"):
             s.write(f"{c} {argv[i + 1]}\n".encode()); i += 1
             time.sleep(0.5)
+        elif c == "cfgtest":
+            s.write(b"cfgtest\n")
+            sys.stdout.write(read_until(s, lambda b: False, 1.0).decode("utf8", "replace"))
         elif c in ("wake", "off"):
             s.write(c.encode() + b"\n"); time.sleep(0.5)
         elif c == "listen":

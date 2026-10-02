@@ -1115,7 +1115,10 @@ void begin() {
   WiFi.softAPConfig(IPAddress(192, 168, 4, 1), IPAddress(192, 168, 4, 1), IPAddress(255, 255, 255, 0));
   esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT20);    // 20 MHz: robust next to office WLANs
   WiFi.softAP(settings.apSsid.c_str(), settings.apPass.c_str(), activeChannel, 0, AP_MAX_CLIENTS);
-  WiFi.setSleep(false);                                // no modem sleep: lowest latency
+  // No modem sleep: lowest latency. Except next to Bluetooth - the two share one
+  // radio, and the WiFi driver aborts (reboot) if its station side runs without
+  // modem sleep while Bluetooth is on.
+  WiFi.setSleep(HAS_BLE && settings.bleEnabled);
   WiFi.setTxPower((wifi_power_t)settings.txPower);
   Serial.printf("[WLAN] Hotspot %s auf Kanal %u, Sendeleistung %.1f dBm\n", settings.apSsid.c_str(),
                 activeChannel, settings.txPower / 4.0f);

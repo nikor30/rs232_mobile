@@ -29,6 +29,11 @@
 #include "serial_bridge.h"
 #include "sdcard.h"
 #include "ble.h"
+#include "configs.h"
+#include "player.h"
+#include <WiFi.h>
+#include <ArduinoJson.h>
+#include "esp_freertos_hooks.h"
 
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
@@ -119,8 +124,10 @@ static const uint32_t C_BG = 0x0B0F14, C_PANEL = 0x1C2733, C_LINE = 0x2E3D4D, C_
                       C_RED = 0xF87171, C_BLUE = 0x60A5FA, C_BTN = 0x263545, C_BTN_DOWN = 0x3B82F6,
                       C_TERM = 0x9AE6B4;
 
-enum Screen : uint8_t { S_STATUS = 0, S_TERM, S_WIFI, S_URL, S_BT, S_INFO, S_COUNT };
-static const char *const TITLES[S_COUNT] = {"Status", "Terminal", "WLAN", "Web-UI", "Bluetooth", "Info"};
+enum Screen : uint8_t { S_STATUS = 0, S_TERM, S_SCRIPTS, S_WIFI, S_URL, S_BT, S_SYSTEM, S_INFO, S_SETUP, S_COUNT };
+static const char *const TITLES[S_COUNT] = {"Status", "Terminal", "Skripte", "WLAN", "Web-UI", "Bluetooth",
+                                            "System", "Info", "Setup"};
+static const int MAX_CFG = 16, MAX_NETS = 12;
 
 static const int HEAD_H = 30, NAV_H = 12, BTN_H = 38;
 static const int TERM_MAX_COLS = 53, TERM_MAX_ROWS = 30, TERM_CW = 6, TERM_CH = 8;
@@ -146,15 +153,32 @@ struct Snapshot {
   bool    sdMounted;
   char    sdType[16];
   uint32_t sdUsedMb, sdTotalMb;
-  uint16_t heapKb;
   uint8_t brightness;
   uint16_t timeoutS;
   bool    flip;
+  // System page
+  uint8_t cpu[2];                    // load in percent, per core
+  uint32_t heapFree, heapTotal, heapMin, heapBlock, psramFree, psramTotal;
+  int8_t  tempC;
+  uint16_t loopMs, drawMs;           // longest main loop pause / drawing time in the last second
+  uint8_t tasks;
+  // Skripte page
+  uint8_t cfgCount;
+  char    cfg[MAX_CFG][28];
+  uint8_t playState, playPort;
+  uint16_t playLine, playLines;
+  char    playName[28], playResult[48];
+  // Setup page
+  char    staSsid[33];
+  uint8_t scanState;                 // 0 = no result, 1 = scanning, 2 = list valid
+  uint8_t netCount;
+  struct { char ssid[33]; int8_t rssi; bool locked; } net[MAX_NETS];
 };
 
 static SemaphoreHandle_t stateMux = nullptr;       // snapshot, terminal grid, message text
 static SemaphoreHandle_t busMux = nullptr;         // the SPI lines shared by LCD and SD card
-static QueueHandle_t cmdQueue = nullptr;           // UI task -> main loop: (command << 8) | port
+static QueueHandle_t cmdQueue = nullptr;           // UI task -> main loop: command << 16 | argument << 8 | port
+static char joinSsid[33], joinPass[64];            // handed over with B_JOIN, under stateMux
 
 static Snapshot shared;
 static char termShared[TERM_MAX_ROWS][TERM_MAX_COLS + 1];
@@ -178,6 +202,7 @@ static volatile uint32_t uiGeometry = 0;           // bumped when the terminal s
 // health figures for the debug console
 static volatile uint32_t statFrames = 0, statPushes = 0, statBands = 0, statTouches = 0;
 static volatile uint32_t statLoopGapMax = 0, statUiGapMax = 0, statTouchMsMax = 0, statDrawMsMax = 0;
+static volatile uint16_t recentLoopMs = 0, recentDrawMs = 0;   // the same, per second, for the System page
 static volatile uint32_t loopBeat = 0, uiBeat = 0;
 static volatile int16_t lastTouchX = -1, lastTouchY = -1;
 static volatile int16_t imuX = 0, imuY = 0, imuZ = 0;
@@ -198,8 +223,17 @@ void busUnlock() { xSemaphoreGiveRecursive(busMux); }
 
 // ============================================================ main loop side
 
-enum Cmd : uint8_t { B_NONE = 0, B_PREV, B_NEXT, B_PORT,                       // handled in the UI task
-                     B_BAUD, B_AUTO, B_BREAK, B_ENTER, B_CTRLC, B_REC, B_BT, B_SD };   // carried out by the main loop
+enum Cmd : uint8_t {
+  B_NONE = 0,
+  // handled in the UI task
+  B_PREV, B_NEXT, B_PORT, B_BACK, B_LIST_PREV, B_LIST_NEXT, B_CFG_ROW, B_CFG_CANCEL, B_PLAY_ACK, B_NET_OPEN, B_NET_ROW,
+  B_ASK_FORGET, B_CONFIRM,
+  K_CHAR, K_SHIFT, K_SYM, K_BKSP, K_OK,
+  // carried out by the main loop
+  B_BAUD, B_AUTO, B_BREAK, B_ENTER, B_CTRLC, B_REC, B_BT, B_SD, B_PLAY, B_STOP, B_SCAN, B_JOIN, B_FORGET,
+  B_BRIGHT_DOWN, B_BRIGHT_UP, B_TIMEOUT
+};
+static const uint8_t FIRST_LOOP_CMD = B_BAUD;
 
 static const uint32_t BAUD_PRESETS[] = {9600, 19200, 38400, 57600, 115200};
 
@@ -223,6 +257,97 @@ static void toAscii(const char *in, char *out, size_t size) {
 }
 
 static void copyStr(char *dst, size_t size, const String &s) { toAscii(s.c_str(), dst, size); }
+
+// ---- CPU load: the idle task of each core tells how much of the time it got.
+// It runs once per tick when the core has nothing to do, so any gap longer than
+// a tick was somebody's work. Coarse (work shorter than a tick hides in it), but
+// free of the run-time statistics this build of FreeRTOS does not have.
+static volatile uint32_t idleUs[2] = {0, 0};
+static int64_t idleLast[2] = {0, 0};
+static bool idleTick(int core) {
+  int64_t t = esp_timer_get_time(), d = t - idleLast[core];
+  idleLast[core] = t;
+  idleUs[core] = idleUs[core] + (uint32_t)(d > 1000 ? 1000 : d);
+  return true;                                     // nothing more to do: the core may sleep
+}
+static bool idleHook0() { return idleTick(0); }
+static bool idleHook1() { return idleTick(1); }
+
+static uint8_t cpuLoad[2] = {0, 0};
+static int8_t chipTemp = 0;
+static uint16_t loopMsShown = 0, drawMsShown = 0;
+
+static void sampleSystem(uint32_t now) {           // once a second
+  static uint32_t last = 0;
+  static int64_t lastUs = 0;
+  if (now - last < 1000) return;
+  last = now;
+  int64_t t = esp_timer_get_time();
+  uint32_t span = (uint32_t)(t - lastUs);
+  lastUs = t;
+  for (int c = 0; c < 2; c++) {
+    uint32_t idle = idleUs[c];
+    idleUs[c] = 0;
+    uint32_t pct = span ? (uint64_t)idle * 100 / span : 100;
+    cpuLoad[c] = pct >= 100 ? 0 : 100 - pct;
+  }
+  chipTemp = (int8_t)temperatureRead();
+  loopMsShown = recentLoopMs; recentLoopMs = 0;
+  drawMsShown = recentDrawMs; recentDrawMs = 0;
+}
+
+// ---- stored configurations (Skripte page). The directory is read when the page
+// is opened and every few seconds while it is shown.
+static char cfgNames[MAX_CFG][Configs::MAX_NAME + 1];
+static uint8_t cfgCount = 0;
+static void loadConfigs() {
+  cfgCount = 0;
+  JsonDocument d;
+  if (deserializeJson(d, Configs::listJson())) return;
+  for (JsonObjectConst o : d["configs"].as<JsonArrayConst>()) {
+    if (cfgCount == MAX_CFG) break;
+    strlcpy(cfgNames[cfgCount++], o["name"] | "", sizeof(cfgNames[0]));
+  }
+}
+
+// ---- WLAN scan for the Setup page
+struct NetEntry { char ssid[33]; int8_t rssi; bool locked; };
+static NetEntry nets[MAX_NETS];
+static uint8_t netCount = 0, scanState = 0;
+
+static void startScan() {
+  if (scanState == 1) return;
+  if (Ble::state() != Ble::OFF) WiFi.setSleep(true);       // station + Bluetooth without modem sleep aborts
+  if (WiFi.getMode() == WIFI_AP) WiFi.mode(WIFI_AP_STA);   // scanning needs the station interface
+  WiFi.scanDelete();
+  if (WiFi.scanNetworks(true) == WIFI_SCAN_FAILED) { scanState = 2; netCount = 0; return; }
+  scanState = 1;
+}
+
+static void pollScan() {
+  if (scanState != 1) return;
+  int n = WiFi.scanComplete();
+  if (n == WIFI_SCAN_RUNNING) return;
+  netCount = 0;
+  for (int i = 0; i < n && netCount < MAX_NETS; i++) {       // strongest first; one line per name
+    String ssid = WiFi.SSID(i);
+    if (!ssid.length()) continue;
+    bool dup = false;
+    for (uint8_t k = 0; k < netCount; k++) dup |= ssid == nets[k].ssid;
+    if (dup) continue;
+    strlcpy(nets[netCount].ssid, ssid.c_str(), sizeof(nets[0].ssid));
+    nets[netCount].rssi = WiFi.RSSI(i);
+    nets[netCount].locked = WiFi.encryptionType(i) != WIFI_AUTH_OPEN;
+    netCount++;
+  }
+  WiFi.scanDelete();
+  scanState = 2;
+}
+
+struct Snapshot;
+static void fillSystem(Snapshot &s);
+static void fillScripts(Snapshot &s);
+static void fillNets(Snapshot &s);
 
 static void buildSnapshot() {
   static Snapshot s;                               // static: too big for comfort on the stack
@@ -263,12 +388,51 @@ static void buildSnapshot() {
   strlcpy(s.sdType, Sd::typeName(), sizeof(s.sdType));
   s.sdUsedMb = Sd::usedMb();
   s.sdTotalMb = Sd::totalMb();
-  s.heapKb = ESP.getFreeHeap() / 1024;
   s.brightness = settings.oledBrightness;
+  fillSystem(s);
+  fillScripts(s);
+  fillNets(s);
   s.timeoutS = settings.displayTimeout;
   s.flip = settings.oledFlip;
   Lock l(stateMux);
   shared = s;
+}
+
+static void fillSystem(Snapshot &s) {
+  s.cpu[0] = cpuLoad[0];
+  s.cpu[1] = cpuLoad[1];
+  s.heapFree = ESP.getFreeHeap();
+  s.heapTotal = ESP.getHeapSize();
+  s.heapMin = ESP.getMinFreeHeap();
+  s.heapBlock = ESP.getMaxAllocHeap();
+  s.psramFree = ESP.getFreePsram();
+  s.psramTotal = ESP.getPsramSize();
+  s.tempC = chipTemp;
+  s.loopMs = loopMsShown;
+  s.drawMs = drawMsShown;
+  s.tasks = uxTaskGetNumberOfTasks();
+}
+
+static void fillScripts(Snapshot &s) {
+  s.cfgCount = cfgCount;
+  for (uint8_t i = 0; i < cfgCount; i++) toAscii(cfgNames[i], s.cfg[i], sizeof(s.cfg[i]));
+  s.playState = Player::state();
+  s.playPort = Player::port();
+  s.playLine = Player::line();
+  s.playLines = Player::lines();
+  toAscii(Player::name(), s.playName, sizeof(s.playName));
+  toAscii(Player::result(), s.playResult, sizeof(s.playResult));
+}
+
+static void fillNets(Snapshot &s) {
+  copyStr(s.staSsid, sizeof(s.staSsid), settings.staSsid);
+  s.scanState = scanState;
+  s.netCount = netCount;
+  for (uint8_t i = 0; i < netCount; i++) {
+    strlcpy(s.net[i].ssid, nets[i].ssid, sizeof(s.net[i].ssid));     // byte exact: it is handed back to join
+    s.net[i].rssi = nets[i].rssi;
+    s.net[i].locked = nets[i].locked;
+  }
 }
 
 // ---- terminal grid, fed from the port's replay ring so nothing has to be hooked
@@ -325,9 +489,54 @@ static void termFeed() {
   termVersion = termVersion + 1;
 }
 
-static void runCommand(uint8_t id, uint8_t port) {
+static uint32_t rebootAt = 0;
+
+static void saveAndReboot(const char *what) {
+  Store::save();
+  message(what, "Neustart ...", 3000);
+  rebootAt = millis() + 1500;
+}
+
+static void runCommand(uint8_t id, uint8_t arg, uint8_t port) {
   if (port >= MAX_PORTS) return;
+  static const uint16_t TIMEOUTS[] = {15, 60, 300, 0};
   switch (id) {
+    case B_PLAY:
+      if (arg < cfgCount && !Player::start(cfgNames[arg], port)) message("Konfiguration", Player::result(), 2500);
+      break;
+    case B_STOP: Player::stop(); break;
+    case B_SCAN: startScan(); break;
+    case B_JOIN: {
+      Lock l(stateMux);
+      settings.staSsid = joinSsid;
+      settings.staPass = joinPass;
+      settings.staAuth = 0;                // WPA2/WPA3 with a key; 802.1X is set up in the web UI
+      memset(joinPass, 0, sizeof(joinPass));
+    }
+      saveAndReboot("WLAN gespeichert");
+      break;
+    case B_FORGET:
+      settings.staSsid = "";
+      settings.staPass = "";
+      settings.staAuth = 0;
+      saveAndReboot("WLAN-Client aus");
+      break;
+    case B_BRIGHT_DOWN:
+    case B_BRIGHT_UP: {
+      int v = settings.oledBrightness + (id == B_BRIGHT_UP ? 32 : -32);
+      settings.oledBrightness = constrain(v, 0, 255);
+      Store::save();
+      Net::markDirty();
+      break;
+    }
+    case B_TIMEOUT: {
+      size_t i = 0, n = sizeof(TIMEOUTS) / sizeof(TIMEOUTS[0]);
+      while (i < n && TIMEOUTS[i] != settings.displayTimeout) i++;
+      settings.displayTimeout = TIMEOUTS[i < n ? (i + 1) % n : 1];
+      Store::save();
+      Net::markDirty();
+      break;
+    }
     case B_BAUD: {
       const size_t n = sizeof(BAUD_PRESETS) / sizeof(BAUD_PRESETS[0]);
       SerialCfg c = settings.port[port].serial;
@@ -376,6 +585,8 @@ static void printStatus() {
                 (unsigned long)statTouches, lastTouchX, lastTouchY, (unsigned long)statTouchMsMax,
                 imuFound ? "ok" : "fehlt", imuX, imuY, imuZ);
   Serial.printf("[DIAG] SD: %s | %s\n", Sd::typeName(), Sd::history().c_str());
+  Serial.printf("[DIAG] CPU %u%% / %u%%, Chip %d C, Skript-Zustand %d (%s)\n", cpuLoad[0], cpuLoad[1], chipTemp,
+                (int)Player::state(), Player::result());
   Serial.printf("[DIAG] Bluetooth: Zustand %d\n", (int)Ble::state());
   statLoopGapMax = statUiGapMax = statTouchMsMax = statDrawMsMax = 0;
 }
@@ -402,6 +613,10 @@ static void console() {
     else if (sscanf(line, "tap %d %d", &a, &b) == 2) { reqTapX = a; reqTapY = b; }
     else if (sscanf(line, "screen %d", &a) == 1) reqScreen = a;
     else if (sscanf(line, "rot %d", &a) == 1) reqRot = a & 3;
+    else if (!strcmp(line, "cfgtest")) {             // a small configuration to try the Skripte page with
+      const char *err = Configs::save("Demo", "show version\n@pause 1\nshow clock\n", "");
+      Serial.printf("[DIAG] Konfiguration \"Demo\": %s\n", err ? err : "gespeichert");
+    }
     else if (!strcmp(line, "wake")) reqWake = true;
     else if (!strcmp(line, "off")) reqOff = true;
   }
@@ -421,6 +636,20 @@ static int W = 320, H = 240;
 static int termColsUi = TERM_MAX_COLS, termRowsUi = 19;
 static uint32_t lastActivity = 0;
 static bool dirty = true;
+
+// sub-states of the pages with lists and the keyboard
+enum SetupMode : uint8_t { SETUP_MAIN = 0, SETUP_NETS, SETUP_PASS, SETUP_CONFIRM };
+static uint8_t confirmId = 0;            // what "Ja" on the confirmation page carries out
+static const char *confirm1 = "", *confirm2 = "";
+static uint8_t setupMode = SETUP_MAIN;
+static uint8_t listPage = 0;             // page of the list shown (scripts or networks)
+static int8_t cfgSel = -1;               // script picked, waiting for "Abspielen"
+static bool playAcked = true;            // the result of the last playback has been dismissed
+static char netSsid[33];                 // network being joined
+static char kbText[64];                  // what has been typed
+static uint8_t kbLayer = 0;              // 0 lower, 1 upper, 2 symbols
+
+static bool modal() { return screen == S_SETUP && setupMode != SETUP_MAIN; }
 
 static String fmtBytes(uint32_t b) {
   char buf[12];
@@ -610,8 +839,8 @@ static void imuPoll(uint32_t now) {
 }
 
 // ---- touch + buttons
-struct Btn { int16_t x, y, w, h; uint8_t id; };
-static Btn btns[10];
+struct Btn { int16_t x, y, w, h; uint8_t id, arg; };
+static Btn btns[64];
 static uint8_t btnCount = 0;
 
 static bool touchDown = false, touchSwallow = false;
@@ -623,43 +852,114 @@ static const uint32_t TOUCH_RELEASE_MS = 120;
 
 static bool inside(const Btn &b, int x, int y) { return x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h; }
 
-static void addHotspot(int x, int y, int w, int h, uint8_t id) {
-  if (btnCount < sizeof(btns) / sizeof(btns[0])) btns[btnCount++] = {(int16_t)x, (int16_t)y, (int16_t)w, (int16_t)h, id};
+static void addHotspot(int x, int y, int w, int h, uint8_t id, uint8_t arg = 0) {
+  if (btnCount < sizeof(btns) / sizeof(btns[0]))
+    btns[btnCount++] = {(int16_t)x, (int16_t)y, (int16_t)w, (int16_t)h, id, arg};
 }
 
-static void button(int x, int y, int w, int h, const char *label, uint8_t id, uint32_t textColor = C_TEXT) {
-  Btn b = {(int16_t)x, (int16_t)y, (int16_t)w, (int16_t)h, id};
-  bool down = touchDown && !touchSwallow && inside(b, touchX0, touchY0) && inside(b, touchX, touchY);
+static bool isDown(int x, int y, int w, int h) {
+  Btn b = {(int16_t)x, (int16_t)y, (int16_t)w, (int16_t)h, 0, 0};
+  return touchDown && !touchSwallow && inside(b, touchX0, touchY0) && inside(b, touchX, touchY);
+}
+
+static void button(int x, int y, int w, int h, const char *label, uint8_t id, uint32_t textColor = C_TEXT,
+                   uint8_t arg = 0, const lgfx::IFont *font = &fonts::DejaVu12) {
+  bool down = isDown(x, y, w, h);
   g->fillRoundRect(x, y, w, h, 6, down ? C_BTN_DOWN : C_BTN);
-  g->setFont(&fonts::DejaVu12);
+  g->setFont(font);
   g->setTextDatum(lgfx::middle_center);
   g->setTextColor(down ? C_TEXT : textColor);
   g->drawString(label, x + w / 2, y + h / 2);
-  addHotspot(x, y, w, h, id);
+  addHotspot(x, y, w, h, id, arg);
 }
 
-struct BtnDef { const char *label; uint8_t id; uint32_t color; };
+struct BtnDef { const char *label; uint8_t id; uint32_t color; uint8_t arg; };
 
-static void buttonRow(const BtnDef *defs, int n) {
-  const int gap = 4, y = H - NAV_H - BTN_H - 2;
+static void buttonRow(const BtnDef *defs, int n, int y = -1) {
+  const int gap = 4;
+  if (y < 0) y = H - (modal() ? 0 : NAV_H) - BTN_H - 2;
   int w = (W - gap * (n + 1)) / n;
-  for (int i = 0; i < n; i++) button(gap + i * (w + gap), y, w, BTN_H, defs[i].label, defs[i].id, defs[i].color);
+  for (int i = 0; i < n; i++)
+    button(gap + i * (w + gap), y, w, BTN_H, defs[i].label, defs[i].id, defs[i].color, defs[i].arg);
 }
 
-static void press(uint8_t id) {
-  dirty = true;
-  switch (id) {
-    case B_PREV: screen = (screen + S_COUNT - 1) % S_COUNT; uiScreen = screen; return;
-    case B_NEXT: screen = (screen + 1) % S_COUNT; uiScreen = screen; return;
-    case B_PORT: nextPort(); return;
-  }
-  uint16_t cmd = (uint16_t)id << 8 | selPort;      // everything else belongs to the main loop
+static void gotoScreen(uint8_t s) {
+  screen = s % S_COUNT;
+  uiScreen = screen;
+  setupMode = SETUP_MAIN;
+  listPage = 0;
+  cfgSel = -1;
+}
+
+static void sendCmd(uint8_t id, uint8_t arg = 0) {
+  uint32_t cmd = (uint32_t)id << 16 | (uint32_t)arg << 8 | selPort;
   xQueueSend(cmdQueue, &cmd, 0);
 }
 
+static void press(uint8_t id, uint8_t arg = 0) {
+  dirty = true;
+  switch (id) {
+    case B_PREV: gotoScreen(screen + S_COUNT - 1); return;
+    case B_NEXT: gotoScreen(screen + 1); return;
+    case B_PORT: nextPort(); return;
+    case B_LIST_PREV: if (listPage) listPage--; return;
+    case B_LIST_NEXT: listPage++; return;            // the drawing code keeps it in range
+    case B_CFG_ROW: cfgSel = arg; return;
+    case B_CFG_CANCEL: cfgSel = -1; return;
+    case B_PLAY_ACK: playAcked = true; return;
+    case B_PLAY: playAcked = false; cfgSel = -1; break;
+    case B_NET_OPEN: setupMode = SETUP_NETS; listPage = 0; sendCmd(B_SCAN); return;
+    case B_BACK:
+      setupMode = setupMode == SETUP_PASS || (setupMode == SETUP_CONFIRM && confirmId == B_JOIN) ? SETUP_NETS : SETUP_MAIN;
+      return;
+    case B_NET_ROW:
+      if (arg >= S.netCount) return;
+      strlcpy(netSsid, S.net[arg].ssid, sizeof(netSsid));
+      kbText[0] = 0;
+      kbLayer = 0;
+      if (S.net[arg].locked) { setupMode = SETUP_PASS; return; }
+      // open network: nothing to type, but never joined by a single (stray) tap
+      confirmId = B_JOIN;
+      confirm1 = "Offenes Netz ohne Verschluesselung.";
+      confirm2 = "Verbinden? Das Geraet startet neu.";
+      setupMode = SETUP_CONFIRM;
+      return;
+    case B_ASK_FORGET:
+      confirmId = B_FORGET;
+      confirm1 = "WLAN-Client ausschalten?";
+      confirm2 = "Das Geraet startet neu.";
+      setupMode = SETUP_CONFIRM;
+      return;
+    case B_CONFIRM:
+      id = confirmId;
+      setupMode = SETUP_MAIN;
+      break;
+    case K_CHAR: {
+      size_t n = strlen(kbText);
+      if (n < sizeof(kbText) - 1) { kbText[n] = arg; kbText[n + 1] = 0; }
+      return;
+    }
+    case K_BKSP: { size_t n = strlen(kbText); if (n) kbText[n - 1] = 0; return; }
+    case K_SHIFT: kbLayer = kbLayer == 1 ? 0 : 1; return;
+    case K_SYM: kbLayer = kbLayer == 2 ? 0 : 2; return;
+    case K_OK:
+      if (strlen(kbText) < 8) return;                // a WPA key has 8 to 63 characters
+      id = B_JOIN;
+      break;
+  }
+  if (id == B_JOIN) {
+    Lock l(stateMux);
+    strlcpy(joinSsid, netSsid, sizeof(joinSsid));
+    strlcpy(joinPass, kbText, sizeof(joinPass));
+    memset(kbText, 0, sizeof(kbText));
+    setupMode = SETUP_MAIN;
+  }
+  if (id >= FIRST_LOOP_CMD) sendCmd(id, arg);        // everything else belongs to the main loop
+}
+
 static void tapAt(int x, int y) {
-  for (uint8_t i = 0; i < btnCount; i++)
-    if (inside(btns[i], x, y)) { press(btns[i].id); return; }
+  for (int i = btnCount - 1; i >= 0; i--)            // drawn last = on top
+    if (inside(btns[i], x, y)) { press(btns[i].id, btns[i].arg); return; }
 }
 
 static void touchPoll(uint32_t now) {
@@ -688,7 +988,7 @@ static void touchPoll(uint32_t now) {
   lastTouchX = touchX0; lastTouchY = touchY0;
   if (touchSwallow) return;
   int dx = touchX - touchX0, dy = touchY - touchY0;
-  if (abs(dx) > 50 && abs(dx) > abs(dy)) press(dx < 0 ? B_NEXT : B_PREV);   // swipe left = next screen
+  if (abs(dx) > 50 && abs(dx) > abs(dy) && !modal()) press(dx < 0 ? B_NEXT : B_PREV);   // swipe left = next screen
   else if (abs(dx) < 16 && abs(dy) < 16) tapAt(touchX0, touchY0);
 }
 
@@ -704,6 +1004,13 @@ static void drawHeader() {
   g->setTextColor(C_DIM);
   g->setTextDatum(lgfx::middle_center);
   g->drawString("<", 16, HEAD_H / 2);
+  if (modal()) {                         // a sub-page: the arrow leads back, nothing else leaves it
+    g->setTextColor(C_TEXT);
+    const char *title = setupMode == SETUP_NETS ? "WLAN waehlen" : setupMode == SETUP_CONFIRM && confirmId == B_FORGET ? "WLAN-Client" : netSsid;
+    g->drawString(fit(title, W - 80).c_str(), W / 2, HEAD_H / 2);
+    addHotspot(0, 0, 56, HEAD_H + 6, B_BACK);
+    return;
+  }
   g->drawString(">", W - 16, HEAD_H / 2);
   g->setTextColor(C_TEXT);
   g->drawString(TITLES[screen], W / 2, HEAD_H / 2);
@@ -728,6 +1035,7 @@ static void drawHeader() {
 }
 
 static void drawNav() {
+  if (modal()) return;
   int y = H - NAV_H / 2, x0 = W / 2 - (S_COUNT - 1) * 7;
   for (int i = 0; i < S_COUNT; i++) g->fillCircle(x0 + i * 14, y, i == screen ? 3 : 2, i == screen ? C_ACCENT : C_LINE);
 }
@@ -889,11 +1197,252 @@ static void screenInfo() {
   (void)(row("Firmware", String(FW_VERSION) + "  up " + fmtUptime(millis() / 1000)) &&
          row("Host", String(S.hostname) + ".local") && row("Hotspot", String(S.apStations) + " Geraete") &&
          row("Clients", clientsLine()) && row("Raw-TCP", tcp) && row("Akku", batteryLine()) && row("SD", sdLine()) &&
-         row("RAM", String(S.heapKb) + " kB frei") && row("Lage", imu) && row("Board", BOARD_NAME));
+         row("Lage", imu) && row("Board", BOARD_NAME));
   if (sdButton) {
     BtnDef def = {"SD-Karte einbinden", B_SD, C_TEXT};
     buttonRow(&def, 1);
   }
+}
+
+// one bar with a caption, e.g. "RAM   [#####     ]  201 von 320 kB"
+static void bar(const char *label, int pct, const String &text, uint32_t color) {
+  if (rowY + 22 > rowLimit) return;
+  pct = constrain(pct, 0, 100);
+  g->setFont(&fonts::DejaVu12);
+  g->setTextDatum(lgfx::top_left);
+  g->setTextColor(C_DIM);
+  g->drawString(label, 8, rowY + 2);
+  int x = 64, w = W - x - 8;
+  g->fillRoundRect(x, rowY, w, 16, 4, C_PANEL);
+  if (pct) g->fillRoundRect(x, rowY, max(8, w * pct / 100), 16, 4, color);
+  g->setTextColor(C_TEXT);
+  g->setTextDatum(lgfx::middle_center);
+  g->drawString(text.c_str(), x + w / 2, rowY + 9);
+  rowY += 22;
+}
+
+static uint32_t loadColor(int pct) { return pct >= 85 ? C_RED : pct >= 60 ? C_AMBER : C_GREEN; }
+
+static void screenSystem() {
+  rowY = HEAD_H + 8;
+  rowLimit = H - NAV_H - 2;
+  bar("CPU 0", S.cpu[0], String(S.cpu[0]) + " %  Funk + Anzeige", loadColor(S.cpu[0]));
+  bar("CPU 1", S.cpu[1], String(S.cpu[1]) + " %  Bruecke", loadColor(S.cpu[1]));
+  int ram = S.heapTotal ? 100 - (int)((uint64_t)S.heapFree * 100 / S.heapTotal) : 0;
+  bar("RAM", ram, String((S.heapTotal - S.heapFree) / 1024) + " von " + String(S.heapTotal / 1024) + " kB", loadColor(ram));
+  if (S.psramTotal) {
+    int ps = 100 - (int)((uint64_t)S.psramFree * 100 / S.psramTotal);
+    bar("PSRAM", ps, String((S.psramTotal - S.psramFree) / 1024) + " von " + String(S.psramTotal / 1024) + " kB", C_BLUE);
+  }
+  rowY += 2;
+  (void)(row("RAM frei", String(S.heapFree / 1024) + " kB, min. " + String(S.heapMin / 1024) + " kB") &&
+         row("Block", String(S.heapBlock / 1024) + " kB am Stueck") &&
+         row("Takt", "Pause " + String(S.loopMs) + " ms, Bild " + String(S.drawMs) + " ms") &&
+         row("Chip", String(S.tempC) + " C,  " + String(S.tasks) + " Tasks") &&
+         row("Laufzeit", fmtUptime(millis() / 1000)));
+}
+
+// ---- lists (stored configurations, WLAN networks): rows to tap, paged
+static const int LIST_ROW_H = 28;
+
+static int listRows(int top, int bottom) { return max(1, (bottom - top) / LIST_ROW_H); }
+
+static void listRow(int index, int y, const char *text, const char *right, bool selected, uint8_t id) {
+  bool down = isDown(4, y, W - 8, LIST_ROW_H - 2);
+  g->fillRoundRect(4, y, W - 8, LIST_ROW_H - 2, 5, selected || down ? C_BTN_DOWN : C_PANEL);
+  g->setFont(&fonts::DejaVu12);
+  g->setTextDatum(lgfx::middle_left);
+  g->setTextColor(C_TEXT);
+  int rw = right ? g->textWidth(right) + 10 : 0;
+  g->drawString(fit(text, W - 24 - rw).c_str(), 12, y + LIST_ROW_H / 2 - 1);
+  if (right) {
+    g->setTextDatum(lgfx::middle_right);
+    g->setTextColor(selected || down ? C_TEXT : C_DIM);
+    g->drawString(right, W - 12, y + LIST_ROW_H / 2 - 1);
+  }
+  addHotspot(4, y, W - 8, LIST_ROW_H - 2, id, index);
+}
+
+static void centered(const char *l1, const char *l2, int y) {
+  g->setTextDatum(lgfx::middle_center);
+  g->setFont(&fonts::DejaVu12);
+  g->setTextColor(C_TEXT);
+  g->drawString(l1, W / 2, y);
+  g->setTextColor(C_DIM);
+  if (l2) g->drawString(l2, W / 2, y + 18);
+}
+
+static void screenScripts() {
+  static char label[24], pager[12];
+  int top = HEAD_H + 6, bottom = H - NAV_H - BTN_H - 6;
+
+  // a playback is running, or its result has not been dismissed yet
+  if (S.playState == Player::RUNNING || (S.playState != Player::IDLE && !playAcked)) {
+    bool running = S.playState == Player::RUNNING;
+    g->setTextDatum(lgfx::top_left);
+    g->setFont(&fonts::DejaVu18);
+    g->setTextColor(C_TEXT);
+    g->drawString(fit(S.playName, W - 16).c_str(), 8, top + 2);
+    g->setFont(&fonts::DejaVu12);
+    g->setTextColor(C_DIM);
+    g->drawString((String("auf ") + S.portName[S.playPort] + ",  Zeile " + S.playLine + " von " + S.playLines).c_str(), 8, top + 28);
+    int pct = S.playLines ? S.playLine * 100 / S.playLines : 0;
+    g->fillRoundRect(8, top + 50, W - 16, 14, 4, C_PANEL);
+    if (pct) g->fillRoundRect(8, top + 50, max(8, (W - 16) * pct / 100), 14, 4,
+                              running ? C_ACCENT : S.playState == Player::DONE ? C_GREEN : C_RED);
+    g->setTextColor(running ? C_TEXT : S.playState == Player::DONE ? C_GREEN : C_RED);
+    g->drawString(fit(S.playResult, W - 16).c_str(), 8, top + 72);
+    BtnDef def = running ? BtnDef{"Stopp", B_STOP, C_RED, 0} : BtnDef{"OK", B_PLAY_ACK, C_TEXT, 0};
+    buttonRow(&def, 1);
+    return;
+  }
+
+  if (!S.cfgCount) {
+    centered("Keine Konfigurationen gespeichert", "Anlegen: Weboberflaeche, Reiter Konfig", (top + bottom) / 2 - 8);
+    return;
+  }
+  int rows = listRows(top, bottom), pages = (S.cfgCount + rows - 1) / rows;
+  if (listPage >= pages) listPage = pages - 1;
+  for (int i = 0; i < rows; i++) {
+    int idx = listPage * rows + i;
+    if (idx >= S.cfgCount) break;
+    listRow(idx, top + i * LIST_ROW_H, S.cfg[idx], nullptr, idx == cfgSel, B_CFG_ROW);
+  }
+  if (cfgSel >= 0 && cfgSel < S.cfgCount) {          // picked: one more tap sends it, on purpose
+    snprintf(label, sizeof(label), "Senden an Port %u", selPort + 1);
+    BtnDef defs[2] = {{label, B_PLAY, C_AMBER, (uint8_t)cfgSel}, {"Abbrechen", B_CFG_CANCEL, C_TEXT, 0}};
+    buttonRow(defs, 2);
+    return;
+  }
+  BtnDef defs[4];
+  int n = 0;
+  if (pages > 1) {
+    snprintf(pager, sizeof(pager), "%u / %u", listPage + 1, pages);
+    defs[n++] = {"<", B_LIST_PREV, C_TEXT, 0};
+    defs[n++] = {pager, B_NONE, C_DIM, 0};
+    defs[n++] = {">", B_LIST_NEXT, C_TEXT, 0};
+  }
+  if (S.ports > 1) {
+    snprintf(label, sizeof(label), "Port %u", selPort + 1);
+    defs[n++] = {label, B_PORT, C_ACCENT, 0};
+  }
+  if (n) buttonRow(defs, n);
+  else centered("Antippen, dann senden", nullptr, H - NAV_H - BTN_H / 2 - 2);
+}
+
+// ---- on-screen keyboard (WLAN key). QWERTZ, three layers, ten keys per row.
+static const char *const KB_LAYERS[3][4] = {
+    {"1234567890", "qwertzuiop", "asdfghjkl-", "yxcvbnm._@"},
+    {"!\"#$%&/()=", "QWERTZUIOP", "ASDFGHJKL+", "YXCVBNM,;:"},
+    {"1234567890", "!\"#$%&/()=", "?+*~'<>|\\^", "{}[]_-.,;:"},
+};
+
+static void keyboard(int top) {
+  int kw = W / 10, x0 = (W - kw * 10) / 2;
+  int kh = min(36, (H - top - 2) / 5);
+  char cap[2] = {0, 0};
+  for (int r = 0; r < 4; r++) {
+    const char *keys = KB_LAYERS[kbLayer][r];
+    for (int c = 0; c < 10; c++) {
+      cap[0] = keys[c];
+      button(x0 + c * kw + 1, top + r * kh + 1, kw - 2, kh - 2, cap, K_CHAR, C_TEXT, keys[c], &fonts::DejaVu18);
+    }
+  }
+  int y = top + 4 * kh + 1, h = kh - 2;
+  button(x0 + 1, y, kw * 3 / 2 - 2, h, kbLayer == 1 ? "abc" : "ABC", K_SHIFT, C_ACCENT);
+  button(x0 + kw * 3 / 2 + 1, y, kw * 3 / 2 - 2, h, kbLayer == 2 ? "abc" : "#+=", K_SYM, C_ACCENT);
+  button(x0 + kw * 3 + 1, y, kw * 3 - 2, h, "Leer", K_CHAR, C_DIM, ' ');
+  button(x0 + kw * 6 + 1, y, kw * 2 - 2, h, "<-", K_BKSP, C_AMBER);
+  button(x0 + kw * 8 + 1, y, kw * 2 - 2, h, "OK", K_OK, strlen(kbText) >= 8 ? C_GREEN : C_LINE);
+}
+
+static const char *signalText(int rssi) { return rssi >= -60 ? "stark" : rssi >= -75 ? "mittel" : "schwach"; }
+
+static void screenSetup() {
+  static char pager[12], right[20];
+  if (setupMode == SETUP_PASS) {
+    int top = HEAD_H + 4;
+    g->fillRoundRect(4, top, W - 8, 24, 4, C_PANEL);
+    g->setFont(&fonts::DejaVu12);
+    g->setTextDatum(lgfx::middle_left);
+    String shown = kbText;                           // long keys: show the end, that is where typing happens
+    while (shown.length() > 1 && g->textWidth((shown + "_").c_str()) > W - 24) shown.remove(0, 1);
+    if (kbText[0]) {
+      g->setTextColor(C_TEXT);
+      g->drawString((shown + "_").c_str(), 10, top + 12);
+    } else {
+      g->setTextColor(C_DIM);
+      g->drawString("WLAN-Schluessel (8-63 Zeichen)", 10, top + 12);
+    }
+    keyboard(top + 28);
+    return;
+  }
+
+  if (setupMode == SETUP_CONFIRM) {
+    centered(confirm1, confirm2, (HEAD_H + H - BTN_H) / 2 - 12);
+    BtnDef defs[2] = {{"Ja", B_CONFIRM, C_AMBER, 0}, {"Abbrechen", B_BACK, C_TEXT, 0}};
+    buttonRow(defs, 2);
+    return;
+  }
+
+  if (setupMode == SETUP_NETS) {
+    int top = HEAD_H + 6, bottom = H - BTN_H - 6;
+    if (S.scanState == 1) centered("Suche Netze ...", nullptr, (top + bottom) / 2);
+    else if (!S.netCount) centered("Kein Netz gefunden", nullptr, (top + bottom) / 2);
+    int rows = listRows(top, bottom), pages = max(1, (S.netCount + rows - 1) / rows);
+    if (listPage >= pages) listPage = pages - 1;
+    for (int i = 0; S.scanState == 2 && i < rows; i++) {
+      int idx = listPage * rows + i;
+      if (idx >= S.netCount) break;
+      snprintf(right, sizeof(right), "%s%s", S.net[idx].locked ? "" : "offen, ", signalText(S.net[idx].rssi));
+      listRow(idx, top + i * LIST_ROW_H, S.net[idx].ssid, right, false, B_NET_ROW);
+    }
+    BtnDef defs[4];
+    int n = 0;
+    if (pages > 1) {
+      snprintf(pager, sizeof(pager), "%u / %u", listPage + 1, pages);
+      defs[n++] = {"<", B_LIST_PREV, C_TEXT, 0};
+      defs[n++] = {pager, B_NONE, C_DIM, 0};
+      defs[n++] = {">", B_LIST_NEXT, C_TEXT, 0};
+    }
+    defs[n++] = {"Neu suchen", B_SCAN, C_TEXT, 0};
+    buttonRow(defs, n);
+    return;
+  }
+
+  // main page: brightness, display timeout, WLAN client
+  int y = HEAD_H + 8;
+  const int bw = 44, bh = 30;
+  g->setFont(&fonts::DejaVu12);
+  g->setTextDatum(lgfx::middle_left);
+  g->setTextColor(C_DIM);
+  g->drawString("Helligkeit", 8, y + bh / 2);
+  button(W - 2 * bw - 12, y, bw, bh, "-", B_BRIGHT_DOWN, C_TEXT, 0, &fonts::DejaVu18);
+  button(W - bw - 8, y, bw, bh, "+", B_BRIGHT_UP, C_TEXT, 0, &fonts::DejaVu18);
+  int bx = 84, bwid = W - 2 * bw - 20 - bx;
+  g->fillRoundRect(bx, y + 9, bwid, 12, 4, C_PANEL);
+  g->fillRoundRect(bx, y + 9, max(8, bwid * (S.brightness + 1) / 256), 12, 4, C_ACCENT);
+
+  y += bh + 8;
+  g->setFont(&fonts::DejaVu12);
+  g->setTextDatum(lgfx::middle_left);
+  g->setTextColor(C_DIM);
+  g->drawString("Display aus", 8, y + bh / 2);
+  static char timeout[16];
+  if (!S.timeoutS) strlcpy(timeout, "nie", sizeof(timeout));
+  else if (S.timeoutS < 120) snprintf(timeout, sizeof(timeout), "nach %u s", S.timeoutS);
+  else snprintf(timeout, sizeof(timeout), "nach %u min", S.timeoutS / 60);
+  button(W - 2 * bw - 12, y, 2 * bw + 4, bh, timeout, B_TIMEOUT);
+
+  rowY = y + bh + 12;
+  rowLimit = H - NAV_H - BTN_H - 4;
+  g->drawFastHLine(8, rowY - 6, W - 16, C_LINE);
+  String client = !S.staConfigured ? String("aus") : String(S.staSsid);
+  (void)(row("WLAN", client) &&
+         (!S.staConfigured || row("Status", S.staConnected ? String("verbunden, ") + S.staIp : String("verbinde ..."),
+                                  S.staConnected ? C_GREEN : C_AMBER)));
+  BtnDef defs[2] = {{"Netz waehlen", B_NET_OPEN, C_TEXT, 0}, {"WLAN-Client aus", B_ASK_FORGET, C_AMBER, 0}};
+  buttonRow(defs, S.staConfigured ? 2 : 1);
 }
 
 static void drawMessage() {
@@ -934,6 +1483,9 @@ static void draw(uint32_t now) {
       break;
     case S_BT:   screenBt(); break;
     case S_INFO: screenInfo(); break;
+    case S_SYSTEM:  screenSystem(); break;
+    case S_SCRIPTS: screenScripts(); break;
+    case S_SETUP:   screenSetup(); break;
     default:     screenStatus(); break;
   }
   drawNav();
@@ -1000,7 +1552,7 @@ static void uiTask(void *) {
     if (reqWake) { reqWake = false; uiWake(); }
     if (reqOff) { reqOff = false; uiOff(); }
     if (reqNext) { reqNext = false; press(B_NEXT); }
-    if (reqScreen >= 0) { screen = reqScreen % S_COUNT; uiScreen = screen; reqScreen = -1; dirty = true; }
+    if (reqScreen >= 0) { gotoScreen(reqScreen); reqScreen = -1; dirty = true; }
     if (reqRot >= 0) { setRotation(reqRot); reqRot = -1; }
     if (reqTapX >= 0) {
       int x = reqTapX, y = reqTapY;
@@ -1025,7 +1577,13 @@ static void uiTask(void *) {
       Lock l(stateMux);
       static Snapshot n;
       n = shared;
-      if (screen != S_INFO) { n.heapKb = 0; n.apStations = 0; }     // not shown: no reason to redraw
+      // what the current page does not show is no reason to redraw it
+      if (screen != S_INFO) n.apStations = 0;
+      if (screen != S_SYSTEM) {
+        n.cpu[0] = n.cpu[1] = 0;
+        n.heapFree = n.heapMin = n.heapBlock = n.psramFree = 0;
+        n.tempC = 0; n.loopMs = n.drawMs = 0; n.tasks = 0;
+      }
       if (memcmp(&n, &S, sizeof(S))) { S = n; changed = true; }
       if (seenMsg != msgVersion) {
         seenMsg = msgVersion;
@@ -1058,7 +1616,7 @@ static void uiTask(void *) {
 
     if (on) {
       // things that change with time alone
-      uint32_t tick = screen == S_INFO ? now / 1000 : screen == S_TERM ? now / 500 : 0;
+      uint32_t tick = screen == S_INFO || screen == S_SYSTEM ? now / 1000 : screen == S_TERM ? now / 500 : 0;
       if (tick != lastTick) { lastTick = tick; changed = true; }
       if (changed) dirty = true;
       if (dirty && now - lastDraw >= 40) {
@@ -1068,6 +1626,7 @@ static void uiTask(void *) {
         draw(now);
         uint32_t took = millis() - t0;
         if (took > statDrawMsMax) statDrawMsMax = took;
+        if (took > recentDrawMs) recentDrawMs = took;
       }
     }
     if (reqShot) { reqShot = false; screenshot(); }
@@ -1078,7 +1637,9 @@ static void uiTask(void *) {
 // ============================================================ public (called from the main loop task)
 bool begin() {
   stateMux = xSemaphoreCreateMutex();
-  cmdQueue = xQueueCreate(8, sizeof(uint16_t));
+  cmdQueue = xQueueCreate(8, sizeof(uint32_t));
+  esp_register_freertos_idle_hook_for_cpu(idleHook0, 0);
+  esp_register_freertos_idle_hook_for_cpu(idleHook1, 1);
   busLock();
   busUnlock();
 #if HAS_SDCARD
@@ -1110,6 +1671,7 @@ bool begin() {
 
 bool isOn() { return ready && uiOn; }
 uint8_t page() { return uiScreen == S_STATUS ? PAGE_STATUS : PAGE_INFO; }
+
 void applyBrightness() { reqBrightness = true; }
 void wake() { reqWake = true; }
 void off() { reqOff = true; }
@@ -1128,11 +1690,26 @@ void message(const char *line1, const char *line2, uint32_t ms) {
 void loop() {
   if (!ready) return;
   uint32_t now = millis();
-  if (loopBeat && now - loopBeat > statLoopGapMax) statLoopGapMax = now - loopBeat;
+  if (loopBeat) {
+    uint32_t pause = now - loopBeat;
+    if (pause > statLoopGapMax) statLoopGapMax = pause;
+    if (pause > recentLoopMs) recentLoopMs = pause > 65535 ? 65535 : pause;
+  }
   loopBeat = now;
 
-  uint16_t cmd;
-  while (xQueueReceive(cmdQueue, &cmd, 0) == pdTRUE) runCommand(cmd >> 8, cmd & 0xFF);
+  uint32_t cmd;
+  while (xQueueReceive(cmdQueue, &cmd, 0) == pdTRUE) runCommand(cmd >> 16, (cmd >> 8) & 0xFF, cmd & 0xFF);
+  if (rebootAt && (int32_t)(now - rebootAt) > 0) ESP.restart();
+
+  sampleSystem(now);
+  pollScan();
+  static uint32_t lastCfg = 0;
+  static uint8_t lastScreen = 0xFF;
+  if (uiScreen == S_SCRIPTS && (lastScreen != S_SCRIPTS || now - lastCfg > 4000)) {
+    lastCfg = now;
+    loadConfigs();
+  }
+  lastScreen = uiScreen;
 
   static uint32_t lastSnapshot = 0;
   if (now - lastSnapshot >= 100) {

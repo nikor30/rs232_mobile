@@ -24,6 +24,7 @@
 #include "gui.h"
 #include "sdcard.h"
 #include "ble.h"
+#include "player.h"
 
 // Certificate parsing (PKCS#12, key check) runs in the loop task and needs more
 // than the 8 kB Arduino default.
@@ -134,7 +135,10 @@ void setup() {
   setCpuFrequencyMhz(CPU_MHZ);
   Serial.begin(115200);
 #if ARDUINO_USB_CDC_ON_BOOT
-  Serial.setTxTimeoutMs(0);          // never block when no USB host is attached
+  // Never wait for a USB host that is not reading. Not 0: the core's write loop
+  // counts this value down and wraps around at 0, which blocks for good once
+  // the port is plugged into a computer but not opened - no hotspot, no display.
+  Serial.setTxTimeoutMs(5);
 #endif
 
   for (auto &b : buttons)
@@ -206,6 +210,7 @@ void loop() {
   Gui::loop();
   Sd::loop();
   Ble::loop();
+  Player::loop();
   Led::loop(Net::webClients() + (Net::tcpConnected() ? 1 : 0), Power::low(), Bridge::autobaudRunning());
 
   // one-time low battery notice (with hysteresis)

@@ -5,6 +5,7 @@
 #include "serial_bridge.h"
 #include "net.h"
 #include <NimBLEDevice.h>
+#include <WiFi.h>
 
 namespace Ble {
 
@@ -78,6 +79,7 @@ static RxCb rxCb;
 
 static void start() {
   if (running) return;
+  WiFi.setSleep(true);                   // must be on before Bluetooth joins a WiFi station on the radio (see net.cpp)
   NimBLEDevice::init(settings.apSsid.c_str());
   NimBLEDevice::setSecurityAuth(true, true, true);            // bonding, MITM protection, secure connections
   NimBLEDevice::setSecurityIOCap(BLE_HS_IO_DISPLAY_ONLY);     // we show the PIN, the phone types it
