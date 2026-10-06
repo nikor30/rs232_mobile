@@ -20,4 +20,8 @@ namespace Display {
   // bus holds this lock (recursive). Defined in lcd_ui.cpp only.
   void busLock();
   void busUnlock();
+  // Switch the device off (deep sleep; the BOOT button switches it on again).
+  // wakeAfterS > 0 also wakes it by timer - for testing without a hand on the
+  // board. Defined in lcd_ui.cpp only.
+  void powerOff(const char *reason, uint32_t wakeAfterS = 0);
 }

@@ -24,4 +24,5 @@ namespace Sd {
   uint32_t logBytes(uint8_t port);
   void write(uint8_t port, const uint8_t *data, size_t len);   // ignored unless logging
   void loop();                        // flushes at most every FLUSH_MS
+  void end();                         // close the recordings and release the card (before power-off)
 }

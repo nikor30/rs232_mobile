@@ -21,4 +21,10 @@ namespace Power {
   bool usbHost();      // a computer on the USB port is sending frames right now
   const char *chargeName();   // "", "laedt", "voll"
   String diag();       // one line with the raw values behind all of the above
+
+  // Running from the battery (steady for a few seconds): the callers save power
+  // then - slower CPU clock, dimmed backlight, slower polling.
+  bool saver();
+  void forceSaver(int8_t mode);   // debug console: 0 = off, 1 = on, -1 = automatic
+  bool empty();        // on battery and below BAT_OFF_MV for BAT_OFF_S: time to switch off
 }
