@@ -97,6 +97,8 @@ static bool anyButtonDown() {
 }
 
 static void checkFactoryReset() {
+  // switched on with the button out of power-off: that press is not a reset request
+  if (esp_reset_reason() == ESP_RST_DEEPSLEEP) return;
   if (!anyButtonDown()) return;
   uint32_t t0 = millis();
   while (anyButtonDown()) {
@@ -198,6 +200,26 @@ void setup() {
                   settings.staAuth == 0 ? "WPA2/WPA3-PSK" : "802.1X");
   if (settings.httpsEnabled) Serial.printf("HTTPS  : https://%s/\n", settings.hostname.c_str());
   Serial.printf("RAM    : %u kB frei\n", (unsigned)(ESP.getFreeHeap() / 1024));
+
+  // a button still held from switching on (or from a cancelled factory reset) is not a key press
+  for (auto &b : buttons)
+    if (b.pin >= 0 && digitalRead(b.pin) == LOW) { b.raw = b.pressed = b.longFired = true; b.changedAt = b.downAt = millis(); }
+}
+
+// On battery the processor runs slower: the bridge, the web server and the
+// display need a fraction of 240 MHz. The radio keeps its 80 MHz bus clock at
+// either speed, so UART and SPI timing do not move. Not switched in the middle
+// of a file transfer or a software-UART byte.
+static void cpuClock() {
+#ifdef CPU_MHZ_BATTERY
+  static uint32_t last = 0;
+  if (millis() - last < 1000) return;
+  last = millis();
+  uint32_t want = Power::saver() ? CPU_MHZ_BATTERY : CPU_MHZ;
+  if (want == getCpuFrequencyMhz() || Bridge::busy() || Xfer::active()) return;
+  setCpuFrequencyMhz(want);
+  Serial.printf("[PWR]  CPU-Takt %u MHz (%s)\n", (unsigned)getCpuFrequencyMhz(), Power::saver() ? "Akkubetrieb" : "Netz");
+#endif
 }
 
 void loop() {
@@ -205,6 +227,10 @@ void loop() {
   Xfer::loop();
   Net::loop();
   Power::loop();
+  cpuClock();
+#if HAS_SPI_LCD
+  if (Power::empty()) Display::powerOff("Akku leer");
+#endif
   for (auto &b : buttons) pollButton(b);
   Display::loop();
   Gui::loop();

@@ -24,7 +24,7 @@ pio run -e viewe-5inch -t upload         # 5"-Panel, Core 3.1.1 (pioarduino)
 pio run -e waveshare-s3-lcd2 -t upload   # Waveshare ESP32-S3-Touch-LCD-2, Core 2.0.17
 ```
 
-Auf dem Raspberry Pi liegt PlatformIO in `/root/.local/share/pio-venv/bin/pio`; das Waveshare-Board hängt dort an `/dev/ttyACM0`.
+Auf dem Raspberry Pi liegt PlatformIO in `/root/.local/share/pio-venv/bin/pio`; das Waveshare-Board hängt dort an `/dev/ttyACM0` (nach einem Aus-/Einschalten auch `ttyACM1`; `lcd_debug.py` sucht den Port selbst).
 
 `src/web_assets.h` wird vor jedem Build von `tools/embed_web.py` aus `web/` erzeugt — nicht von Hand ändern. Hardwareprofile stehen in `src/config.h`.
 
@@ -33,6 +33,7 @@ Auf dem Raspberry Pi liegt PlatformIO in `/root/.local/share/pio-venv/bin/pio`; 
 - Am Gerät erprobt: das Mockup (ESP32 DevKit + MAX3232).
 - Waveshare ESP32-S3-Touch-LCD-2 (seit 1. Oktober 2026): Boot, Hotspot, LCD, Touch, Lagesensor und Bluetooth-Kopplung am Gerät geprüft; Oberfläche per Screenshot und simulierten Taps getestet; Akkumessung an IO5 bestätigt, Ladeerkennung nur am USB-Port eines Rechners gesehen (kein Statuspin, aus USB-Frames und Spannung geschlossen); SD-Karte fällt nach jedem Reset aus (offen); serieller Port ohne MAX3232. Details und offene Punkte: `firmware/WAVESHARE.md`.
 - Das Waveshare-Display lässt sich ohne Hinsehen prüfen: `firmware/tools/lcd_debug.py shot bild.png`, `status`, `tap X Y` (Screenshot ansehen statt raten).
+- Waveshare seit 6. Oktober 2026: Port 1 sendet auf IO21 statt IO43 (ROM-Startmeldungen); Seiten scrollen, Tasten größer; Sparmodus im Akkubetrieb (80 MHz, Abdunkeln) und Ausschalten (Tiefschlaf, BOOT-Taste weckt). Per Debug-Konsole am USB-Kabel geprüft — echter Akkubetrieb, BOOT-Wecken und Stromaufnahme nicht. `lcd_debug.py poweroff` **ohne Zeitangabe** lässt sich nur am Gerät rückgängig machen.
 - Übersetzt, nie gelaufen: alles auf dem VIEWE-Panel, mbedTLS-3-Pfade (802.1X/PKCS#12 auf Core 3), LBO-Auswertung.
 - Nicht gebaut: I²C-Tochterplatine; SC16IS752-Treiber fehlt in der Firmware.
 

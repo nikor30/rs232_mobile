@@ -212,6 +212,14 @@ void write(uint8_t port, const uint8_t *data, size_t len) {
   l.bytes += len;
 }
 
+void end() {
+  if (!ok) return;
+  for (uint8_t p = 0; p < MAX_PORTS; p++) logStop(p);
+  BusGuard guard;
+  SD.end();
+  ok = false;
+}
+
 void loop() {
   if (!ok) return;
   uint32_t now = millis();
@@ -256,6 +264,7 @@ String logName(uint8_t) { return String(); }
 uint32_t logBytes(uint8_t) { return 0; }
 void write(uint8_t, const uint8_t *, size_t) {}
 void loop() {}
+void end() {}
 }  // namespace Sd
 
 #endif

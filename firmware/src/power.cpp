@@ -72,6 +72,18 @@ static uint32_t flatSince = 0;          // ... for this many seconds
 
 bool usbHost() { return host; }
 
+// ---- power saving
+#define SAVER_AFTER_S 10                // the charge state must have settled (USB frames need a moment after start-up)
+static uint8_t batSecs = 0, emptySecs = 0;
+static int8_t saverForced = -1;
+bool saver() { return saverForced >= 0 ? saverForced == 1 : batSecs >= SAVER_AFTER_S; }
+void forceSaver(int8_t mode) { saverForced = mode; }
+#ifdef BAT_OFF_MV
+bool empty() { return emptySecs >= BAT_OFF_S; }
+#else
+bool empty() { return false; }
+#endif
+
 #if HAS_CHARGER
 static void chargeSample() {
 #if USB_SOF_DETECT
@@ -113,13 +125,14 @@ const char *chargeName() {
 }
 
 String diag() {
-  char buf[200];
+  char buf[260];
   if (!measured()) return "keine Messung";
-  snprintf(buf, sizeof(buf), "GPIO%d %u mV x %u.%u = %u mV, gefiltert %u mV, %u%%, %s | USB-Host %s, Sprung %s, >=%u mV seit %lu s, konstant seit %lu s -> %s",
+  snprintf(buf, sizeof(buf), "GPIO%d %u mV x %u.%u = %u mV, gefiltert %u mV, %u%%, %s | USB-Host %s, Sprung %s, >=%u mV seit %lu s, konstant seit %lu s -> %s | Sparmodus %s, CPU %u MHz",
            settings.batPin, lastPinMv, settings.batDiv / 10, settings.batDiv % 10,
            (unsigned)(lastPinMv * (settings.batDiv / 10.0f) * BAT_CAL), mv(), pct(), present() ? "Akku da" : "kein Akku",
            USB_SOF_DETECT ? (host ? "ja" : "nein") : "n/a", stepUp ? "ja" : "nein", CHG_FULL_MV, (unsigned long)highSince, (unsigned long)flatSince,
-           HAS_CHARGER ? (charge() == ON_BATTERY ? "Akkubetrieb" : chargeName()) : "ohne Laderkennung");
+           HAS_CHARGER ? (charge() == ON_BATTERY ? "Akkubetrieb" : chargeName()) : "ohne Laderkennung",
+           saverForced >= 0 ? (saver() ? "erzwungen" : "gesperrt") : saver() ? "ja" : "nein", (unsigned)getCpuFrequencyMhz());
   return String(buf);
 }
 
@@ -169,6 +182,11 @@ void loop() {
   if (fabsf(s - filt) > 400) filt = s;
   else filt = filt * 0.85f + s * 0.15f;
   chargeSample();
+  bool battery = HAS_CHARGER && present() && settings.batType == 0 && charge() == ON_BATTERY;
+  batSecs = !battery ? 0 : batSecs < 255 ? batSecs + 1 : 255;
+#ifdef BAT_OFF_MV
+  emptySecs = !(battery && filt < BAT_OFF_MV) ? 0 : emptySecs < 255 ? emptySecs + 1 : 255;
+#endif
 }
 
 }  // namespace Power

@@ -102,6 +102,8 @@ static void start() {
   adv->enableScanResponse(true);         // first: the name then goes into the scan response,
   adv->addServiceUUID(UUID_SVC);         // the 128 bit UUID fills the advertisement itself
   adv->setName(settings.apSsid.c_str());
+  adv->setMinInterval(400);              // 250..400 ms instead of the default 30..60 ms: a phone still
+  adv->setMaxInterval(640);              // finds the name within a second or two, the radio sends a tenth as often
   adv->start();
   running = true;
   txLen = 0;

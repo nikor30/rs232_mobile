@@ -126,19 +126,27 @@
 #define PIN_I2C_SDA     48  // touch (CST816D, 0x15) + accelerometer (QMI8658)
 #define PIN_I2C_SCL     47
 
-// Serial is the USB-C port, so the UART pads TXD (IO43) / RXD (IO44) are free for
-// port 1. Further header pins are left out until the pinout is confirmed.
-#define PORT_DEFAULT_PINS {{44, 43}, {44, 43}, {44, 43}, {44, 43}}
-#define PINS_RX  {43, 44}
-#define PINS_TX  {43, 44}
+// Serial is the USB-C port, so the UART pad RXD (IO44) is free for port 1. TXD
+// (IO43) is not used: it is U0TXD, and the chip's ROM prints its boot messages
+// there on every reset - straight into the console of the attached device.
+// Port 1 sends on IO21 instead (header pin 22): no power-up glitch, and the
+// board's 4.7k pull-up keeps the line idle while the chip is in reset. IO44 can
+// send as well (RX/TX swap); it stays an input during boot.
+// Further header pins are left out until they are tried on the board.
+#define PORT_DEFAULT_PINS {{44, 21}, {44, 21}, {44, 21}, {44, 21}}
+#define PINS_RX  {21, 44}
+#define PINS_TX  {21, 44}
 #define PINS_ADC {5}              // battery voltage divider of the LiPo connector
-#define PIN_NAMES "43:TXD,44:RXD,5:BAT"
+#define PIN_NAMES "44:RXD,5:BAT"
 #define PIN_PREFIX "IO"
 
 #define BAT_PIN_DEFAULT   5       // BAT_ADC: divider on the board, measured against a LiPo (WAVESHARE.md)
 #define BAT_TYPE_DEFAULT  0
 #define BAT_DIV_DEFAULT  30       // 200k/100k
 #define HAS_CHARGER       1       // ETA6096 on the LiPo connector, no status line to the processor
+#define CPU_MHZ_BATTERY  80       // clock while running from the battery (power.cpp: saver())
+#define BAT_OFF_MV     3300       // on battery below this for BAT_OFF_S: switch off before the cell is drained
+#define BAT_OFF_S        30
 #ifndef FIXED_AP_PASS
 #define FIXED_AP_PASS  "rs232mockup"
 #endif
