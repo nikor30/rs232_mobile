@@ -12,4 +12,13 @@ namespace Power {
   bool hasLbo();       // a charger low-battery output is wired up
   bool lowSignal();    // that line is asserted right now
   const char *typeName();
+
+  // Charging, on boards with a charger but no status line to the processor
+  // (HAS_CHARGER). Derived from what can be observed: a USB host on the port and
+  // the battery voltage. See power.cpp for what that can and cannot tell.
+  enum Charge : uint8_t { ON_BATTERY = 0, CHARGING, FULL };
+  Charge charge();
+  bool usbHost();      // a computer on the USB port is sending frames right now
+  const char *chargeName();   // "", "laedt", "voll"
+  String diag();       // one line with the raw values behind all of the above
 }

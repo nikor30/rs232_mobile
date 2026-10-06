@@ -11,6 +11,7 @@ Talks to the firmware over the USB serial port without resetting the board:
     lcd_debug.py cfgtest                store a small configuration "Demo" to try the Skripte page
     lcd_debug.py rot 0                  force a rotation (0..3)
     lcd_debug.py wake | off
+    lcd_debug.py bat                    battery: pin voltage, result, what the charge state rests on
     lcd_debug.py listen 20              print the log for 20 seconds
 
 Several commands can be chained: "screen 5 shot info.png status".
@@ -125,6 +126,9 @@ def main(argv):
         elif c in ("screen", "rot"):
             s.write(f"{c} {argv[i + 1]}\n".encode()); i += 1
             time.sleep(0.5)
+        elif c == "bat":
+            s.write(b"bat\n")
+            sys.stdout.write(read_until(s, lambda b: b"Akku:" in b and b.endswith(b"\n"), 2).decode("utf8", "replace"))
         elif c == "cfgtest":
             s.write(b"cfgtest\n")
             sys.stdout.write(read_until(s, lambda b: False, 1.0).decode("utf8", "replace"))

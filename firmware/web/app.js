@@ -474,8 +474,8 @@
     const bc = $('#batChip');
     bc.hidden = !s.bat.measured;
     if (s.bat.present) {
-      bc.textContent = '🔋 ' + s.bat.pct + '%';
-      bc.title = `Akku ${s.bat.mv} mV (${s.bat.type})`;
+      bc.textContent = (s.bat.charge ? '⚡ ' : '🔋 ') + s.bat.pct + '%';
+      bc.title = `Akku ${s.bat.mv} mV (${s.bat.type})` + (s.bat.charge === 1 ? ', lädt' : s.bat.charge === 2 ? ', voll' : '');
     } else {
       bc.textContent = 'USB';
       bc.title = 'Keine Akkuspannung gemessen';
@@ -483,7 +483,7 @@
     bc.classList.toggle('low', !!s.bat.low);
 
     $('#dBat').textContent = !s.bat.measured ? 'keine Messung (Ports → Akku-Messung)'
-      : s.bat.present ? `${s.bat.pct} % (${(s.bat.mv / 1000).toFixed(2)} V, ${s.bat.type})${s.bat.low ? ' – schwach!' : ''}` : 'kein Akku (USB-Betrieb)';
+      : s.bat.present ? `${s.bat.pct} % (${(s.bat.mv / 1000).toFixed(2)} V, ${s.bat.type})${s.bat.charge === 1 ? ' – lädt' : s.bat.charge === 2 ? ' – voll' : s.bat.low ? ' – schwach!' : ''}` : 'kein Akku (USB-Betrieb)';
     $('#dAp').textContent = `${s.ap.ssid} · ${s.ap.ip} · Kanal ${s.ap.channel || '?'} · ${s.ap.stations} Client(s)`;
     const h = s.https || {};
     $('#dHttps').textContent = !h.on ? 'aus'

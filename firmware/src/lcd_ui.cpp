@@ -148,6 +148,7 @@ struct Snapshot {
   uint8_t bleState;
   uint32_t blePin;
   bool    batMeasured, batPresent, batLow;
+  uint8_t batCharge;                 // Power::Charge
   uint8_t batPct;
   uint16_t batMv;
   bool    sdMounted;
@@ -382,6 +383,7 @@ static void buildSnapshot() {
   s.batMeasured = Power::measured();
   s.batPresent = Power::present();
   s.batLow = Power::low();
+  s.batCharge = Power::charge();
   s.batPct = Power::pct();
   s.batMv = Power::mv();
   s.sdMounted = Sd::mounted();
@@ -572,6 +574,7 @@ static void runCommand(uint8_t id, uint8_t arg, uint8_t port) {
 //   shot [A B]   the current picture (or rows A..B), run-length coded RGB565
 //   tap X Y      a touch at that position
 //   screen N     go to screen N,  rot N  force a rotation,  wake / off
+//   bat          battery: raw pin voltage, result, what the charge state rests on
 static void printStatus() {
   uint32_t now = millis();
   Serial.printf("[DIAG] up %lu s, Heap %u kB (min %u kB), Reset-Grund %d\n", (unsigned long)(now / 1000),
@@ -587,6 +590,7 @@ static void printStatus() {
   Serial.printf("[DIAG] SD: %s | %s\n", Sd::typeName(), Sd::history().c_str());
   Serial.printf("[DIAG] CPU %u%% / %u%%, Chip %d C, Skript-Zustand %d (%s)\n", cpuLoad[0], cpuLoad[1], chipTemp,
                 (int)Player::state(), Player::result());
+  Serial.printf("[DIAG] Akku: %s\n", Power::diag().c_str());
   Serial.printf("[DIAG] Bluetooth: Zustand %d\n", (int)Ble::state());
   statLoopGapMax = statUiGapMax = statTouchMsMax = statDrawMsMax = 0;
 }
@@ -617,6 +621,7 @@ static void console() {
       const char *err = Configs::save("Demo", "show version\n@pause 1\nshow clock\n", "");
       Serial.printf("[DIAG] Konfiguration \"Demo\": %s\n", err ? err : "gespeichert");
     }
+    else if (!strcmp(line, "bat")) Serial.printf("[DIAG] Akku: %s\n", Power::diag().c_str());
     else if (!strcmp(line, "wake")) reqWake = true;
     else if (!strcmp(line, "off")) reqOff = true;
   }
@@ -1014,6 +1019,7 @@ static void drawHeader() {
   g->drawString(">", W - 16, HEAD_H / 2);
   g->setTextColor(C_TEXT);
   g->drawString(TITLES[screen], W / 2, HEAD_H / 2);
+  int titleLeft = W / 2 - g->textWidth(TITLES[screen]) / 2;
   addHotspot(0, 0, 56, HEAD_H + 6, B_PREV);
   addHotspot(W - 56, 0, 56, HEAD_H + 6, B_NEXT);
 
@@ -1023,14 +1029,27 @@ static void drawHeader() {
   if (S.bleState != Ble::OFF) { g->fillCircle(x, HEAD_H / 2, 4, S.bleState == Ble::CONNECTED ? C_BLUE : C_LINE); x -= 13; }
   if (S.webClients || S.tcpConnected) g->fillCircle(x, HEAD_H / 2, 4, C_GREEN);
 
-  // battery, left of the title
+  // battery, left of the title: symbol with the level, a bolt while charging,
+  // and the percentage where the title leaves room for it
   if (S.batMeasured && S.batPresent) {
+    bool ext = S.batCharge != Power::ON_BATTERY;
+    uint32_t col = S.batLow && !ext ? C_RED : ext ? C_GREEN : C_DIM;
+    int bx = 32, by = HEAD_H / 2 - 6;
+    g->drawRect(bx, by, 22, 12, col);
+    g->fillRect(bx + 22, by + 3, 2, 6, col);
+    g->fillRect(bx + 2, by + 2, (S.batPct * 18 + 50) / 100, 8, col);
+    if (S.batCharge == Power::CHARGING) {
+      g->fillTriangle(bx + 13, by + 1, bx + 7, by + 7, bx + 11, by + 7, C_TEXT);
+      g->fillTriangle(bx + 9, by + 11, bx + 15, by + 5, bx + 11, by + 5, C_TEXT);
+    }
     char buf[8];
     snprintf(buf, sizeof(buf), "%u%%", S.batPct);
-    g->setFont(&fonts::DejaVu12);
-    g->setTextDatum(lgfx::middle_left);
-    g->setTextColor(S.batLow ? C_RED : C_DIM);
-    g->drawString(buf, 34, HEAD_H / 2);
+    g->setFont(&fonts::DejaVu9);
+    if (bx + 28 + g->textWidth(buf) + 4 <= titleLeft) {
+      g->setTextDatum(lgfx::middle_left);
+      g->setTextColor(col);
+      g->drawString(buf, bx + 28, HEAD_H / 2);
+    }
   }
 }
 
@@ -1061,7 +1080,12 @@ static String clientsLine() {
 }
 
 static String batteryLine() {
-  if (S.batPresent) return String(S.batPct) + "%  " + String(S.batMv) + " mV";
+  if (S.batPresent) {
+    String s = String(S.batPct) + "%  " + String(S.batMv) + " mV";
+    if (S.batCharge == Power::CHARGING) s += "  laedt";
+    else if (S.batCharge == Power::FULL) s += "  voll";
+    return s;
+  }
   return S.batMeasured ? String("keiner (USB)") : String("keine Messung");
 }
 
