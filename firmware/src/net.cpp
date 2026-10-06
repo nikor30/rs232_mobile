@@ -330,6 +330,8 @@ static String statusJson() {
   b["pct"] = Power::pct();
   b["low"] = Power::low();
   b["type"] = Power::typeName();
+  b["charge"] = (int)Power::charge();      // 0 on battery, 1 charging, 2 full
+  b["usb"] = Power::usbHost();
   d["clients"] = webClients();
   d["tcp"] = tcpConnected();
   d["tcpEnabled"] = settings.tcpEnabled;

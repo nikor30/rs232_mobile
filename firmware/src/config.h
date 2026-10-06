@@ -135,9 +135,10 @@
 #define PIN_NAMES "43:TXD,44:RXD,5:BAT"
 #define PIN_PREFIX "IO"
 
-#define BAT_PIN_DEFAULT  -1
+#define BAT_PIN_DEFAULT   5       // BAT_ADC: divider on the board, measured against a LiPo (WAVESHARE.md)
 #define BAT_TYPE_DEFAULT  0
-#define BAT_DIV_DEFAULT  30
+#define BAT_DIV_DEFAULT  30       // 200k/100k
+#define HAS_CHARGER       1       // ETA6096 on the LiPo connector, no status line to the processor
 #ifndef FIXED_AP_PASS
 #define FIXED_AP_PASS  "rs232mockup"
 #endif
@@ -192,6 +193,9 @@
 #endif
 #ifndef HAS_SDCARD
 #define HAS_SDCARD       0
+#endif
+#ifndef HAS_CHARGER
+#define HAS_CHARGER      0        // 1 = charger on the board; charging is derived in power.cpp
 #endif
 
 // ---- Battery measurement ----------------------------------------------------

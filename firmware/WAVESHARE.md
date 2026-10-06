@@ -15,6 +15,7 @@ Stand 2. Oktober 2026: gebaut, geflasht und am Board geprüft, soweit unten ange
 | Farb-Touch-Oberfläche mit sechs Seiten | `src/lcd_ui.cpp` | alle Seiten quer und hoch per Screenshot angesehen, jede Taste per simuliertem Tippen ausgelöst, 4 Minuten Zufallstest (336 Aktionen) ohne Absturz; mit echtem Finger nur die Vorversion |
 | Automatisches Drehen über den Lagesensor | `src/lcd_ui.cpp` | am Gerät bestätigt (quer); die beiden Hochformat-Richtungen sind gerechnet |
 | Serielle Konsole über Bluetooth LE | `src/ble.cpp` | Kopplung mit PIN, Verschlüsselung und Schreiben vom Raspberry Pi aus; Ein-/Ausschalten mehrfach; Richtung Gerät → Handy ungetestet (kein Loopback verdrahtet) |
+| Akkuanzeige mit Ladeerkennung | `src/power.cpp` | Messung an IO5 mit 1000-mAh-LiPo bestätigt (6. Oktober 2026); „lädt" am USB-Port eines Rechners gesehen; Akkubetrieb, Netzteil und Ab-/Anstecken **ungeprüft** — siehe unten |
 | Mitschnitt auf SD-Karte | `src/sdcard.cpp` | Karte wird nach dem Einschalten erkannt (CS = IO41), **nach jedem Reset ohne Stromunterbrechung nicht mehr** — offen, siehe unten |
 
 ## Bedienung
@@ -42,9 +43,31 @@ Nordic UART Service, fest auf Port 1. Der Gerätename ist der Hotspot-Name. Jede
 | Touch + Lagesensor I²C SDA / SCL | 48 / 47 | ebenso |
 | SD CS (SPI-Leitungen des LCD) | 41 | am Gerät bestätigt (Karte eingebunden) |
 | Port 1 RX / TX | 44 / 43 | UART-Pads, über USB-CDC frei |
-| Akkumessung | 5 | **nicht bestätigt**, nur wählbar, nicht voreingestellt |
+| Akkumessung (BAT_ADC, Teiler 3:1) | 5 | am Gerät bestätigt: 1,35 V am Pin bei angeschlossenem LiPo; voreingestellt |
 
 Weitere Header-Pins sind bewusst nicht freigegeben, solange die Belegung nicht aus einer verlässlichen Quelle stammt.
+
+## Akku und Laden
+
+Am MX1.25-Stecker hängt ein 1S-LiPo (hier 1000 mAh); der ETA6096 auf dem Board lädt ihn, sobald USB-C Strom liefert. **Der Laderegler hat keine Statusleitung zum ESP32.** Ob geladen wird, schließt `src/power.cpp` deshalb aus dem, was sich beobachten lässt:
+
+| Beobachtung | Schluss | Grenze |
+|---|---|---|
+| Der USB-Port empfängt Start-of-Frame-Pakete (Framezähler läuft) | ein Rechner speist das Board → lädt | ein reines Netzteil sendet nichts |
+| Spannung springt in 15 s um 40 mV nach oben / unten | Ladegerät an- / abgesteckt | Schwelle geschätzt, nie am Gerät ausgelöst; ein beim Einschalten schon steckendes Netzteil bleibt unbemerkt |
+| Spannung ≥ 4,15 V | Laderegler hält die Zelle | — |
+| ≥ 4,15 V seit 30 min **oder** über 4,0 V seit 15 min auf 8 mV konstant | voll | Zeiten geschätzt |
+
+Anzeige: Akkusymbol mit Füllstand links im Kopf, grün mit Blitz beim Laden, grün ohne Blitz bei „voll", rot bei schwachem Akku; die Prozentzahl daneben, wo der Titel Platz lässt. Die Zeile „Akku" (Status, Info) nennt Prozent, Millivolt und `laedt`/`voll`. Die Weboberfläche zeigt ⚡ statt 🔋.
+
+`tools/lcd_debug.py bat` nennt die Rohwerte hinter der Anzeige (Pin-Spannung, Teiler, USB-Host, Sprung, Zeiten).
+
+Zu wissen:
+
+- **Die Prozentzahl stammt allein aus der Spannung** und liegt beim Laden zu hoch (die Ladespannung liegt über der Ruhespannung).
+- **Die Messung liest vermutlich zu niedrig.** Am USB-Port stand die Spannung minutenlang unbewegt bei 4,05 V — so verhält sich eine volle Zelle an 4,2 V, keine, die noch lädt. Mit dem Multimeter am Akku nachmessen und `BAT_CAL` in `config.h` setzen (echte Spannung / angezeigte Spannung); bis dahin zeigt ein voller Akku etwa 83 %.
+- Ohne Akku liegt am Messpunkt die Ausgangsspannung des Ladereglers; das ist von einem vollen Akku nicht zu unterscheiden.
+- Die Messung ist auf diesem Board fest eingeschaltet: ein gespeichertes „keine Messung" wird beim Start durch IO5 ersetzt.
 
 ## Aufbau der Oberfläche
 
@@ -66,6 +89,7 @@ tools/lcd_debug.py status                  # Laufzeiten beider Tasks, Touch, SD-
 tools/lcd_debug.py shot bild.png           # Screenshot dessen, was das Display zeigt
 tools/lcd_debug.py screen 1 tap 54 205     # Seite wählen, Berührung simulieren
 tools/lcd_debug.py rot 0 shot hoch.png     # Drehung erzwingen
+tools/lcd_debug.py bat                     # Akku: Rohwerte und worauf "laedt"/"voll" beruht
 ```
 
 Bleibt die Hauptschleife länger als 3 s stehen, meldet der UI-Task das von sich aus im Log (`[DIAG] Hauptschleife steht seit ...`).
@@ -114,7 +138,7 @@ Weitere Regeln, die dabei entstanden sind: Die Karte wird **vor** dem LCD gestar
 4. Skripte: Ablauf geprüft, aber ohne angeschlossenes Gerät (jede Zeile wartet dann 2 s auf eine Antwort).
 5. Bluetooth Richtung Gerät → Handy mit Loopback (TXD–RXD gebrückt) und mit einer Handy-App prüfen.
 6. MAX3232 an IO43/IO44 anschließen, echter Konsolenzugriff.
-7. Akkumessung an IO5 bestätigen.
+7. Akku: Spannung mit dem Multimeter gegenmessen (`BAT_CAL`); Ladeerkennung im Akkubetrieb, am Netzteil und beim Ab-/Anstecken prüfen.
 8. SD-Mitschnitte sind nur am Display bedienbar, nicht in der Weboberfläche.
 9. Die Envs `esp32dev-max3232` und `viewe-5inch` wurden mit den Änderungen nicht neu gebaut.
 10. Baudraten-Wechsel am Display gelten bis zum Neustart (wie bei der BOOT-Taste), sie werden nicht gespeichert.

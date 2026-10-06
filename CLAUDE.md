@@ -31,7 +31,7 @@ Auf dem Raspberry Pi liegt PlatformIO in `/root/.local/share/pio-venv/bin/pio`; 
 ## Verifikationsstand
 
 - Am Gerät erprobt: das Mockup (ESP32 DevKit + MAX3232).
-- Waveshare ESP32-S3-Touch-LCD-2 (seit 1. Oktober 2026): Boot, Hotspot, LCD, Touch, Lagesensor und Bluetooth-Kopplung am Gerät geprüft; Oberfläche per Screenshot und simulierten Taps getestet; SD-Karte fällt nach jedem Reset aus (offen); serieller Port ohne MAX3232. Details und offene Punkte: `firmware/WAVESHARE.md`.
+- Waveshare ESP32-S3-Touch-LCD-2 (seit 1. Oktober 2026): Boot, Hotspot, LCD, Touch, Lagesensor und Bluetooth-Kopplung am Gerät geprüft; Oberfläche per Screenshot und simulierten Taps getestet; Akkumessung an IO5 bestätigt, Ladeerkennung nur am USB-Port eines Rechners gesehen (kein Statuspin, aus USB-Frames und Spannung geschlossen); SD-Karte fällt nach jedem Reset aus (offen); serieller Port ohne MAX3232. Details und offene Punkte: `firmware/WAVESHARE.md`.
 - Das Waveshare-Display lässt sich ohne Hinsehen prüfen: `firmware/tools/lcd_debug.py shot bild.png`, `status`, `tap X Y` (Screenshot ansehen statt raten).
 - Übersetzt, nie gelaufen: alles auf dem VIEWE-Panel, mbedTLS-3-Pfade (802.1X/PKCS#12 auf Core 3), LBO-Auswertung.
 - Nicht gebaut: I²C-Tochterplatine; SC16IS752-Treiber fehlt in der Firmware.
