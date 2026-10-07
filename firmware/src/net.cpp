@@ -332,6 +332,8 @@ static String statusJson() {
   b["type"] = Power::typeName();
   b["charge"] = (int)Power::charge();      // 0 on battery, 1 charging, 2 full
   b["usb"] = Power::usbHost();
+  b["calEmpty"] = Power::calEmptyMv();     // 0 = not calibrated
+  b["calFull"] = Power::calFullMv();
   d["clients"] = webClients();
   d["tcp"] = tcpConnected();
   d["tcpEnabled"] = settings.tcpEnabled;
@@ -534,6 +536,8 @@ static void handlePostSettings() {
   if (d["batLbo"].is<int>()) n.batLbo = d["batLbo"].as<int>();
   if (d["batType"].is<int>()) n.batType = constrain(d["batType"].as<int>(), 0, 1);
   if (d["batDiv"].is<int>()) n.batDiv = d["batDiv"].as<int>();
+  // the calibration belongs to one battery on one divider
+  if (n.batType != settings.batType || n.batDiv != settings.batDiv || n.batPin != settings.batPin) n.batEmptyMv = n.batFullMv = 0;
 
   const char *err = nullptr;
   if (n.apSsid.isEmpty() || n.apSsid.length() > 32) err = "AP-SSID: 1-32 Zeichen";
@@ -555,6 +559,25 @@ static void handlePostSettings() {
   sendJson(200, "{\"ok\":true,\"reboot\":true}");
   Display::message("Einstellungen", "Neustart ...", 3000);
   rebootAt = millis() + 1500;
+}
+
+// Battery calibration, effective at once (no restart):
+//   {"point":"full"} / {"point":"empty"}   the voltage measured right now is 100 % / 0 %
+//   {"empty":mV,"full":mV}                 set the points directly, 0 = back to the curve's own
+static void handleBatCal() {
+  if (!guard()) return;
+  JsonDocument d;
+  if (deserializeJson(d, http.arg("plain"))) return sendJson(400, "{\"ok\":false,\"error\":\"JSON ungültig\"}");
+  const char *point = d["point"] | "";
+  const char *err;
+  if (!strcmp(point, "full")) err = Power::calibrateNow(true);
+  else if (!strcmp(point, "empty")) err = Power::calibrateNow(false);
+  else if (d["empty"].is<int>() && d["full"].is<int>())
+    err = Power::setCal(constrain(d["empty"].as<int>(), 0, 65535), constrain(d["full"].as<int>(), 0, 65535));
+  else err = "point oder empty/full fehlt";
+  if (err) return sendJson(400, String("{\"ok\":false,\"error\":\"") + err + "\"}");
+  sendJson(200, String("{\"ok\":true,\"mv\":") + Power::mv() + ",\"pct\":" + Power::pct() + ",\"calEmpty\":" + Power::calEmptyMv() +
+                    ",\"calFull\":" + Power::calFullMv() + "}");
 }
 
 static void handleOtaDone() {
@@ -760,6 +783,7 @@ static void setupHttp() {
   });
   http.on("/api/settings", HTTP_GET, handleGetSettings);
   http.on("/api/settings", HTTP_POST, handlePostSettings);
+  http.on("/api/batcal", HTTP_POST, handleBatCal);
   http.on("/api/reboot", HTTP_POST, []() {
     if (!guard()) return;
     sendJson(200, "{\"ok\":true}");

@@ -54,6 +54,7 @@ const settings = {
   pinNames: '36:VP,39:VN,16:RX2,17:TX2', pinPrefix: 'D', hwPorts: 2, swMaxBaud: 38400,
   batPin: 35, batType: 1, batDiv: 30,
 };
+const batCal = { empty: 0, full: 0 };
 const configs = new Map([['Beispiel Grundkonfig', 'enable\nconfigure terminal\nhostname {{HOSTNAME}}\nend\n']]);
 
 // ---- ports: serial settings, replay ring, tiny device ----
@@ -173,7 +174,8 @@ function status() {
       serial: { ...p.serial, label: p.label }, autobaud: p.autobaud, rx: p.rx, tx: p.tx, tcp: false, tcpPort: 2000 + p.id,
     })),
     xfer: !!xfer,
-    bat: { measured: settings.batPin >= 0, present: true, mv: 5010, pct: 60, low: false, type: 'NiCd/NiMH 4 Zellen' },
+    bat: { measured: settings.batPin >= 0, present: true, mv: 5010, pct: 60, low: false, type: 'NiCd/NiMH 4 Zellen',
+      calEmpty: batCal.empty, calFull: batCal.full },
     clients: clients.size, tcp: false, tcpEnabled: settings.tcpEnabled,
     ap: { ssid: settings.apSsid, ip: '192.168.4.1', stations: 1, channel: 11, txPower: 34 },
     sta: { ssid: settings.staSsid, connected: false, ip: '', rssi: 0,
@@ -321,6 +323,17 @@ http.createServer((req, res) => {
         return sendJson(res, 200, { ok: true, msg: 'Gespeichert: ' + tls[slot].certs[0].subject });
       }
       if (url === '/update') { console.log('firmware upload', body.length, 'bytes'); return sendJson(res, 200, { ok: true }); }
+      if (url === '/api/batcal') {
+        if (j.point === 'full') batCal.full = 5010;
+        else if (j.point === 'empty') batCal.empty = 5010;
+        else { batCal.empty = j.empty || 0; batCal.full = j.full || 0; }
+        if ((batCal.full || 5400) - (batCal.empty || 4000) < 300) {
+          batCal.empty = batCal.full = 0;
+          return sendJson(res, 400, { ok: false, error: '0 % und 100 % liegen zu dicht beieinander' });
+        }
+        broadcastText(status());
+        return sendJson(res, 200, { ok: true, mv: 5010, pct: 60, calEmpty: batCal.empty, calFull: batCal.full });
+      }
       if (url === '/api/reboot' || url === '/api/factory') return sendJson(res, 200, { ok: true });
       res.writeHead(404); res.end('404');
     });

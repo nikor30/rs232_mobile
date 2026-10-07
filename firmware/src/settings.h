@@ -44,6 +44,8 @@ struct Settings {
   int8_t   batLbo = -1;          // GPIO on a charger's low-battery output (open drain, low = empty)
   uint8_t  batType = 0;          // 0 = LiPo 1S, 1 = NiCd/NiMH 4 cells
   uint8_t  batDiv = 20;          // divider ratio x10 (20 = 2:1, 30 = 3:1)
+  uint16_t batEmptyMv = 0;       // calibration: measured voltage that is 0 % (0 = the curve's own, bat_curve.h)
+  uint16_t batFullMv = 0;        // calibration: measured voltage that is 100 %
   bool     httpsEnabled = false; // web UI additionally over TLS on port 443
   bool     httpsLanOnly = false; // in the LAN (station mode) redirect plain HTTP to HTTPS
   uint8_t  httpsCert = 0;        // 0 = own HTTPS certificate (device CA if none), 1 = 802.1X client certificate
@@ -57,6 +59,7 @@ namespace Store {
   void ensureCredentials();      // first boot: AP SSID from MAC + random password
   void save();
   void saveSerial(uint8_t port);
+  void saveBatCal();
   void factoryReset();          // wipe NVS namespace (new AP password next boot)
   uint32_t serialConfigValue(const SerialCfg &c);   // -> SERIAL_8N1 etc.
   String serialLabel(const SerialCfg &c);           // "9600 8N1"
