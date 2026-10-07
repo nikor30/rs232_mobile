@@ -13,6 +13,14 @@ namespace Power {
   bool lowSignal();    // that line is asserted right now
   const char *typeName();
 
+  // Calibration of the percentage: the voltage this board measures on an empty
+  // and on a full battery (0 = not calibrated, the curve's own 0 % / 100 %).
+  // Takes effect at once and is stored; returns nullptr or an error text.
+  uint16_t calEmptyMv();
+  uint16_t calFullMv();
+  const char *setCal(uint16_t emptyMv, uint16_t fullMv);
+  const char *calibrateNow(bool full);   // the voltage measured right now is 100 % (true) or 0 % (false)
+
   // Charging, on boards with a charger but no status line to the processor
   // (HAS_CHARGER). Derived from what can be observed: a USB host on the port and
   // the battery voltage. See power.cpp for what that can and cannot tell.

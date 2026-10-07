@@ -211,6 +211,25 @@
       <div class="row">
         <button id="portsSave" class="btn primary" type="button">Speichern &amp; Neustart</button>
       </div>
+      <div id="batCalBox" hidden>
+        <h3>Akku-Anzeige kalibrieren</h3>
+        <p class="hint">Gemessen: <b id="batCalNow">–</b></p>
+        <div class="grid2">
+          <label>Voll (100 %) bei mV
+            <input id="batCalFull" type="number" inputmode="numeric" min="0" max="6000" step="10">
+          </label>
+          <label>Leer (0 %) bei mV
+            <input id="batCalEmpty" type="number" inputmode="numeric" min="0" max="6000" step="10">
+          </label>
+        </div>
+        <div class="row">
+          <button id="batCalSetFull" class="btn" type="button">Jetzt ist voll</button>
+          <button id="batCalSetEmpty" class="btn" type="button">Jetzt ist leer</button>
+          <button id="batCalSave" class="btn primary" type="button">Werte speichern</button>
+          <button id="batCalReset" class="btn" type="button">Zurücksetzen</button>
+        </div>
+        <p class="hint"><b>Voll:</b> Akku laden, bis er nicht mehr steigt, Ladegerät abziehen, eine Minute warten, dann „Jetzt ist voll“ – am Ladegerät liegt die Spannung höher als danach im Betrieb. <b>Leer:</b> den Wert eintragen, bei dem das Gerät zuletzt noch lief, oder „Jetzt ist leer“ drücken, kurz bevor es ausgeht. Leeres Feld = Wert der Kennlinie. Wirkt sofort, ohne Neustart; geändert wird nur die Prozentanzeige, nicht die gemessene Spannung. Ein anderer Akkutyp, Mess-Pin oder Teiler löscht die Kalibrierung.</p>
+      </div>
     </div>
 
     <!-- ============ Netz (WLAN-Client 802.1X, HTTPS, Zertifikate) ============ -->

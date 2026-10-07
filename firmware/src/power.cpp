@@ -1,6 +1,7 @@
 #include "power.h"
 #include "config.h"
 #include "settings.h"
+#include "bat_curve.h"
 #if HAS_CHARGER && defined(CONFIG_IDF_TARGET_ESP32S3) && ARDUINO_USB_MODE
 #include "soc/usb_serial_jtag_struct.h"
 #define USB_SOF_DETECT 1
@@ -15,16 +16,6 @@ namespace Power {
 
 static float filt = 0;
 static uint32_t lastSample = 0;
-
-// 1S LiPo, voltage -> percent (light load)
-static const uint16_t LIPO_MV[]  = {3300, 3500, 3610, 3690, 3710, 3730, 3750, 3770, 3790, 3800,
-                                    3820, 3840, 3850, 3870, 3910, 3950, 3980, 4020, 4080, 4110, 4150, 4200};
-static const uint8_t  LIPO_PCT[] = {0, 2, 5, 10, 15, 20, 25, 30, 35, 40,
-                                    45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100};
-// NiCd / NiMH, 4 cells in series (1.0 V empty ... 1.35 V full per cell). The
-// discharge curve is very flat, so the percentage is only a rough guide.
-static const uint16_t NICD_MV[]  = {4000, 4400, 4600, 4720, 4800, 4880, 5000, 5200, 5400};
-static const uint8_t  NICD_PCT[] = {0, 5, 12, 25, 40, 55, 75, 90, 100};
 
 bool measured() { return settings.batPin >= 0; }
 bool hasLbo() { return settings.batLbo >= 0; }
@@ -125,11 +116,15 @@ const char *chargeName() {
 }
 
 String diag() {
-  char buf[260];
+  char buf[340];
   if (!measured()) return "keine Messung";
-  snprintf(buf, sizeof(buf), "GPIO%d %u mV x %u.%u = %u mV, gefiltert %u mV, %u%%, %s | USB-Host %s, Sprung %s, >=%u mV seit %lu s, konstant seit %lu s -> %s | Sparmodus %s, CPU %u MHz",
+  uint8_t t = settings.batType;
+  snprintf(buf, sizeof(buf), "GPIO%d %u mV x %u.%u = %u mV, gefiltert %u mV, %u%% (0 %% = %u mV%s, 100 %% = %u mV%s), %s | USB-Host %s, Sprung %s, >=%u mV seit %lu s, konstant seit %lu s -> %s | Sparmodus %s, CPU %u MHz",
            settings.batPin, lastPinMv, settings.batDiv / 10, settings.batDiv % 10,
-           (unsigned)(lastPinMv * (settings.batDiv / 10.0f) * BAT_CAL), mv(), pct(), present() ? "Akku da" : "kein Akku",
+           (unsigned)(lastPinMv * (settings.batDiv / 10.0f) * BAT_CAL), mv(), pct(),
+           settings.batEmptyMv ? settings.batEmptyMv : BatCurve::defaultEmptyMv(t), settings.batEmptyMv ? " kalibriert" : "",
+           settings.batFullMv ? settings.batFullMv : BatCurve::defaultFullMv(t), settings.batFullMv ? " kalibriert" : "",
+           present() ? "Akku da" : "kein Akku",
            USB_SOF_DETECT ? (host ? "ja" : "nein") : "n/a", stepUp ? "ja" : "nein", CHG_FULL_MV, (unsigned long)highSince, (unsigned long)flatSince,
            HAS_CHARGER ? (charge() == ON_BATTERY ? "Akkubetrieb" : chargeName()) : "ohne Laderkennung",
            saverForced >= 0 ? (saver() ? "erzwungen" : "gesperrt") : saver() ? "ja" : "nein", (unsigned)getCpuFrequencyMhz());
@@ -154,22 +149,36 @@ void begin() {
 bool present() { return measured() && filt >= (settings.batType == 1 ? 3000 : 2500); }
 uint16_t mv() { return (uint16_t)filt; }
 
-static uint8_t lookup(const uint16_t *mvs, const uint8_t *pcts, size_t n, uint16_t v) {
-  if (v <= mvs[0]) return 0;
-  if (v >= mvs[n - 1]) return 100;
-  for (size_t i = 1; i < n; i++) {
-    if (v < mvs[i]) {
-      float f = float(v - mvs[i - 1]) / float(mvs[i] - mvs[i - 1]);
-      return pcts[i - 1] + (uint8_t)(f * (pcts[i] - pcts[i - 1]) + 0.5f);
-    }
-  }
-  return 100;
-}
-
 uint8_t pct() {
   if (!present()) return 0;
-  if (settings.batType == 1) return lookup(NICD_MV, NICD_PCT, sizeof(NICD_MV) / sizeof(NICD_MV[0]), mv());
-  return lookup(LIPO_MV, LIPO_PCT, sizeof(LIPO_MV) / sizeof(LIPO_MV[0]), mv());
+  return BatCurve::percent(settings.batType, mv(), settings.batEmptyMv, settings.batFullMv);
+}
+
+// ---- calibration ------------------------------------------------------------
+// The curve expects 4.20 V on a full LiPo and 3.30 V on an empty one. What the
+// divider and the ADC of one particular board report for these two states is
+// stored here (0 = not calibrated) and BatCurve::percent() stretches the curve
+// between them. Only the percentage follows; mv(), the charge detection and the
+// switch-off threshold keep working on the measured voltage.
+uint16_t calEmptyMv() { return settings.batEmptyMv; }
+uint16_t calFullMv() { return settings.batFullMv; }
+
+const char *setCal(uint16_t emptyMv, uint16_t fullMv) {
+  if (!measured()) return "keine Akku-Messung eingerichtet";
+  const char *err = BatCurve::calError(settings.batType, emptyMv, fullMv);
+  if (err) return err;
+  settings.batEmptyMv = emptyMv;
+  settings.batFullMv = fullMv;
+  Store::saveBatCal();
+  Serial.printf("[PWR]  Akku-Kalibrierung: 0 %% = %u mV%s, 100 %% = %u mV%s -> jetzt %u mV = %u%%\n",
+                emptyMv ? emptyMv : BatCurve::defaultEmptyMv(settings.batType), emptyMv ? "" : " (Kennlinie)",
+                fullMv ? fullMv : BatCurve::defaultFullMv(settings.batType), fullMv ? "" : " (Kennlinie)", mv(), pct());
+  return nullptr;
+}
+
+const char *calibrateNow(bool full) {
+  if (!present()) return "kein Akku gemessen";
+  return full ? setCal(settings.batEmptyMv, mv()) : setCal(mv(), settings.batFullMv);
 }
 
 bool low() { return lowSignal() || (present() && pct() <= BAT_LOW_PCT); }

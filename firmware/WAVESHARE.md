@@ -77,9 +77,23 @@ Anzeige: Akkusymbol mit Füllstand links im Kopf, grün mit Blitz beim Laden, gr
 Zu wissen:
 
 - **Die Prozentzahl stammt allein aus der Spannung** und liegt beim Laden zu hoch (die Ladespannung liegt über der Ruhespannung).
-- **Die Messung liest vermutlich zu niedrig.** Am USB-Port stand die Spannung minutenlang unbewegt bei 4,05 V — so verhält sich eine volle Zelle an 4,2 V, keine, die noch lädt. Mit dem Multimeter am Akku nachmessen und `BAT_CAL` in `config.h` setzen (echte Spannung / angezeigte Spannung); bis dahin zeigt ein voller Akku etwa 83 %.
+- **Die Messung liest vermutlich zu niedrig.** Am USB-Port stand die Spannung minutenlang unbewegt bei 4,05 V — so verhält sich eine volle Zelle an 4,2 V, keine, die noch lädt. Ohne Kalibrierung zeigt ein voller Akku dann etwa 83 % — dafür gibt es die Kalibrierung (nächster Abschnitt). Wer die Spannung selbst richtigstellen will: mit dem Multimeter am Akku nachmessen und `BAT_CAL` in `config.h` setzen (echte Spannung / angezeigte Spannung).
 - Ohne Akku liegt am Messpunkt die Ausgangsspannung des Ladereglers; das ist von einem vollen Akku nicht zu unterscheiden.
 - Die Messung ist auf diesem Board fest eingeschaltet: ein gespeichertes „keine Messung" wird beim Start durch IO5 ersetzt.
+
+### Prozentanzeige kalibrieren
+
+Die Kennlinie erwartet 4,20 V am vollen und 3,30 V am leeren LiPo. Was Teiler und ADC eines bestimmten Boards in diesen beiden Zuständen melden, lässt sich speichern; die Kennlinie wird dann zwischen die beiden Punkte gespannt (`src/bat_curve.h`), ihre Form bleibt.
+
+- **Weboberfläche:** Menü → Ports → „Akku-Anzeige kalibrieren": „Jetzt ist voll" / „Jetzt ist leer" übernehmen die gerade gemessene Spannung, die beiden Felder nehmen Werte in mV, „Zurücksetzen" stellt die Kennlinie wieder her. Wirkt sofort, ohne Neustart.
+- **Touch-Display:** Setup, nach unten ziehen: Zeile „0 / 100 %" mit den geltenden Punkten, „Jetzt voll" / „Jetzt leer" (mit Rückfrage), nach einer Kalibrierung „Kalibrierung loeschen". Werte in mV eingeben geht nur in der Weboberfläche.
+- **Debug-Konsole:** `tools/lcd_debug.py batcal full`, `batcal empty`, `batcal 3400 4050` (leer, voll in mV; 0 = Kennlinie), `batcal reset`. `bat` nennt die geltenden Punkte.
+
+Vorgehen: **Voll** setzen, wenn der Akku geladen ist, das Ladegerät abgezogen und eine Minute vergangen — am Ladegerät liegt die Spannung höher als danach im Betrieb, sonst wird die Anzeige nach dem Abziehen nie 100 %. **Leer** lässt sich am Gerät kaum abpassen; den Wert eintragen, bei dem es zuletzt noch lief.
+
+Grenzen: Ein Punkt darf höchstens 0,5 V vom Ende der Kennlinie entfernt liegen, beide mindestens 0,3 V auseinander. Geändert wird **nur die Prozentzahl** — die angezeigte Spannung, die Ladeerkennung (4,15 V) und das Abschalten bei leerem Akku (3,3 V) rechnen weiter mit der gemessenen Spannung. Ein 0-%-Punkt unter 3,3 V wird auf diesem Board also nie erreicht, das Gerät schaltet vorher ab. Ein anderer Akkutyp, Mess-Pin oder Teiler löscht die Kalibrierung.
+
+Stand 7. Oktober 2026: Rechnung als Host-Test (`tests/bat_curve_test.cpp`); am Gerät über die Debug-Konsole gesetzt, zurückgewiesen (unplausibler Wert), nach einem Neustart wiedergefunden und zurückgesetzt; auf dem Touch-Display „Jetzt voll" und „Kalibrierung loeschen" per simuliertem Tap und Screenshot; `/api/batcal` per curl (setzen, Messwert übernehmen, Zurückweisung). **Ungeprüft:** der Block in der Weboberfläche im Browser, „Jetzt leer", und ob die Anzeige mit einem real leergefahrenen Akku stimmt.
 
 ## Stromsparen und Ausschalten
 
@@ -126,6 +140,7 @@ tools/lcd_debug.py screen 1 tap 54 205     # Seite wählen, Berührung simuliere
 tools/lcd_debug.py rot 0 shot hoch.png     # Drehung erzwingen (bleibt, bis "rot auto" sie dem Sensor zurückgibt)
 tools/lcd_debug.py drag 160 180 160 40     # Finger von A nach B: ziehen (scrollen) oder wischen
 tools/lcd_debug.py bat                     # Akku: Rohwerte, worauf "laedt"/"voll" beruht, Sparmodus, CPU-Takt
+tools/lcd_debug.py batcal full             # gemessene Spannung = 100 % (empty, reset, oder zwei Werte in mV)
 tools/lcd_debug.py saver 1                 # Sparmodus wie im Akkubetrieb erzwingen (0 = sperren, -1 = automatisch)
 tools/lcd_debug.py poweroff 15             # ausschalten, nach 15 s per Zeitablauf wieder an
 ```

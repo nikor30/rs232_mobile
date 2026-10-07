@@ -26,6 +26,7 @@
 #if HAS_SPI_LCD
 #include "settings.h"
 #include "power.h"
+#include "bat_curve.h"
 #include "net.h"
 #include "serial_bridge.h"
 #include "sdcard.h"
@@ -156,6 +157,8 @@ struct Snapshot {
   uint8_t batCharge;                 // Power::Charge
   uint8_t batPct;
   uint16_t batMv;
+  uint16_t batEmptyMv, batFullMv;    // the voltages shown as 0 % and 100 %
+  bool    batCal;                    // ... set by a calibration, not the curve's own
   bool    saver;                     // running from the battery: dim early, poll slowly
   uint8_t cpuMhz;
   bool    sdMounted;
@@ -239,11 +242,11 @@ enum Cmd : uint8_t {
   B_NONE = 0,
   // handled in the UI task
   B_PREV, B_NEXT, B_PORT, B_BACK, B_LIST_PREV, B_LIST_NEXT, B_CFG_ROW, B_CFG_CANCEL, B_PLAY_ACK, B_NET_OPEN, B_NET_ROW,
-  B_ASK_FORGET, B_ASK_OFF, B_CONFIRM,
+  B_ASK_FORGET, B_ASK_OFF, B_ASK_CAL_FULL, B_ASK_CAL_EMPTY, B_ASK_CAL_RESET, B_CONFIRM,
   K_CHAR, K_SHIFT, K_SYM, K_BKSP, K_OK,
   // carried out by the main loop
   B_BAUD, B_AUTO, B_BREAK, B_ENTER, B_CTRLC, B_REC, B_BT, B_SD, B_PLAY, B_STOP, B_SCAN, B_JOIN, B_FORGET,
-  B_BRIGHT_DOWN, B_BRIGHT_UP, B_TIMEOUT, B_POWEROFF
+  B_BRIGHT_DOWN, B_BRIGHT_UP, B_TIMEOUT, B_POWEROFF, B_CAL_FULL, B_CAL_EMPTY, B_CAL_RESET
 };
 static const uint8_t FIRST_LOOP_CMD = B_BAUD;
 
@@ -397,6 +400,9 @@ static void buildSnapshot() {
   s.batCharge = Power::charge();
   s.batPct = Power::pct();
   s.batMv = Power::mv();
+  s.batCal = Power::calEmptyMv() || Power::calFullMv();
+  s.batEmptyMv = Power::calEmptyMv() ? Power::calEmptyMv() : BatCurve::defaultEmptyMv(settings.batType);
+  s.batFullMv = Power::calFullMv() ? Power::calFullMv() : BatCurve::defaultFullMv(settings.batType);
   s.saver = Power::saver();
   s.cpuMhz = (uint8_t)getCpuFrequencyMhz();
   s.sdMounted = Sd::mounted();
@@ -553,6 +559,16 @@ static void runCommand(uint8_t id, uint8_t arg, uint8_t port) {
       Net::markDirty();
       break;
     }
+    case B_CAL_FULL:
+    case B_CAL_EMPTY:
+    case B_CAL_RESET: {
+      const char *err = id == B_CAL_RESET ? Power::setCal(0, 0) : Power::calibrateNow(id == B_CAL_FULL);
+      String now = String(Power::mv()) + " mV = " + String(Power::pct()) + " %";
+      if (err) message("Akku: nicht gespeichert", err, 4000);
+      else message(id == B_CAL_RESET ? "Kalibrierung geloescht" : "Akku kalibriert", now.c_str(), 2500);
+      Net::markDirty();
+      break;
+    }
     case B_POWEROFF:
       offReason = "Taste";
       message("Ausschalten ...", "Einschalten: BOOT-Taste", 4000);
@@ -594,6 +610,7 @@ static void runCommand(uint8_t id, uint8_t arg, uint8_t port) {
 //   tap X Y      a touch at that position
 //   screen N     go to screen N,  rot N  force a rotation (rot auto: back to the sensor),  wake / off
 //   bat          battery: raw pin voltage, result, what the charge state rests on
+//   batcal ...   calibrate the percentage: full / empty (the voltage right now), E F (in mV), reset
 //   drag X Y X Y a finger moved from the first to the second position
 //   saver N      power saving: 1 on, 0 off, -1 automatic (on battery)
 //   poweroff N   switch off, and on again after N seconds (without N: BOOT button only)
@@ -645,6 +662,14 @@ static void console() {
       Serial.printf("[DIAG] Konfiguration \"Demo\": %s\n", err ? err : "gespeichert");
     }
     else if (!strcmp(line, "bat")) Serial.printf("[DIAG] Akku: %s\n", Power::diag().c_str());
+    else if (!strncmp(line, "batcal ", 7)) {
+      const char *err = !strcmp(line + 7, "full") ? Power::calibrateNow(true)
+                        : !strcmp(line + 7, "empty") ? Power::calibrateNow(false)
+                        : !strcmp(line + 7, "reset") ? Power::setCal(0, 0)
+                        : sscanf(line + 7, "%d %d", &a, &b) == 2 && a >= 0 && b >= 0 && a < 65536 && b < 65536 ? Power::setCal(a, b)
+                        : "full, empty, reset oder zwei Werte in mV";
+      Serial.printf("[DIAG] Akku-Kalibrierung: %s | %s\n", err ? err : "gespeichert", Power::diag().c_str());
+    }
     else if (sscanf(line, "drag %d %d %d %d", &a, &b, &a2, &b2) == 4) {
       reqDrag[0] = a; reqDrag[1] = b; reqDrag[2] = a2; reqDrag[3] = b2;
       reqDragGo = true;
@@ -1015,6 +1040,22 @@ static void pressed(uint8_t id, uint8_t arg) {
       confirm2 = "Einschalten mit der BOOT-Taste.";
       setupMode = SETUP_CONFIRM;
       return;
+    case B_ASK_CAL_FULL:
+    case B_ASK_CAL_EMPTY: {
+      static char ask[40];
+      snprintf(ask, sizeof(ask), "%u mV als %s speichern?", S.batMv, id == B_ASK_CAL_FULL ? "100 %" : "0 %");
+      confirmId = id == B_ASK_CAL_FULL ? B_CAL_FULL : B_CAL_EMPTY;
+      confirm1 = ask;
+      confirm2 = id == B_ASK_CAL_FULL ? "Akku geladen, Ladegeraet seit einer Minute ab?" : "Nur die Prozentanzeige aendert sich.";
+      setupMode = SETUP_CONFIRM;
+      return;
+    }
+    case B_ASK_CAL_RESET:
+      confirmId = B_CAL_RESET;
+      confirm1 = "Akku-Kalibrierung loeschen?";
+      confirm2 = "Es gilt wieder die Kennlinie.";
+      setupMode = SETUP_CONFIRM;
+      return;
     case B_CONFIRM:
       id = confirmId;
       setupMode = SETUP_MAIN;
@@ -1168,7 +1209,8 @@ static void drawHeader() {
     g->setTextColor(C_TEXT);
     const char *title = setupMode == SETUP_NETS ? "WLAN waehlen"
                       : setupMode == SETUP_CONFIRM && confirmId == B_FORGET ? "WLAN-Client"
-                      : setupMode == SETUP_CONFIRM && confirmId == B_POWEROFF ? "Ausschalten" : netSsid;
+                      : setupMode == SETUP_CONFIRM && confirmId == B_POWEROFF ? "Ausschalten"
+                      : setupMode == SETUP_CONFIRM && confirmId >= B_CAL_FULL && confirmId <= B_CAL_RESET ? "Akku kalibrieren" : netSsid;
     if (g->textWidth(title) <= W - 88) g->drawString(title, W / 2, HEAD_H / 2);
     else drawMarquee(title, 44, HEAD_H / 2, W - 52);
     addHotspot(0, 0, 64, HEAD_H + 6, B_BACK);
@@ -1643,7 +1685,7 @@ static void screenSetup() {
     return;
   }
 
-  // main page: brightness, display timeout, WLAN client, power off. Everything
+  // main page: brightness, display timeout, WLAN client, battery calibration, power off. Everything
   // is part of the scrolling content, so each control can have a full-size button.
   contentBegin(HEAD_H, H - NAV_H);
   const int bw = 58, right0 = W - 10;
@@ -1686,6 +1728,25 @@ static void screenSetup() {
   }
   y += BTN_H + 10;
   g->drawFastHLine(8, y, right0 - 8, C_LINE);
+  if (S.batMeasured) {
+    // battery calibration: the voltage measured now becomes 100 % or 0 % (power.cpp: setCal)
+    rowY = y + 8;
+    row("Akku", batteryLine());
+    row("0 / 100 %", String(S.batEmptyMv) + " / " + String(S.batFullMv) + " mV" + (S.batCal ? ", kalibriert" : ""));
+    y = rowY + 4;
+    if (S.batPresent) {
+      int w = (right0 - 8 - BTN_GAP) / 2;
+      button(8, y, w, BTN_H, "Jetzt voll", B_ASK_CAL_FULL);
+      button(8 + w + BTN_GAP, y, w, BTN_H, "Jetzt leer", B_ASK_CAL_EMPTY);
+      y += BTN_H + BTN_GAP;
+    }
+    if (S.batCal) {
+      button(8, y, right0 - 8, BTN_H, "Kalibrierung loeschen", B_ASK_CAL_RESET, C_AMBER);
+      y += BTN_H + BTN_GAP;
+    }
+    y += 10 - BTN_GAP;
+    g->drawFastHLine(8, y, right0 - 8, C_LINE);
+  }
   y += 10;
   button(8, y, right0 - 8, BTN_H, "Ausschalten", B_ASK_OFF, C_RED);
   rowY = y + BTN_H;

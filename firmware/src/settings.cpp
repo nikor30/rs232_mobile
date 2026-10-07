@@ -1,5 +1,6 @@
 #include "settings.h"
 #include "config.h"
+#include "bat_curve.h"
 #include <Preferences.h>
 #include <esp_mac.h>
 #include <esp_random.h>
@@ -146,6 +147,8 @@ void load() {
   settings.batLbo         = (int8_t)prefs.getChar("batLbo", -1);
   settings.batType        = prefs.getUChar("batType", BAT_TYPE_DEFAULT);
   settings.batDiv         = prefs.getUChar("batDiv", BAT_DIV_DEFAULT);
+  settings.batEmptyMv     = prefs.getUShort("batEmpty", 0);
+  settings.batFullMv      = prefs.getUShort("batFull", 0);
   if (settings.staAuth > 3) settings.staAuth = 0;
   if (settings.staPhase2 > 1) settings.staPhase2 = 0;
   if (settings.httpsCert > 1) settings.httpsCert = 0;
@@ -153,6 +156,7 @@ void load() {
   if (settings.txPower != 34 && settings.txPower != 44 && settings.txPower != 60 && settings.txPower != 78)
     settings.txPower = TX_POWER_DEFAULT;
   if (settings.batType > 1) settings.batType = BAT_TYPE_DEFAULT;
+  if (BatCurve::calError(settings.batType, settings.batEmptyMv, settings.batFullMv)) settings.batEmptyMv = settings.batFullMv = 0;
 #if HAS_CHARGER
   // the divider is part of the board; a "no measurement" stored by an older firmware would hide the battery
   if (settings.batPin < 0) { settings.batPin = BAT_PIN_DEFAULT; settings.batDiv = BAT_DIV_DEFAULT; }
@@ -227,6 +231,15 @@ void save() {
   prefs.putChar("batLbo", settings.batLbo);
   prefs.putUChar("batType", settings.batType);
   prefs.putUChar("batDiv", settings.batDiv);
+  prefs.putUShort("batEmpty", settings.batEmptyMv);
+  prefs.putUShort("batFull", settings.batFullMv);
+  prefs.end();
+}
+
+void saveBatCal() {
+  prefs.begin(NS, false);
+  prefs.putUShort("batEmpty", settings.batEmptyMv);
+  prefs.putUShort("batFull", settings.batFullMv);
   prefs.end();
 }
 

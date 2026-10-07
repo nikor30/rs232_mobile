@@ -481,6 +481,10 @@
       bc.title = 'Keine Akkuspannung gemessen';
     }
     bc.classList.toggle('low', !!s.bat.low);
+    $('#batCalBox').hidden = !s.bat.measured;
+    $('#batCalNow').textContent = s.bat.present ? `${s.bat.mv} mV = ${s.bat.pct} %` : 'kein Akku';
+    $('#batCalSetFull').disabled = $('#batCalSetEmpty').disabled = !s.bat.present;
+    showBatCal(s.bat);
 
     $('#dBat').textContent = !s.bat.measured ? 'keine Messung (Ports → Akku-Messung)'
       : s.bat.present ? `${s.bat.pct} % (${(s.bat.mv / 1000).toFixed(2)} V, ${s.bat.type})${s.bat.charge === 1 ? ' – lädt' : s.bat.charge === 2 ? ' – voll' : s.bat.low ? ' – schwach!' : ''}` : 'kein Akku (USB-Betrieb)';
@@ -1138,6 +1142,38 @@
     } catch (e) {
       toast('Fehler beim Speichern');
     }
+  });
+
+  // battery calibration: takes effect at once, no restart
+  let batCalShown = '';
+  function showBatCal(b, force) {
+    const key = `${b.calEmpty}/${b.calFull}`;
+    if (key === batCalShown && !force) return;       // do not overwrite what is being typed
+    batCalShown = key;
+    $('#batCalEmpty').value = b.calEmpty || '';
+    $('#batCalFull').value = b.calFull || '';
+  }
+  async function batCal(body, done) {
+    try {
+      const r = await fetch('/api/batcal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const j = await r.json();
+      if (!j.ok) { toast('Fehler: ' + (j.error || r.status), 5000); return; }
+      showBatCal(j, true);
+      $('#batCalNow').textContent = `${j.mv} mV = ${j.pct} %`;
+      toast(`${done} – ${j.mv} mV sind jetzt ${j.pct} %`, 4000);
+    } catch (e) {
+      toast('Fehler beim Speichern');
+    }
+  }
+  $('#batCalSetFull').addEventListener('click', () => {
+    if (confirm('Die jetzt gemessene Spannung als 100 % übernehmen?')) batCal({ point: 'full' }, 'Voll gesetzt');
+  });
+  $('#batCalSetEmpty').addEventListener('click', () => {
+    if (confirm('Die jetzt gemessene Spannung als 0 % übernehmen?')) batCal({ point: 'empty' }, 'Leer gesetzt');
+  });
+  $('#batCalSave').addEventListener('click', () => batCal({ empty: +$('#batCalEmpty').value || 0, full: +$('#batCalFull').value || 0 }, 'Gespeichert'));
+  $('#batCalReset').addEventListener('click', () => {
+    if (confirm('Kalibrierung löschen und wieder die Kennlinie verwenden?')) batCal({ empty: 0, full: 0 }, 'Zurückgesetzt');
   });
 
   // ------------------------------------------------------------------ device tab
