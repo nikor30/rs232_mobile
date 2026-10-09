@@ -18,12 +18,6 @@ static float filt = 0;
 static uint32_t lastSample = 0;
 
 bool measured() { return settings.batPin >= 0; }
-bool hasLbo() { return settings.batLbo >= 0; }
-
-// Chargers like the Adafruit PowerBoost pull LBO low (open drain) below ~3.2 V.
-// That is a hardware threshold from the charger itself and stays valid even
-// without a voltage divider, so it counts as "low" on its own.
-bool lowSignal() { return hasLbo() && digitalRead(settings.batLbo) == LOW; }
 const char *typeName() { return settings.batType == 1 ? "NiCd/NiMH 4 Zellen" : "LiPo 1S"; }
 
 // ---- charging ---------------------------------------------------------------
@@ -135,7 +129,6 @@ static uint16_t sampleMv() {
 }
 
 void begin() {
-  if (hasLbo()) pinMode(settings.batLbo, INPUT_PULLUP);
   if (!measured()) return;
   analogSetPinAttenuation(settings.batPin, ADC_11db);
   filt = sampleMv();
@@ -176,7 +169,7 @@ const char *calibrateNow(bool full) {
   return full ? setCal(settings.batEmptyMv, mv()) : setCal(mv(), settings.batFullMv);
 }
 
-bool low() { return lowSignal() || (present() && pct() <= BAT_LOW_PCT); }
+bool low() { return present() && pct() <= BAT_LOW_PCT; }
 
 void loop() {
   if (!measured() || millis() - lastSample < 1000) return;

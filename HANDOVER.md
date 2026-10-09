@@ -25,9 +25,10 @@ Entfernt wurden die drei früheren Varianten samt ihrem Code: **ESP32 DevKit + M
 - OLED 128×64 inkl. Helligkeitsregelung
 - PowerBoost 1000C mit LiPo lädt und versorgt
 
-**Übersetzt, aber nie auf Hardware gelaufen:**
-- **mbedTLS-3-Pfade** (`compat_eap.h`, `compat_mbedtls.h`, Core 3) — seit dem Wegfall des VIEWE-Panels werden sie auch nicht mehr übersetzt. 802.1X EAP-TLS gegen einen echten RADIUS steht auf jedem Core aus.
-- **LBO-Auswertung** (Akkuwarnleitung) — Code ist drin, war fürs DevKit mit PowerBoost gedacht und nie verdrahtet.
+**Nie gegen die Wirklichkeit geprüft:**
+- **802.1X EAP-TLS gegen einen echten RADIUS**, PKCS#12-Upload am Gerät.
+
+Mit den alten Boards entfernt, weil nie gelaufen: die **Core-3-/mbedTLS-3-Pfade** (`compat_eap.h`, `compat_mbedtls.h`) und die **LBO-Auswertung** (Akkuwarnleitung fürs DevKit mit PowerBoost). Die Firmware ruft jetzt direkt die APIs von Arduino-Core 2.0.17 / mbedTLS 2 auf; ein Umstieg auf Core 3 braucht die Anpassungen aus Commit `c4b24bb` wieder.
 
 **Nicht gebaut:** die I²C-Tochterplatine. Schaltplan und Layout existieren, bestellt ist nichts.
 
@@ -61,11 +62,9 @@ HANDOVER.md          dieses Dokument
 | `display.h`, `lcd_ui.cpp` | Touch-Oberfläche auf dem 2″-LCD (LovyanGFX) |
 | `ble.h/.cpp` | serielle Konsole über Bluetooth LE |
 | `sdcard.h/.cpp` | SD-Karte: Mitschnitte |
-| `power.h/.cpp`, `bat_curve.h` | Akkumessung, Ladeerkennung, Sparmodus, LBO-Warnleitung |
+| `power.h/.cpp`, `bat_curve.h` | Akkumessung, Ladeerkennung, Sparmodus |
 | `xfer.cpp` | XMODEM/YMODEM im ESP32 |
 | `configs.cpp`, `player.cpp` | gespeicherte Konfigurationen, Abspielen am Gerät |
-| `compat_eap.h` | 802.1X-API-Namen Core 2 ↔ Core 3 (Core 3 derzeit ungenutzt) |
-| `compat_mbedtls.h` | mbedTLS 2 ↔ 3 (ebenso) |
 
 ## 6. Bauen
 
@@ -89,7 +88,7 @@ Die `platformio.ini` löst über die PlatformIO-Registry auf (Arduino-Core 2.0.1
 | 1.7.0 | **VIEWE-Panel**: Board-Profil, LVGL-GUI, SD-Karte, Portierung auf Arduino-Core 3 / mbedTLS 3 |
 | 1.7.1 | **LBO-Warnleitung** für Ladeboards |
 | 1.8.0 | **Waveshare ESP32-S3-Touch-LCD-2**: Board-Profil, Farb-Touch-Oberfläche, Bluetooth-LE-Konsole, SD, Akkuanzeige mit Ladeerkennung, Sparmodus und Ausschalten; **Akku-Kalibrierung** (0-%-/100-%-Punkt) für alle Boards — Stand und offene Punkte: `firmware/WAVESHARE.md` |
-| — | 9. Oktober 2026, ohne Versionssprung: **Aufräumen auf ein Board.** DevKit-Mockup, T-RSS3 und VIEWE-Panel entfernt, ebenso OLED-Treiber, LVGL-GUI und Status-LED; die Einstellungen `oledFlip`/`oledBrightness` heißen in der Web-API jetzt `displayFlip`/`displayBrightness` (NVS-Schlüssel unverändert) |
+| — | 9. Oktober 2026, ohne Versionssprung: **Aufräumen auf ein Board.** DevKit-Mockup, T-RSS3 und VIEWE-Panel entfernt, ebenso OLED-Treiber, LVGL-GUI und Status-LED; die Einstellungen `oledFlip`/`oledBrightness` heißen in der Web-API jetzt `displayFlip`/`displayBrightness` (NVS-Schlüssel unverändert). Ebenfalls entfernt: Core-3-/mbedTLS-3-Kompatibilität und die LBO-Warnleitung (`batLbo`) |
 
 ## 8. Hartes Erfahrungswissen
 
@@ -114,7 +113,7 @@ Die Firmware unterscheidet am **allerersten Byte**: `0xFF` → Telnet-Client, da
 Nach Abzug von RGB-Panel (≈20 Pins), SD-Karte und Touch bleiben **IO17 und IO18**, dazu das UART-Paar IO43/44 (= USB-Debug-Konsole). Vier native RS232-Ports sind damit ausgeschlossen. Der Touch-I²C auf **IO19/20** ist mitbenutzbar: GT911 liegt auf 0x5D/0x14, die SC16IS752 auf 0x48–0x57, kein Adresskonflikt. Das ist die eigentliche Begründung für die I²C-Tochterplatine.
 
 ### 8.7 Lade-/Boost-Board (DevKit-Mockup, entfernt)
-PowerBoost 1000C ist **ausdrücklich 1-zellig** (3,7/4,2 V) — ein 7,4-V-Pack zerstört den Laderegler. 5Vo geht auf **VIN**, nie auf 3V3. Eine Schottky (1N5817, Ring zum DevKit) zwischen 5Vo und VIN macht den Aufbau USB-sicher, sodass Flashen mit angeklemmtem Akku geht. `LBO` ist offener Kollektor und braucht keinen externen Widerstand. Schaltplan: `diagramme/powerboost_schaltplan.png`.
+PowerBoost 1000C ist **ausdrücklich 1-zellig** (3,7/4,2 V) — ein 7,4-V-Pack zerstört den Laderegler. 5Vo geht auf **VIN**, nie auf 3V3. Eine Schottky (1N5817, Ring zum DevKit) zwischen 5Vo und VIN macht den Aufbau USB-sicher, sodass Flashen mit angeklemmtem Akku geht. `LBO` ist offener Kollektor und braucht keinen externen Widerstand (die Auswertung in der Firmware gibt es nicht mehr). Schaltplan: `diagramme/powerboost_schaltplan.png`.
 
 ### 8.8 Tochterplatine: beide Kanäle nutzen
 Erste Fassung war 4× SC16IS750 + 4× MAX3232 — je ein Chippaar pro Port. Beide Bausteinfamilien sind aber zweikanalig: der SC16IS**752** ist der I²C-fähige Doppel-UART, und der MAX3232 hat ohnehin zwei Transceiver, die sich dieselben vier Ladepumpen-Kondensatoren teilen. Jetzt **2× SC16IS752 + 2× MAX3232** für vier Ports. Halbe Chipzahl, Platine von 112,5 auf **107 × 110 mm**, Materialkosten von geschätzt ~58 € auf **~20 €**. Pinbelegungen wurden gegen KiCads eigene Symbolbibliothek geprüft, nicht aus Datenblatt-PDFs abgetippt — das hatte sich vorher als unzuverlässig erwiesen.

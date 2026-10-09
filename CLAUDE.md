@@ -34,7 +34,7 @@ Seit 9. Oktober 2026 gibt es nur noch das Waveshare-Board: DevKit-Mockup (OLED),
 - Das Waveshare-Display lässt sich ohne Hinsehen prüfen: `firmware/tools/lcd_debug.py shot bild.png`, `status`, `tap X Y` (Screenshot ansehen statt raten).
 - Waveshare seit 6. Oktober 2026: Port 1 sendet auf IO21 statt IO43 (ROM-Startmeldungen); Seiten scrollen, Tasten größer; Sparmodus im Akkubetrieb (80 MHz, Abdunkeln) und Ausschalten (Tiefschlaf, BOOT-Taste weckt). Per Debug-Konsole am USB-Kabel geprüft — echter Akkubetrieb, BOOT-Wecken und Stromaufnahme nicht. `lcd_debug.py poweroff` **ohne Zeitangabe** lässt sich nur am Gerät rückgängig machen.
 - Akku-Kalibrierung (7. Oktober 2026, 0-%-/100-%-Punkt, `src/bat_curve.h`): Host-Test, Debug-Konsole, Touch-Seite Setup und `/api/batcal` (curl) am Waveshare geprüft; Web-Block im Browser ungeprüft.
-- Übersetzt, nie gelaufen: LBO-Auswertung; die Core-3-/mbedTLS-3-Pfade (`compat_eap.h`, `compat_mbedtls.h`) werden seit dem Wegfall des VIEWE-Panels nicht einmal mehr übersetzt. 802.1X gegen einen echten RADIUS steht aus.
+- 802.1X gegen einen echten RADIUS steht aus. Die Firmware baut nur noch auf Arduino-Core 2.0.17 / mbedTLS 2: Core-3-Kompatibilität (`compat_eap.h`, `compat_mbedtls.h`) und die LBO-Warnleitung sind seit 9. Oktober 2026 entfernt.
 - Nicht gebaut: I²C-Tochterplatine; SC16IS752-Treiber fehlt in der Firmware.
 
 ## Regeln aus Erfahrung (Details: HANDOVER.md §8)

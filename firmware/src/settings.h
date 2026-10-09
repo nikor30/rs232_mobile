@@ -39,7 +39,6 @@ struct Settings {
   uint8_t  apChannel = 0;        // 0 = auto, 1..13
   int8_t   txPower = 44;         // wifi_power_t (quarter dBm): 34/44/60/78
   int8_t   batPin = -1;          // ADC GPIO for the battery divider, -1 = no measurement
-  int8_t   batLbo = -1;          // GPIO on a charger's low-battery output (open drain, low = empty)
   uint8_t  batType = 0;          // 0 = LiPo 1S, 1 = NiCd/NiMH 4 cells
   uint8_t  batDiv = 20;          // divider ratio x10 (20 = 2:1, 30 = 3:1)
   uint16_t batEmptyMv = 0;       // calibration: measured voltage that is 0 % (0 = the curve's own, bat_curve.h)

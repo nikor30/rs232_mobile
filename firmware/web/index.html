@@ -202,11 +202,7 @@
         <label>Spannungsteiler
           <select id="batDiv"><option value="20">2:1 (2 gleiche Widerstände)</option><option value="30">3:1 (3 gleiche Widerstände)</option></select>
         </label>
-        <label>Warnleitung (LBO)
-          <select id="batLbo"><option value="-1">aus</option></select>
-        </label>
       </div>
-      <p class="hint">Hat dein Lade-/Boost-Board einen <b>Low-Battery-Ausgang</b> (z. B. <code>LBO</code> am Adafruit PowerBoost, offener Kollektor, zieht unter 3,2 V auf Masse), kannst du ihn hier auf einen freien Pin legen. Das Gerät warnt dann anhand dieser Leitung – auch ganz ohne Spannungsteiler.</p>
       <p class="hint" id="batHint">Akku-Plus → Widerstand → Mess-Pin → Widerstand → GND. Für den 4,8-V-Pack 3:1 nehmen: 3× 100 kΩ, zwei davon in Reihe vom Akku-Plus zum Pin, einer vom Pin nach GND.</p>
       <div class="row">
         <button id="portsSave" class="btn primary" type="button">Speichern &amp; Neustart</button>

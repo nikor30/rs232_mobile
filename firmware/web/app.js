@@ -1071,11 +1071,6 @@
       bp.appendChild(new Option('aus', '-1'));
       for (const pin of s.pinsAdc) bp.appendChild(new Option(pinLabel(pin), String(pin)));
       bp.value = String(s.batPin);
-      const lb = $('#batLbo');
-      lb.textContent = '';
-      lb.appendChild(new Option('aus', '-1'));
-      for (const pin of s.pinsRx) lb.appendChild(new Option(pinLabel(pin), String(pin)));
-      lb.value = String(s.batLbo);
       $('#batType').value = String(s.batType);
       $('#batDiv').value = String(s.batDiv);
       $('#portsIntro').textContent = `Bis zu 4 MAX3232-Module. Ports 1–${s.hwPorts} laufen über Hardware-UARTs, `
@@ -1103,8 +1098,6 @@
     const mark = (pin, what) => { (use[pin] = use[pin] || []).push(what); };
     list.forEach((p, i) => { if (p.enabled) { mark(p.rx, `Port ${i + 1} RX`); mark(p.tx, `Port ${i + 1} TX`); } });
     if (bat >= 0) mark(bat, 'Akku');
-    const lbo = +$('#batLbo').value;
-    if (lbo >= 0) mark(lbo, 'LBO');
     let err = '';
     $$('#portCards .pcard').forEach((c, i) => {
       const p = list[i];
@@ -1119,20 +1112,18 @@
         ? `MAX3232-Modul: TXD an ${pinLabel(p.tx)}, RXD an ${pinLabel(p.rx)}, VCC an 3V3, GND an GND` : 'aus';
     });
     $('#batPin').classList.toggle('bad', bat >= 0 && use[bat].length > 1);
-    $('#batLbo').classList.toggle('bad', lbo >= 0 && use[lbo].length > 1);
     $('#portsSave').disabled = !!err;
     if (err) $('#portsSave').title = err; else $('#portsSave').removeAttribute('title');
     return err;
   }
   $('#portCards').addEventListener('change', checkPorts);
   $('#batPin').addEventListener('change', checkPorts);
-  $('#batLbo').addEventListener('change', checkPorts);
 
   $('#portsSave').addEventListener('click', async () => {
     const err = checkPorts();
     if (err) { toast(err, 4000); return; }
     if (!confirm('Ports speichern und neu starten?')) return;
-    const body = { ports: readPorts(), batPin: +$('#batPin').value, batLbo: +$('#batLbo').value,
+    const body = { ports: readPorts(), batPin: +$('#batPin').value,
                    batType: +$('#batType').value, batDiv: +$('#batDiv').value };
     try {
       const r = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });

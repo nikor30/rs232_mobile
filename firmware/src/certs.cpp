@@ -1,5 +1,4 @@
 #include "certs.h"
-#include "compat_mbedtls.h"   // mbedTLS 2.x (core 2) vs 3.x (core 3)
 #include "legacy_ciphers.h"
 
 #include <LittleFS.h>
@@ -18,6 +17,7 @@
 
 #include <mbedtls/aes.h>
 #include <mbedtls/base64.h>
+#include <mbedtls/bignum.h>
 #include <mbedtls/ecp.h>
 #include <mbedtls/md.h>
 #include <mbedtls/oid.h>
@@ -476,9 +476,11 @@ static DecErr pbeDecrypt(const Tlv &algId, const String &pw, const std::string &
     long iterations = derInt(iter);
     if (iterations < 1 || iterations > MAX_KDF_ITER) return DEC_FORMAT;
     mbedtls_md_context_t md;
-    (void)md;
-    bool ok = !rsPbkdf2Hmac(prf, (const uint8_t *)pw.c_str(), pw.length(), salt.v, salt.len,
-                            (unsigned)iterations, kl, key);
+    mbedtls_md_init(&md);
+    bool ok = !mbedtls_md_setup(&md, mbedtls_md_info_from_type(prf), 1) &&
+              !mbedtls_pkcs5_pbkdf2_hmac(&md, (const uint8_t *)pw.c_str(), pw.length(), salt.v, salt.len,
+                                         (unsigned)iterations, kl, key);
+    mbedtls_md_free(&md);
     if (!ok) return DEC_FORMAT;
     if (ivl == 16) {
       if (!aesCbcDecrypt(key, kl, ivT.v, ct, pt)) res = DEC_FORMAT;
@@ -734,7 +736,7 @@ static bool keyDerOk(const std::string &der, String &err) {
   }
   mbedtls_pk_context pk;
   mbedtls_pk_init(&pk);
-  int r = rsPkParseKey(&pk, (const uint8_t *)der.data(), der.size(), nullptr, 0);
+  int r = mbedtls_pk_parse_key(&pk, (const uint8_t *)der.data(), der.size(), nullptr, 0);
   bool ok = r == 0;
   if (ok) {
     mbedtls_pk_type_t t = mbedtls_pk_get_type(&pk);
@@ -940,7 +942,7 @@ static bool parseDer(const uint8_t *d, size_t n, const String &pw, Parsed &P, St
   }
   mbedtls_pk_context pk;
   mbedtls_pk_init(&pk);
-  bool isKey = rsPkParseKey(&pk, d, len, nullptr, 0) == 0;
+  bool isKey = mbedtls_pk_parse_key(&pk, d, len, nullptr, 0) == 0;
   mbedtls_pk_free(&pk);
   if (isKey) {
     P.addKey(std::string((const char *)d, len));
@@ -991,7 +993,7 @@ static String keyPemFromDer(const std::string &der) {
   mbedtls_pk_context pk;
   mbedtls_pk_init(&pk);
   String out;
-  if (!rsPkParseKey(&pk, (const uint8_t *)der.data(), der.size(), nullptr, 0)) {
+  if (!mbedtls_pk_parse_key(&pk, (const uint8_t *)der.data(), der.size(), nullptr, 0)) {
     const size_t cap = 6200;                   // RSA 4096 fits
     uint8_t *buf = (uint8_t *)malloc(cap);
     if (buf) {
@@ -1024,7 +1026,7 @@ static String pkDesc(const mbedtls_pk_context *pk) {
   mbedtls_pk_type_t t = mbedtls_pk_get_type(pk);
   if (t == MBEDTLS_PK_RSA) return String("RSA ") + (unsigned)mbedtls_pk_get_bitlen(pk);
   if (t == MBEDTLS_PK_ECKEY || t == MBEDTLS_PK_ECDSA) {
-    mbedtls_ecp_group_id id = rsEcGroupId(pk);
+    mbedtls_ecp_group_id id = mbedtls_pk_ec(*pk)->grp.id;
     if (id == MBEDTLS_ECP_DP_SECP256R1) return "EC P-256";
     if (id == MBEDTLS_ECP_DP_SECP384R1) return "EC P-384";
     if (id == MBEDTLS_ECP_DP_SECP521R1) return "EC P-521";
@@ -1103,12 +1105,12 @@ static void crtJson(JsonObject o, const mbedtls_x509_crt *c, bool full) {
     o["expired"] = toEpoch(c->valid_to) < now;
     o["notYet"] = toEpoch(c->valid_from) > now + 86400;
   }
-  o["ca"] = rsCrtIsCa(c);
+  o["ca"] = c->ca_istrue != 0;
   o["self"] = c->issuer_raw.len == c->subject_raw.len && !memcmp(c->issuer_raw.p, c->subject_raw.p, c->issuer_raw.len);
   if (!full) return;
   o["key"] = pkDesc(&c->pk);
   JsonArray eku = o["eku"].to<JsonArray>();
-  if (rsCrtHasExt(c, MBEDTLS_X509_EXT_EXTENDED_KEY_USAGE)) {
+  if (c->ext_types & MBEDTLS_X509_EXT_EXTENDED_KEY_USAGE) {
     for (const mbedtls_x509_sequence *s = &c->ext_key_usage; s && s->buf.p; s = s->next) {
       if (!MBEDTLS_OID_CMP(MBEDTLS_OID_SERVER_AUTH, &s->buf)) eku.add("serverAuth");
       else if (!MBEDTLS_OID_CMP(MBEDTLS_OID_CLIENT_AUTH, &s->buf)) eku.add("clientAuth");
@@ -1134,14 +1136,14 @@ static bool parseChain(const String &pem, mbedtls_x509_crt &chain) {
 static bool parseKey(const String &pem, mbedtls_pk_context &pk) {
   mbedtls_pk_init(&pk);
   if (pem.isEmpty()) return false;
-  return rsPkParseKey(&pk, (const uint8_t *)pem.c_str(), pem.length() + 1, nullptr, 0) == 0;
+  return mbedtls_pk_parse_key(&pk, (const uint8_t *)pem.c_str(), pem.length() + 1, nullptr, 0) == 0;
 }
 
 static bool pemPairMatches(const String &crtPem, const String &keyPem) {
   mbedtls_x509_crt c;
   mbedtls_pk_context k;
   bool ok = parseChain(crtPem, c) & parseKey(keyPem, k);
-  ok = ok && rsPkCheckPair(&c.pk, &k) == 0;
+  ok = ok && mbedtls_pk_check_pair(&c.pk, &k) == 0;
   mbedtls_x509_crt_free(&c);
   mbedtls_pk_free(&k);
   return ok;
@@ -1351,7 +1353,7 @@ bool upload(Slot s, const uint8_t *data, size_t len, const String &password, Str
     for (auto &d : P.certs) {
       mbedtls_x509_crt c;
       crtFromDer(d, c);
-      bool isCa = rsCrtIsCa(&c) || (c.issuer_raw.len == c.subject_raw.len && !memcmp(c.issuer_raw.p, c.subject_raw.p, c.issuer_raw.len));
+      bool isCa = c.ca_istrue || (c.issuer_raw.len == c.subject_raw.len && !memcmp(c.issuer_raw.p, c.subject_raw.p, c.issuer_raw.len));
       mbedtls_x509_crt_free(&c);
       (isCa ? cas : all).push_back(d);
     }
@@ -1392,7 +1394,7 @@ bool upload(Slot s, const uint8_t *data, size_t len, const String &password, Str
   auto matchKey = [&](mbedtls_pk_context &pk) -> int {
     for (size_t i = 0; i < P.certs.size(); i++) {
       mbedtls_x509_crt c;
-      bool m = crtFromDer(P.certs[i], c) && rsPkCheckPair(&c.pk, &pk) == 0;
+      bool m = crtFromDer(P.certs[i], c) && mbedtls_pk_check_pair(&c.pk, &pk) == 0;
       mbedtls_x509_crt_free(&c);
       if (m) return (int)i;
     }
@@ -1430,7 +1432,7 @@ bool upload(Slot s, const uint8_t *data, size_t len, const String &password, Str
     if (leaf < 0) {                            // no key yet: first certificate that is not a CA
       for (size_t i = 0; i < P.certs.size() && leaf < 0; i++) {
         mbedtls_x509_crt c;
-        if (crtFromDer(P.certs[i], c) && !rsCrtIsCa(&c)) leaf = (int)i;
+        if (crtFromDer(P.certs[i], c) && !c.ca_istrue) leaf = (int)i;
         mbedtls_x509_crt_free(&c);
       }
       if (leaf < 0) leaf = 0;
@@ -1657,9 +1659,9 @@ static void runCsr() {
   int r = mbedtls_x509write_csr_set_subject_name(&req, job.subject.c_str());
   mbedtls_x509write_csr_set_key_usage(&req, MBEDTLS_X509_KU_DIGITAL_SIGNATURE | (job.rsa ? MBEDTLS_X509_KU_KEY_ENCIPHERMENT : 0));
   if (!job.san.empty())
-    r = r ? r : rsCsrSetExtension(&req, MBEDTLS_OID_SUBJECT_ALT_NAME, MBEDTLS_OID_SIZE(MBEDTLS_OID_SUBJECT_ALT_NAME),
+    r = r ? r : mbedtls_x509write_csr_set_extension(&req, MBEDTLS_OID_SUBJECT_ALT_NAME, MBEDTLS_OID_SIZE(MBEDTLS_OID_SUBJECT_ALT_NAME),
                                                     (const uint8_t *)job.san.data(), job.san.size());
-  r = r ? r : rsCsrSetExtension(&req, MBEDTLS_OID_EXTENDED_KEY_USAGE, MBEDTLS_OID_SIZE(MBEDTLS_OID_EXTENDED_KEY_USAGE),
+  r = r ? r : mbedtls_x509write_csr_set_extension(&req, MBEDTLS_OID_EXTENDED_KEY_USAGE, MBEDTLS_OID_SIZE(MBEDTLS_OID_EXTENDED_KEY_USAGE),
                                                   EKU_BOTH, sizeof(EKU_BOTH));
   const size_t cap = 4096;
   uint8_t *buf = (uint8_t *)malloc(cap);
@@ -1690,7 +1692,7 @@ static bool writeCrt(mbedtls_pk_context &subjectKey, mbedtls_pk_context &issuerK
   mbedtls_x509write_crt_set_md_alg(&crt, MBEDTLS_MD_SHA256);
   mbedtls_x509write_crt_set_subject_key(&crt, &subjectKey);
   mbedtls_x509write_crt_set_issuer_key(&crt, &issuerKey);
-  r = r ? r : rsCrtSetSerial(&crt, &serial);
+  r = r ? r : mbedtls_x509write_crt_set_serial(&crt, &serial);
   r = r ? r : mbedtls_x509write_crt_set_subject_name(&crt, subject.c_str());
   r = r ? r : mbedtls_x509write_crt_set_issuer_name(&crt, issuer.c_str());
   r = r ? r : mbedtls_x509write_crt_set_validity(&crt, nb, na);

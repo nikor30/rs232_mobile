@@ -1,6 +1,5 @@
 #include "https.h"
 #include "certs.h"
-#include "compat_mbedtls.h"
 #include "config.h"
 #include "settings.h"
 
@@ -165,10 +164,10 @@ static bool setupTls() {
   mbedtls_pk_init(&srvKey);
   mbedtls_ssl_cache_init(&cache);
   int r = mbedtls_x509_crt_parse(&srvCrt, (const uint8_t *)crtPem.c_str(), crtPem.length() + 1);
-  if (!r) r = rsPkParseKey(&srvKey, (const uint8_t *)keyPem.c_str(), keyPem.length() + 1, nullptr, 0);
+  if (!r) r = mbedtls_pk_parse_key(&srvKey, (const uint8_t *)keyPem.c_str(), keyPem.length() + 1, nullptr, 0);
   if (!r) r = mbedtls_ssl_config_defaults(&conf, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT);
   if (!r) {
-    rsSslMinTls12(&conf);                                  // no TLS below 1.2
+    mbedtls_ssl_conf_min_version(&conf, MBEDTLS_SSL_MAJOR_VERSION_3, MBEDTLS_SSL_MINOR_VERSION_3);                                  // no TLS below 1.2
     mbedtls_ssl_conf_rng(&conf, rng, nullptr);
     mbedtls_ssl_cache_set_max_entries(&cache, 4);
     mbedtls_ssl_conf_session_cache(&conf, &cache, mbedtls_ssl_cache_get, mbedtls_ssl_cache_set);

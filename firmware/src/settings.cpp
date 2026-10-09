@@ -97,10 +97,6 @@ const char *checkPins(const Settings &s) {
     if (!adcPinOk(s.batPin)) { snprintf(err, sizeof(err), "Akku-Pin GPIO%d kann nicht messen", s.batPin); return err; }
     used[n++] = s.batPin;
   }
-  if (s.batLbo >= 0) {
-    if (!rxPinOk(s.batLbo)) { snprintf(err, sizeof(err), "LBO-Pin GPIO%d nicht erlaubt", s.batLbo); return err; }
-    used[n++] = s.batLbo;
-  }
   for (size_t a = 0; a < n; a++)
     for (size_t b = a + 1; b < n; b++)
       if (used[a] == used[b]) { snprintf(err, sizeof(err), "GPIO%d ist doppelt belegt", used[a]); return err; }
@@ -142,7 +138,6 @@ void load() {
   settings.apChannel      = prefs.getUChar("chan", AP_CHANNEL_DEFAULT);
   settings.txPower        = (int8_t)prefs.getUChar("txp", TX_POWER_DEFAULT);
   settings.batPin         = (int8_t)prefs.getChar("batPin", BAT_PIN_DEFAULT);
-  settings.batLbo         = (int8_t)prefs.getChar("batLbo", -1);
   settings.batType        = prefs.getUChar("batType", BAT_TYPE_DEFAULT);
   settings.batDiv         = prefs.getUChar("batDiv", BAT_DIV_DEFAULT);
   settings.batEmptyMv     = prefs.getUShort("batEmpty", 0);
@@ -222,7 +217,6 @@ void save() {
   prefs.putUChar("chan", settings.apChannel);
   prefs.putUChar("txp", (uint8_t)settings.txPower);
   prefs.putChar("batPin", settings.batPin);
-  prefs.putChar("batLbo", settings.batLbo);
   prefs.putUChar("batType", settings.batType);
   prefs.putUChar("batDiv", settings.batDiv);
   prefs.putUShort("batEmpty", settings.batEmptyMv);

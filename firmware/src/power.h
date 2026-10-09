@@ -8,9 +8,7 @@ namespace Power {
   bool present();      // battery connected (divider reads a plausible voltage)
   uint16_t mv();       // filtered battery voltage
   uint8_t pct();       // 0..100
-  bool low();          // empty: either by percentage or by the charger's LBO line
-  bool hasLbo();       // a charger low-battery output is wired up
-  bool lowSignal();    // that line is asserted right now
+  bool low();          // at or below BAT_LOW_PCT
   const char *typeName();
 
   // Calibration of the percentage: the voltage this board measures on an empty

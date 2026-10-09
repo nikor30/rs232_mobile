@@ -19,7 +19,7 @@
 #include <ArduinoJson.h>
 #include <esp_random.h>
 #include <esp_wifi.h>
-#include "compat_eap.h"   // 802.1X names differ between Arduino core 2.x and 3.x
+#include <esp_wpa2.h>
 #include <lwip/sockets.h>   // non-blocking send() for the raw TCP path
 
 namespace Net {
@@ -463,7 +463,6 @@ static void handleGetSettings() {
   d["hwPorts"] = HW_PORTS;
   d["swMaxBaud"] = SW_MAX_BAUD;
   d["batPin"] = settings.batPin;
-  d["batLbo"] = settings.batLbo;
   d["batType"] = settings.batType;
   d["batDiv"] = settings.batDiv;
   String out;
@@ -527,7 +526,6 @@ static void handlePostSettings() {
     }
   }
   if (d["batPin"].is<int>()) n.batPin = d["batPin"].as<int>();
-  if (d["batLbo"].is<int>()) n.batLbo = d["batLbo"].as<int>();
   if (d["batType"].is<int>()) n.batType = constrain(d["batType"].as<int>(), 0, 1);
   if (d["batDiv"].is<int>()) n.batDiv = d["batDiv"].as<int>();
   // the calibration belongs to one battery on one divider
@@ -965,11 +963,7 @@ static void tcpLoop() {
   for (uint8_t p = 0; p < MAX_PORTS; p++) {
     if (!tcpServer[p]) continue;
     if (tcpServer[p]->hasClient()) {
-#if ESP_ARDUINO_VERSION_MAJOR >= 3
-      WiFiClient c = tcpServer[p]->accept();      // available() is the old name
-#else
       WiFiClient c = tcpServer[p]->available();
-#endif
       // Raw TCP has no authentication of its own. While the device also sits in a
       // LAN (station mode), clients from outside the hotspot are refused unless
       // "tcpLan" was switched on deliberately (Setup -> Raw-TCP aus dem LAN).
@@ -1071,16 +1065,16 @@ static void startSta() {
     return;
   }
   static String caPem, crtPem, keyPem, ident;
-  esp_eap_client_clear_ca_cert();
-  esp_eap_client_clear_certificate_and_key();
-  esp_eap_client_clear_identity();
-  esp_eap_client_clear_username();
-  esp_eap_client_clear_password();
-  esp_eap_client_set_disable_time_check(true);     // the board has no clock
+  esp_wifi_sta_wpa2_ent_clear_ca_cert();
+  esp_wifi_sta_wpa2_ent_clear_cert_key();
+  esp_wifi_sta_wpa2_ent_clear_identity();
+  esp_wifi_sta_wpa2_ent_clear_username();
+  esp_wifi_sta_wpa2_ent_clear_password();
+  esp_wifi_sta_wpa2_ent_set_disable_time_check(true);     // the board has no clock
   String unused;
   if (settings.staCaCheck && Certs::hasCert(Certs::CA)) {
     Certs::copy(Certs::CA, caPem, unused);
-    esp_eap_client_set_ca_cert((const uint8_t *)caPem.c_str(), caPem.length() + 1);
+    esp_wifi_sta_wpa2_ent_set_ca_cert((const uint8_t *)caPem.c_str(), caPem.length() + 1);
   } else {
     Serial.println("[WLAN] 802.1X ohne Prüfung des RADIUS-Zertifikats (kein CA-Zertifikat)");
   }
@@ -1091,20 +1085,20 @@ static void startSta() {
       return;
     }
     Certs::copy(Certs::CLIENT, crtPem, keyPem);
-    esp_eap_client_set_certificate_and_key((const uint8_t *)crtPem.c_str(), crtPem.length() + 1,
+    esp_wifi_sta_wpa2_ent_set_cert_key((const uint8_t *)crtPem.c_str(), crtPem.length() + 1,
                                        (const uint8_t *)keyPem.c_str(), keyPem.length() + 1, nullptr, 0);
     if (ident.isEmpty()) ident = Certs::subjectCN(Certs::CLIENT);
     if (ident.length() > 64) ident = ident.substring(0, 64);      // the supplicant rejects longer ones
   } else {
     if (settings.staAuth == 3)
-      esp_eap_client_set_ttls_phase2_method(settings.staPhase2 ? ESP_EAP_TTLS_PHASE2_PAP
+      esp_wifi_sta_wpa2_ent_set_ttls_phase2_method(settings.staPhase2 ? ESP_EAP_TTLS_PHASE2_PAP
                                                                       : ESP_EAP_TTLS_PHASE2_MSCHAPV2);
-    esp_eap_client_set_username((const uint8_t *)settings.staUser.c_str(), settings.staUser.length());
-    esp_eap_client_set_password((const uint8_t *)settings.staPass.c_str(), settings.staPass.length());
+    esp_wifi_sta_wpa2_ent_set_username((const uint8_t *)settings.staUser.c_str(), settings.staUser.length());
+    esp_wifi_sta_wpa2_ent_set_password((const uint8_t *)settings.staPass.c_str(), settings.staPass.length());
     if (ident.isEmpty()) ident = settings.staUser;
   }
-  if (ident.length()) esp_eap_client_set_identity((const uint8_t *)ident.c_str(), ident.length());
-  esp_err_t e = esp_wifi_sta_enterprise_enable();
+  if (ident.length()) esp_wifi_sta_wpa2_ent_set_identity((const uint8_t *)ident.c_str(), ident.length());
+  esp_err_t e = esp_wifi_sta_wpa2_ent_enable();
   Serial.printf("[WLAN] %s als \"%s\"%s\n", authName(settings.staAuth), ident.c_str(),
                 e == ESP_OK ? "" : " - Fehler beim Aktivieren");
   WiFi.begin(settings.staSsid.c_str());

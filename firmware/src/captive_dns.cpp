@@ -81,11 +81,7 @@ void loop() {
     int len = udp.parsePacket();
     if (len <= 0) return;
     if (len > (int)sizeof(buf)) {         // oversized query: drop it unread
-#if ESP_ARDUINO_VERSION_MAJOR >= 3
-      udp.clear();                        // core 2 called this flush()
-#else
       udp.flush();
-#endif
       continue;
     }
     len = udp.read(buf, len);
