@@ -1,7 +1,5 @@
 #include "sdcard.h"
 
-#if HAS_SDCARD
-
 #include <FS.h>
 #include <SD.h>
 #include <SPI.h>
@@ -14,20 +12,12 @@ static const uint32_t FLUSH_MS = 2000;     // SD writes are slow: collect, then 
 static const size_t   BUF_SIZE = 1024;
 
 static bool ok = false;
-#if SD_SHARES_LCD_BUS
 static SPIClass &spi = SPI;                // LovyanGFX has opened this bus for the LCD
-#else
-static SPIClass spi(HSPI);
-#endif
 
-// On a bus shared with the LCD the display task and the card must take turns.
+// The bus is shared with the LCD: the display task and the card must take turns.
 struct BusGuard {
-#if SD_SHARES_LCD_BUS
   BusGuard() { Display::busLock(); }
   ~BusGuard() { Display::busUnlock(); }
-#else
-  BusGuard() {}
-#endif
 };
 
 // Diagnostic trail, kept in flash so it survives the resets it is about: how
@@ -100,16 +90,11 @@ bool begin() {
   BusGuard guard;
   static bool firstAttempt = true;
   const char *boot = esp_reset_reason() == ESP_RST_POWERON ? "K" : "R";
-#if SD_SHARES_LCD_BUS
   // Called before the LCD is started (see lcd_ui.cpp): a card fresh from power-up
   // still listens in SD mode, where it ignores chip select and would take the
   // display traffic for commands. It has to be switched to SPI mode first.
   spi.begin(PIN_SD_SCLK, PIN_SD_MISO, PIN_SD_MOSI, -1);
-#else
-  spi.begin(PIN_SD_SCLK, PIN_SD_MISO, PIN_SD_MOSI, PIN_SD_CS);
-#endif
-  // 20 MHz is conservative: the card shares its pins with nothing else here, but
-  // long ribbon wiring on these panel boards does not like the full 40 MHz.
+  // 20 MHz is conservative.
   // A card that kept its power through a reset sometimes misses the first
   // attempt, so try again, slower.
   for (uint32_t hz : {20000000u, 10000000u, 4000000u}) {
@@ -223,7 +208,6 @@ void end() {
 void loop() {
   if (!ok) return;
   uint32_t now = millis();
-#if SD_SHARES_LCD_BUS
   // Is the card still there? Reads one raw sector every 20 s. On the shared bus
   // a card has been seen to stop answering; this pins down when.
   static uint32_t lastCheck = 0;
@@ -241,30 +225,8 @@ void loop() {
       return;
     }
   }
-#endif
   for (uint8_t p = 0; p < MAX_PORTS; p++)
     if (logs[p].f && logs[p].len && now - logs[p].lastFlush > FLUSH_MS) flush(p);
 }
 
 }  // namespace Sd
-
-#else   // ---------------------------------------------------------- no SD slot
-
-namespace Sd {
-bool begin() { return false; }
-bool mounted() { return false; }
-uint64_t totalMb() { return 0; }
-uint64_t usedMb() { return 0; }
-String history() { return String(); }
-const char *typeName() { return "kein Steckplatz"; }
-bool logStart(uint8_t) { return false; }
-void logStop(uint8_t) {}
-bool logging(uint8_t) { return false; }
-String logName(uint8_t) { return String(); }
-uint32_t logBytes(uint8_t) { return 0; }
-void write(uint8_t, const uint8_t *, size_t) {}
-void loop() {}
-void end() {}
-}  // namespace Sd
-
-#endif

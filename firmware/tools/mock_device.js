@@ -38,7 +38,7 @@ const t0 = Date.now();
 
 const settings = {
   apSsid: 'RS232-3F2A', staSsid: '', hostname: 'rs232', webPassSet: false,
-  oledType: 0, oledFlip: false, displayTimeout: 60, ledBrightness: 12, tcpEnabled: true, tcpPort: 2000,
+  displayFlip: false, displayTimeout: 60, displayBrightness: 255, tcpEnabled: true, tcpPort: 2000,
   apChannel: 0, txPower: 34,
   staAuth: 0, staIdentity: '', staUser: '', staPassSet: false, staCaCheck: true, staPhase2: 0,
   httpsEnabled: false, httpsLanOnly: false, httpsCert: 0,
@@ -297,7 +297,7 @@ http.createServer((req, res) => {
       let j = {};
       try { j = body.length && url.startsWith('/api/') ? JSON.parse(body.toString()) : {}; } catch (e) { return sendJson(res, 400, { ok: false, error: 'JSON ungültig' }); }
       if (url === '/api/settings') {
-        for (const k of ['apSsid', 'staSsid', 'hostname', 'oledType', 'oledFlip', 'displayTimeout', 'ledBrightness', 'tcpEnabled', 'apChannel', 'txPower', 'batPin', 'batType', 'batDiv'])
+        for (const k of ['apSsid', 'staSsid', 'hostname', 'displayFlip', 'displayTimeout', 'displayBrightness', 'tcpEnabled', 'apChannel', 'txPower', 'batPin', 'batType', 'batDiv'])
           if (k in j) settings[k] = j[k];
         if (j.staClear) settings.staSsid = '';
         if (Array.isArray(j.ports)) j.ports.forEach((p, i) => Object.assign(settings.ports[i], p, { enabled: i === 0 ? true : !!p.enabled }));

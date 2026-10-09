@@ -1,6 +1,5 @@
 #include "ble.h"
 
-#if HAS_BLE
 #include "settings.h"
 #include "serial_bridge.h"
 #include "net.h"
@@ -209,4 +208,3 @@ void loop() {
 }
 
 }  // namespace Ble
-#endif

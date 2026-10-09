@@ -31,11 +31,9 @@ struct Settings {
   uint8_t  staPhase2 = 0;   // TTLS inner method: 0 = MSCHAPv2, 1 = PAP
   String   hostname;
   String   webPass;         // optional: protects web UI (user "admin")
-  uint8_t  oledType = 0;    // 0 = SSD1306 0.96", 1 = SH1106 1.3"
-  bool     oledFlip = false;
+  bool     displayFlip = false;  // turn the picture by 180 degrees
   uint16_t displayTimeout = 60;  // seconds, 0 = always on
-  uint8_t  oledBrightness = 255; // OLED contrast 0..255 (SSD1306/SH1106 command 0x81)
-  uint8_t  ledBrightness = 12;   // 0..255
+  uint8_t  displayBrightness = 255; // backlight 0..255
   bool     tcpEnabled = true;
   bool     tcpLan = false;       // raw TCP/telnet also from the LAN (station mode) - unauthenticated!
   uint8_t  apChannel = 0;        // 0 = auto, 1..13
@@ -49,7 +47,7 @@ struct Settings {
   bool     httpsEnabled = false; // web UI additionally over TLS on port 443
   bool     httpsLanOnly = false; // in the LAN (station mode) redirect plain HTTP to HTTPS
   uint8_t  httpsCert = 0;        // 0 = own HTTPS certificate (device CA if none), 1 = 802.1X client certificate
-  bool     bleEnabled = true;    // Bluetooth LE console (boards with HAS_BLE), switched on the touch display
+  bool     bleEnabled = true;    // Bluetooth LE console, switched on the touch display
 };
 
 extern Settings settings;

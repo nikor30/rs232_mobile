@@ -9,8 +9,8 @@
 //  IDF 5.3 still ships esp_wpa2.h, but only as a deprecated shim that warns on
 //  include and is announced for removal. So the code uses the new names and this
 //  header maps them back for the old core - nothing here changes behaviour, it
-//  only keeps one source tree building for the mock-up (ESP32, core 2.0.17) and
-//  for the 5" panel board (ESP32-S3, core 3.1.1).
+//  only keeps the source tree building on either core (the firmware is built on
+//  core 2.0.17 today).
 // ============================================================================
 #include <esp_idf_version.h>
 

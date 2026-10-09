@@ -1,10 +1,9 @@
 #include "display.h"
 #include "config.h"
 
-// Colour touch front end for boards with a small SPI LCD (Waveshare
-// ESP32-S3-Touch-LCD-2: ST7789T3 240x320, CST816D touch, QMI8658 accelerometer).
-// It implements the same Display interface as the OLED code in display.cpp, so
-// the rest of the firmware does not care which of the two is built in.
+// Colour touch front end on the Waveshare ESP32-S3-Touch-LCD-2 (ST7789T3
+// 240x320, CST816D touch, QMI8658 accelerometer). It implements the Display
+// interface from display.h.
 //
 //   swipe / arrows   change the screen: Status, Terminal, WLAN, Web-UI, Bluetooth, Info
 //   drag up / down   scrolls a page that is longer than the screen
@@ -23,7 +22,6 @@
 // The two meet in the snapshot (mutex), a command queue and a few request flags.
 // Nothing else crosses the task boundary, so no String is ever read while the
 // other side changes it.
-#if HAS_SPI_LCD
 #include "settings.h"
 #include "power.h"
 #include "bat_curve.h"
@@ -409,12 +407,12 @@ static void buildSnapshot() {
   strlcpy(s.sdType, Sd::typeName(), sizeof(s.sdType));
   s.sdUsedMb = Sd::usedMb();
   s.sdTotalMb = Sd::totalMb();
-  s.brightness = settings.oledBrightness;
+  s.brightness = settings.displayBrightness;
   fillSystem(s);
   fillScripts(s);
   fillNets(s);
   s.timeoutS = settings.displayTimeout;
-  s.flip = settings.oledFlip;
+  s.flip = settings.displayFlip;
   Lock l(stateMux);
   shared = s;
 }
@@ -545,8 +543,8 @@ static void runCommand(uint8_t id, uint8_t arg, uint8_t port) {
       break;
     case B_BRIGHT_DOWN:
     case B_BRIGHT_UP: {
-      int v = settings.oledBrightness + (id == B_BRIGHT_UP ? 32 : -32);
-      settings.oledBrightness = constrain(v, 0, 255);
+      int v = settings.displayBrightness + (id == B_BRIGHT_UP ? 32 : -32);
+      settings.displayBrightness = constrain(v, 0, 255);
       Store::save();
       Net::markDirty();
       break;
@@ -1450,7 +1448,7 @@ static void screenBt() {
 
 static void screenInfo() {
   int bottom = H - NAV_H;
-  if (HAS_SDCARD && !S.sdMounted) {
+  if (!S.sdMounted) {
     BtnDef def = {"SD-Karte einbinden", B_SD, C_TEXT};
     bottom = buttonRow(&def, 1) - 2;
   }
@@ -1941,8 +1939,7 @@ static void uiTask(void *) {
     bool msgShown = (int32_t)(msgUntil - now) > 0;
     if (reqBrightness) { reqBrightness = false; litAt = 0xFFFF; }
     if (on) {
-      // The setting was made for OLED contrast, where 0 is still readable; a
-      // backlight at 0 is simply dark, so keep a floor. On battery the light is
+      // A backlight at 0 is simply dark, so keep a floor. On battery the light is
       // the largest consumer after the radio: an untouched screen drops to a
       // quarter after DIM_MS and comes back with the next touch.
       const int32_t DIM_MS = 15000;
@@ -1991,7 +1988,6 @@ bool begin() {
   gpio_hold_dis((gpio_num_t)PIN_LCD_BL);
   gpio_hold_dis((gpio_num_t)PIN_SD_CS);
   if (PIN_KEY >= 0) rtc_gpio_deinit((gpio_num_t)PIN_KEY);     // was the wake-up source
-#if HAS_SDCARD
   // The card shares the LCD's SPI lines and has to be brought into SPI mode
   // before the first display traffic; main.cpp's later Sd::begin() is then a no-op.
   pinMode(PIN_SD_CS, OUTPUT);
@@ -1999,11 +1995,10 @@ bool begin() {
   pinMode(PIN_LCD_CS, OUTPUT);
   digitalWrite(PIN_LCD_CS, HIGH);
   Sd::begin();
-#endif
   if (!lcd.init()) return false;
   imuFound = imuBegin();
   Serial.printf("[LCD]  Lagesensor QMI8658: %s\n", imuFound ? "ok" : "nicht gefunden");
-  setRotation(settings.oledFlip ? IMU_ROT_DEFAULT ^ 2 : IMU_ROT_DEFAULT);
+  setRotation(settings.displayFlip ? IMU_ROT_DEFAULT ^ 2 : IMU_ROT_DEFAULT);
   Serial.printf("[LCD]  Zeichenpuffer: %s\n", canvasBits == 0 ? "keiner (direkt)" : canvasBits == 16 ? "16 Bit" : "8 Bit");
   buildSnapshot();
   S = shared;
@@ -2105,4 +2100,3 @@ void loop() {
 }
 
 }  // namespace Display
-#endif

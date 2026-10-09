@@ -1,11 +1,8 @@
-# RS232 Web Console – LilyGO T-RSS3
+# RS232 Web Console
 
-Mobiler serieller Konsolenzugang per WLAN: ESP32-S3 (LilyGO T-RSS3) mit isoliertem RS232-Port, OLED, Akku und Web-Terminal im Browser. Du verbindest dein Handy oder Notebook mit dem Hotspot des Geräts und öffnest `http://192.168.4.1`. Eine App ist nicht nötig.
+Mobiler serieller Konsolenzugang per WLAN auf dem **Waveshare ESP32-S3-Touch-LCD-2**: ESP32-S3 mit 2″-Touch-Display, Akkuanschluss, SD-Slot und Web-Terminal im Browser. Du verbindest dein Handy oder Notebook mit dem Hotspot des Geräts und öffnest `http://192.168.4.1`. Eine App ist nicht nötig.
 
-> **Drei Hardware-Varianten, eine Firmware:**
-> - **LilyGO T-RSS3** – die Zielhardware, isolierter RS232-Port, OLED, Akku (dieses Dokument)
-> - **ESP32 DevKit + MAX3232 (HW-044)** – der Schnelltest ohne Spezialhardware: **[MOCKUP.md](MOCKUP.md)**
-> - **VIEWE 5" Touchpanel (ESP32-S3, 800×480)** – mit Touch-Oberfläche am Gerät und SD-Karte: **[PANEL.md](PANEL.md)**
+Alles zum Board selbst — Touch-Oberfläche, Bluetooth, Pins, Akku, Stromsparen, Debug-Konsole, offene Punkte — steht in **[WAVESHARE.md](WAVESHARE.md)**. Dieses Dokument beschreibt die Weboberfläche und die Netzfunktionen.
 
 ![Web-UI auf dem Handy](docs/webui_handy.png)
 
@@ -15,123 +12,58 @@ Mobiler serieller Konsolenzugang per WLAN: ESP32-S3 (LilyGO T-RSS3) mit isoliert
 - **Break senden** (250/500/1000 ms) für ROMmon/Passwort-Recovery. In der Kopfzeile musst du zweimal tippen, damit nichts versehentlich ausgelöst wird.
 - **Auto-Baud**: probiert 9600, 115200, 19200, 38400 und 57600 mit einem Enter durch.
 - **Mitschnitt**: die komplette Sitzung (bis 8 MB) als `.log` speichern, auf Wunsch bereinigt (ohne `--More--`, Backspaces und ANSI-Codes).
-- **Bis zu 4 serielle Ports** mit je eigenem Terminal-Reiter, Namen, Einstellungen, Mitschnitt und Raw-TCP-Port (2000–2003). Die GPIOs weist du im Web-UI zu (Menü → Ports).
+- **Bis zu 4 serielle Ports** mit je eigenem Terminal-Reiter, Namen, Einstellungen, Mitschnitt und Raw-TCP-Port (2000–2003). Die GPIOs weist du im Web-UI zu (Menü → Ports). Am Waveshare-Board sind bisher nur IO44/IO21 freigegeben, praktisch also ein Port.
 - **Dateien senden per XMODEM, XMODEM-1K und YMODEM** (ROMmon-Recovery, U-Boot `loadx`/`loady`). Das Protokoll läuft im ESP32, der Browser streamt nur die Datei.
 - **Konfigurationen** auf dem Gerät speichern und per Klick abspielen: wartet auf den Prompt, fragt `{{Platzhalter}}` ab, `@expect`/`@pause`/`@break`, stoppt bei `% Invalid input`.
 - **Wiederverbinden ohne Datenverlust**: Das Gerät puffert die letzten 16 kB. Nach einem WLAN-Abbruch bekommt der Browser genau die verpassten Bytes nachgeliefert.
 - **Mehrere Clients** gleichzeitig (bis 5 Browser). Dazu **Raw-TCP** (Port 1 = 2000, Port 2 = 2001 …) für PuTTY („Raw“), SecureCRT oder `nc`.
-- **OLED** mit vier Seiten: Status, WLAN-QR (Handy-Kamera → automatisch verbinden), URL-QR, Info
-- **Akkuanzeige** in Prozent und mV auf OLED und im Web (LiPo oder NiCd/NiMH, Mess-Pin und Teiler einstellbar). Status-LED (WS2812) für Clients, Traffic und schwachen Akku.
+- **Touch-Display** mit Status, Terminal, WLAN-QR (Handy-Kamera → automatisch verbinden), URL-QR und Einstellungen; dazu eine **Bluetooth-LE-Konsole** — siehe [WAVESHARE.md](WAVESHARE.md)
+- **Akkuanzeige** in Prozent und mV auf dem Display und im Web, mit Ladeerkennung und Kalibrierung.
 - **Firmennetz (802.1X):** WLAN-Client mit **WPA2/WPA3-Enterprise** – EAP-TLS mit Zertifikat (`.p12`/`.pfx`, `.pem`, `.p7b`), PEAP-MSCHAPv2 oder EAP-TTLS. Zertifikate lädst du im Web-UI hoch, Schlüsselpaar und Zertifikatsantrag (CSR) kann das Gerät auch selbst erzeugen.
 - **HTTPS für die Web-Oberfläche** (Port 443, TLS 1.2) mit eigenem Zertifikat – wahlweise dem 802.1X-Zertifikat – oder einem, das sich das Gerät selbst ausstellt. Im Firmennetz lässt sich HTTP auf HTTPS umleiten.
 - **Hotspot mit Captive Portal:** Das Handy öffnet die Konsole nach dem Verbinden automatisch. Der Hotspot wählt beim Start den freiesten Kanal (1/6/11), Kanal und Sendeleistung sind im Setup einstellbar. Optional zusätzlich WLAN-Client (z. B. Labor-WLAN), mDNS `http://rs232.local`, Diagnose unter `/ping`
-- **Firmware-Update per Browser** (OTA), Werksreset per Taste
-
-![OLED-Seiten (am PC gerendert)](docs/oled_seiten.png)
+- **Firmware-Update per Browser** (OTA)
 
 ## Teststand
 
+Die Tests der Weboberfläche und der Netzfunktionen stammen aus der Zeit vor dem Waveshare-Board; sie prüfen Code, der unverändert weiterläuft.
+
 | Bereich | Stand |
 |---|---|
-| Firmware | kompiliert ohne Warnung gegen Arduino-ESP32 2.0.17: T-RSS3 (ESP32-S3, 4 MB Flash) und Mockup (ESP32 DevKit). Flash ca. 1,4 MB (71 % der OTA-Partition), RAM 70 kB statisch |
 | Web-UI | 35 automatisierte Tests im Headless-Chromium (iPhone-Profil) gegen den Geräte-Simulator (`tools/mock_device.js`), keine JS-Fehler |
 | Firmware am PC | Der echte C++-Code (WebServer, WebSockets, Captive-DNS, Replay, 4 Ports, XMODEM/YMODEM, Konfig-Speicher) läuft am PC gegen nachgebildetes WLAN und serielle Leitungen mit echter Baudrate. Getestet mit Chromium (iPhone-Profil) und **WebKit, der Engine von Safari** |
 | XMODEM/YMODEM | Übertragungen in die echten Linux-Empfänger `rx` und `rb` (lrzsz): XMODEM-1K, XMODEM mit Prüfsumme, YMODEM mit Name und exakter Größe, eingestreute CRC-Fehler, verirrte NAKs während eines Blocks, Empfänger ohne 1K-Blöcke, Abbruch durch Empfänger und Benutzer, WLAN-Abriss mit Fortsetzung. Dateien bitgenau verglichen |
-| OLED | alle Seiten am PC mit U8g2 gerendert. QR-Codes maschinell dekodiert (WLAN-Login + URL korrekt) |
 | Captive Portal | DNS-Antwortlogik am PC mit echten DNS-Paketen getestet (A, AAAA, HTTPS-Typ, EDNS) |
 | Zertifikate | 68 Tests gegen mit OpenSSL erzeugte Dateien: PKCS#12 mit AES-256 und mit 3DES/RC2 (alte Windows-Exporte), ohne Passwort, ohne MAC, mit Umlaut-Passwort, PEM/DER/PKCS#7, verschlüsselte Schlüssel (PKCS#8 mit AES/3DES, klassisch mit AES/3DES), falsche Passwörter, nicht passende Schlüssel, Ed25519, CSR auf dem Gerät (Signatur mit OpenSSL geprüft, von einer Test-CA signiert und wieder eingespielt) |
 | 802.1X / HTTPS | am PC: Zertifikats-Upload über die Web-Oberfläche, an den Supplicant übergebene PEM-Puffer, HTTPS-Seite und Terminal über `wss://` in Chromium **und WebKit (Safari-Engine)**, Prüfung der Kette gegen die Geräte-CA, HTTPS-Zwang im LAN, Lasttest (40 Anfragen nacheinander, 6 parallel, 58 kB über eine TLS-Sitzung, kein Leerlauf-Spin). **Anmeldung an einem echten RADIUS-Server steht noch aus** |
-| **Echte Hardware** | Mockup (DevKit + HW-044) läuft mit Port 1. **Ports 3/4 (Software-UART) und T-RSS3 noch nicht auf echter Hardware getestet**, T-RSS3-Pins stammen aus dem LilyGO-Schaltplan |
-| Gehäuse | parametrisch in OpenSCAD. **Die Platinenmaße sind Schätzwerte, vor dem Druck nachmessen** |
-
-## Teileliste
-
-| # | Teil | Hinweis |
-|---|---|---|
-| 1 | LilyGO **T-RSS3** (ESP32-S3, RS232 + RS485 isoliert) | ca. 22 USD bei LilyGO |
-| 2 | OLED 128×64 I²C, **SSD1306 0,96″** oder **SH1106 1,3″** | 3,3 V, 4-Pin. Typ ist im Web-UI umschaltbar |
-| 3 | LiPo 1S 3,7 V, z. B. **103450 / 2000 mAh**, mit Schutzschaltung | Maße 50×34×10 mm passen ins Gehäuse |
-| 4 | Lade-/Boost-Modul mit 5-V-Ausgang, z. B. **IP5306 Type-C** | Laden auch im Betrieb möglich. Alternative: Adafruit PowerBoost 1000C |
-| 5 | Schiebeschalter SS12D00 | im 5-V-Ausgang |
-| 6 | 2× Widerstand 100 kΩ, 1× Kondensator 100 nF | Akku-Spannungsteiler |
-| 7 | optional: Taster 7 mm (Schließer) | Bedienung im geschlossenen Gehäuse |
-| 8 | Stiftleiste **1,27 mm** 2×15 oder dünne Litze (AWG 28–30) | J4 hat 1,27-mm-Raster |
-| 9 | Adapter **DB9-Stecker (male) → RJ45-Buchse**, Modular-Bausatz | siehe [Konsolenkabel](#konsolenkabel) |
-| 10 | 4× Schraube M2,5×6 selbstschneidend | Deckel |
-
-## Verdrahtung
-
-![Verdrahtung](docs/verdrahtung.png)
-
-| Von | Nach (J4, Siebdruck) | Funktion |
-|---|---|---|
-| OLED VCC | `3V3` (obere Reihe, außen) | 3,3 V |
-| OLED GND | `G` | Masse |
-| OLED SCL | `09` | I²C Takt |
-| OLED SDA | `08` | I²C Daten |
-| Teiler-Mitte (R1 zu LiPo+, R2 zu GND, 100 nF parallel zu R2) | `07` | Akku-Spannung (ADC) |
-| Taster (gegen GND) | `06` | wie Board-Taste IO5 |
-| Boost-Modul OUT+ **über Schiebeschalter** | `5V` (untere Reihe, außen) | Versorgung |
-| Boost-Modul OUT− | `G` | Masse |
-
-Der `5V`-Pin liegt laut Schaltplan hinter der USB-Diode D6. Du kannst USB-C am Board und den Akku gleichzeitig angeschlossen haben. Die isolierten RS232/RS485-Module brauchen 4,75–5,25 V. Deshalb geht der Boost-Ausgang **ohne** zusätzliche Diode direkt an `5V`.
-
-Alle Pins lassen sich in `src/config.h` ändern.
-
-## Konsolenkabel
-
-Laut LilyGO-Schaltplan ist die DB9 am Board eine **Buchse (female)** mit **Pin 2 = TX (Ausgang), Pin 3 = RX (Eingang), Pin 5 = GND**. Sie ist also wie ein Modem (DCE) belegt.
-
-**Vorher messen:** Board einschalten und am DB9 Pin 2 gegen Pin 5 messen. Der TX-Ausgang liegt im Ruhezustand deutlich negativ (typisch −5 V). Liegt die Spannung stattdessen an Pin 3, sind 2 und 3 in der Tabelle unten zu tauschen.
-
-**Empfohlen: DB9-Stecker → RJ45-Buchse (Modular-Bausatz) + normales Cisco-Rollover-Kabel** (das hellblaue flache Kabel, RJ45↔RJ45)
-
-| DB9-Stecker (Adapter) | RJ45-Buchse (Adapter) |
-|---|---|
-| Pin 2 (TX vom Board) | Pin 3 |
-| Pin 3 (RX zum Board) | Pin 6 |
-| Pin 5 (GND) | Pin 4 **und** Pin 5 |
-
-Damit funktionieren RJ45-Konsolen mit Cisco-Pinout (Cisco, Fortinet, Aruba/HPE, Juniper u. a.) direkt über das Rollover-Kabel.
-
-Weitere Fälle:
-- **Vorhandenes Cisco-Kabel RJ45 ↔ DB9-Buchse:** Dazwischen gehört ein DB9-**Nullmodem**-Adapter Stecker/Stecker.
-- **Geräte mit DB9-Stecker (DTE, z. B. Server-COM-Port, USV):** direkt oder mit 1:1-Verlängerung (Stecker/Buchse).
+| **Echte Hardware** | siehe [WAVESHARE.md](WAVESHARE.md). Der serielle Port ist am Waveshare-Board noch ohne MAX3232, ein Konsolenzugriff auf ein echtes Gerät steht dort aus |
 
 ## Firmware flashen
 
-1. VS Code und die Erweiterung **PlatformIO** installieren, dann diesen Ordner öffnen.
-2. T-RSS3 per USB-C anschließen und in der PlatformIO-Leiste **Upload** klicken. Libraries und Toolchain werden automatisch geladen. Die Web-UI wird beim Build aus `web/` nach `src/web_assets.h` gepackt.
-3. Falls der Upload nicht startet: **BOOT** halten, **RST** kurz drücken, BOOT loslassen, dann erneut Upload.
-4. Der serielle Monitor (115200) zeigt beim Start SSID, Passwort und URL an.
+```bash
+pio run -t upload            # Umgebung waveshare-s3-lcd2, Arduino-ESP32 2.0.17
+```
 
-Spätere Updates gehen ohne Kabel: Web-UI → Menü → **Setup** → Firmware-Update → `.pio/build/t-rss3/firmware.bin` hochladen.
+Board per USB-C anschließen. Libraries und Toolchain lädt PlatformIO selbst; die Web-UI wird beim Build aus `web/` nach `src/web_assets.h` gepackt. Falls der Upload nicht startet: **BOOT** halten, **RST** kurz drücken, BOOT loslassen, dann erneut. Der serielle Monitor (115200) zeigt beim Start SSID, Passwort und URL.
+
+Spätere Updates gehen ohne Kabel: Web-UI → Menü → **Setup** → Firmware-Update → `.pio/build/waveshare-s3-lcd2/firmware.bin` hochladen. Einstellungen und Passwort bleiben dabei erhalten.
 
 ## Erste Inbetriebnahme
 
-1. Einschalten. Beim ersten Start erzeugt das Gerät einen Hotspot **`RS232-XXXX`** mit **zufälligem Passwort** und speichert ihn.
-2. Taste kurz drücken, bis die Seite **„WLAN scannen“** erscheint, und den QR-Code mit der Handy-Kamera scannen.
+1. Einschalten. Das Gerät erzeugt einen Hotspot **`RS232-XXXX`**; das Passwort ist ab Werk `rs232mockup` (`FIXED_AP_PASS` in `src/config.h`) und lässt sich im Setup ändern.
+2. Auf dem Display zur Seite **WLAN** wischen und den QR-Code mit der Handy-Kamera scannen.
 3. Nächste Seite: **Web-UI-QR** scannen oder `http://192.168.4.1` öffnen.
 4. Android fragt eventuell „Internet nicht verfügbar“ → **Verbindung beibehalten**. iOS bleibt trotz „Kein Internet“ verbunden.
 
 ## Bedienung
 
-**Taste (IO5 am Board bzw. IO6 im Gehäuse)**
-
-| Aktion | Wirkung |
-|---|---|
-| kurz | Display einschalten / nächste Seite (Status → Ports → WLAN-QR → URL-QR → Info) |
-| lang (> 1 s) auf der Statusseite | nächste Baudrate von Port 1: 9600 → 19200 → 38400 → 57600 → 115200 |
-| beim Einschalten 5 s halten | Werksreset (neues Hotspot-Passwort) |
-
-**Status-LED:** blau = bereit · grün = Client verbunden · weiß blitzend = Datenverkehr · gelb blinkend = Auto-Baud · rot blinkend = Akku schwach · magenta = Break
+Die Bedienung am Gerät (Touch-Display, BOOT-Taste) beschreibt [WAVESHARE.md](WAVESHARE.md#bedienung).
 
 **Web-UI**
 - **Eingabezeile** unten: Befehl tippen, **Senden** oder Enter. Die Zeile geht mit CR raus (umstellbar unter Seriell). ↑/↓ = Verlauf, **Tab** und **?** schicken den getippten Text plus Taste (Befehlsergänzung/Hilfe am Switch).
 - Direkt ins Terminal tippen geht auch: Jede Taste geht sofort raus, gut für Passwörter und `--More--`. Die Leiste unten liefert Tab, `?`, Pfeile usw. **Ctrl** rastet für eine Taste ein (Ctrl → `z` = ^Z). **⌨** blendet die Tastatur ein oder aus.
 - Oben: Verbindungspunkt · Baud-Chip des aktiven Ports (öffnet die seriellen Einstellungen) · Akku (nur mit Messung) · **Break** (2× tippen) · Menü. Darunter bei mehreren Ports ein Reiter pro Port.
-- Menü: **Seriell** (Baud, Format, Auto-Baud, Break-Dauer des aktiven Ports) · **Sitzung** (Log, Schriftgröße, Datei senden per XMODEM/YMODEM) · **Konfig** (gespeicherte Konfigurationen abspielen) · **Ports** (Pins, Namen, Akku-Messung) · **Gerät** (Status) · **Setup** (WLAN, Passwort, Display, LED, Firmware-Update, Werksreset)
-- Details zu Ports, Dateiübertragung und Konfigurationen: [MOCKUP.md](MOCKUP.md#7-bis-zu-4-serielle-ports)
+- Menü: **Seriell** (Baud, Format, Auto-Baud, Break-Dauer des aktiven Ports) · **Sitzung** (Log, Schriftgröße, Datei senden per XMODEM/YMODEM) · **Konfig** (gespeicherte Konfigurationen abspielen) · **Ports** (Pins, Namen, Akku-Messung) · **Gerät** (Status) · **Setup** (WLAN, Passwort, Display, Firmware-Update, Werksreset)
 - Tipp: Im Querformat passen auf dem Handy 80+ Spalten.
 
 **Notebook:** Die Web-UI funktioniert genauso im Browser. Alternativ gibt es Raw-TCP: `nc 192.168.4.1 2000` oder PuTTY mit Verbindungstyp **Raw**, Port 2000 (Port 2 = 2001 usw.). Break geht nur über die Web-UI.
@@ -140,8 +72,8 @@ Spätere Updates gehen ohne Kabel: Web-UI → Menü → **Setup** → Firmware-U
 
 ## Einstellungen & Sicherheit
 
-- **Hotspot:** WPA2 mit zufälligem 10-Zeichen-Passwort. Es steht auf dem OLED, du kannst es im Setup ändern.
-- **Zusätzlich ins WLAN einbuchen:** Netz → SSID/Sicherheit. Das Gerät ist dann auch über die LAN-IP erreichbar (steht auf dem OLED), der Hotspot bleibt aktiv. Der Hotspot wechselt dabei auf den Kanal des WLANs, Handys verbinden sich kurz neu.
+- **Hotspot:** WPA2. Das Passwort ist ab Werk fest (`FIXED_AP_PASS`); ohne diese Vorgabe erzeugt die Firmware ein zufälliges 10-Zeichen-Passwort. Es steht auf dem Display (Seite WLAN), du kannst es im Setup ändern.
+- **Zusätzlich ins WLAN einbuchen:** Netz → SSID/Sicherheit. Das Gerät ist dann auch über die LAN-IP erreichbar (steht auf dem Display), der Hotspot bleibt aktiv. Der Hotspot wechselt dabei auf den Kanal des WLANs, Handys verbinden sich kurz neu.
 - **Web-Passwort** (Benutzer `admin`): Ist im LAN-Betrieb dringend zu empfehlen. Es schützt Web-UI, Terminal (Session-Token), Einstellungen und OTA.
 - **Raw-TCP** hat keine Authentifizierung. Solange das Gerät im LAN hängt, nimmt es TCP-Verbindungen deshalb **nur von Hotspot-Clients** an. Abschaltbar im Setup.
 - HTTP im Hotspot ist unverschlüsselt, den Schutz übernimmt die WLAN-Verschlüsselung. Im Firmennetz kannst du HTTPS erzwingen (siehe unten).
@@ -190,44 +122,78 @@ Netz → „Antrag erzeugen“: Das Gerät erzeugt ein Schlüsselpaar (RSA 2048 
 
 - Die **privaten Schlüssel liegen unverschlüsselt im Flash** (ohne Flash-Encryption). Wer das Gerät in die Hand bekommt, kann sie auslesen. Also ein eigenes Gerätezertifikat verwenden, das sich sperren lässt – kein Benutzerzertifikat.
 - Ohne Web-Passwort kommt im Firmennetz jeder an die Konsolen. Erst Passwort setzen, dann ins LAN.
-- Der Werksreset (Web-UI oder Taste beim Einschalten) löscht Zertifikate **und** Schlüssel.
+- Der Werksreset (Web-UI → Setup) löscht Zertifikate **und** Schlüssel.
 - Der ESP32 hat 16 Netzwerk-Sockets. HTTPS belegt je Sitzung zwei davon – wer HTTPS zusammen mit vier Raw-TCP-Ports und mehreren Browsern nutzt, sollte Raw-TCP abschalten.
 
-## Akku
+## Dateien per XMODEM / YMODEM senden
 
-- **Laufzeit (Schätzung, nicht gemessen):** ca. 0,8–1 W Gesamtverbrauch (ESP32 im AP-Betrieb, zwei isolierte DC/DC-Module, OLED). Mit 2000 mAh sind das etwa **6–8 Stunden**. Genau misst du es mit einem USB-Messgerät am Ladeeingang.
-- **Kalibrieren:** Akkuspannung mit dem Multimeter messen und mit dem Wert im Web-UI (Gerät → Akku) vergleichen. Dann `BAT_CAL` in `src/config.h` auf `echt / angezeigt` setzen (z. B. `1.03`).
-- Den Tiefentladeschutz übernehmen Boost-Modul und die Schutzschaltung der Zelle. Die Firmware warnt bei ≤ 10 %.
-- IP5306-Module schalten bei sehr kleiner Last (< ca. 50 mA) ab. Das Gerät zieht dauerhaft mehr, sollte also nicht betroffen sein. Falls doch, nimm ein Modul ohne Auto-Off (z. B. PowerBoost 1000C).
+Für ROMmon-Recovery, IOS-Images oder U-Boot: **Menü → Sitzung → Datei senden**.
 
-## Gehäuse
+1. Am Gerät den Empfang starten, z. B. Cisco ROMmon `xmodem -c flash:image.bin`, IOS `copy xmodem: flash:`, U-Boot `loadx` / `loady`.
+2. Datei wählen, Protokoll wählen, **Senden**. Die Reihenfolge ist egal: Das Gerät wartet bis zu 2 Minuten auf den Empfänger (Zeichen „C“ bzw. NAK).
+3. Unten zeigt ein Balken Fortschritt, Tempo und Wiederholungen. **Abbrechen** sendet CAN an den Empfänger.
 
-![Gehäuse (OpenSCAD-Vorschau)](docs/gehaeuse.png)
+| Protokoll | Blöcke | wann |
+|---|---|---|
+| XMODEM-1K | 1024 Byte, CRC | Standard. Kann der Empfänger keine 1K-Blöcke, schaltet die Firmware selbst auf 128 Byte um |
+| XMODEM | 128 Byte, CRC oder Prüfsumme | alte Geräte |
+| YMODEM | 1024 Byte + Dateiname und Größe | U-Boot `loady`, Geräte die den Namen wollen |
 
-`case/rs232_console_case.scad` ist parametrisch, am einfachsten in OpenSCAD mit dem **Customizer** bearbeiten. Außenmaß mit den Standardwerten: **ca. 60 × 67 × 37 mm**. Die beiden STL-Dateien entsprechen den Standardwerten. Sie eignen sich zum Probedruck, passen aber erst nach dem Nachmessen sicher.
+Das Protokoll läuft im ESP32, der Browser liefert nur die Daten nach. WLAN-Aussetzer bremsen den Ablauf deshalb nicht, und reißt die Verbindung kurz ab, macht die Seite nach dem Wiederverbinden weiter. Das Display dabei anlassen. Tempo: bei 115200 Baud etwa 10 kB/s, bei 9600 Baud knapp 1 kB/s (für große Images vorher im ROMmon die Baudrate hochsetzen, z. B. `xmodem -c -s 115200 …`, und dann im Web-UI ebenfalls 115200 einstellen).
 
-**Nachmessen (Messschieber):** Platinenbreite/-tiefe, höchstes Bauteil über der Platine, Mitte der DB9-Buchse (Abstand von der linken Platinenkante und Höhe über der Platine), Akku- und Lademodul-Maße, Position der USB-C-Buchse am Lademodul, OLED-Modul und Lage des sichtbaren Glasbereichs.
+## Konfigurationen abspielen (Provisionierung)
 
-Aufbau von unten nach oben:
-1. **Firmware vorher flashen** und alles offen testen.
-2. Akku (hinten) und Lademodul (vorne links, USB-C zur linken Wand) auf den Boden kleben. Schiebeschalter in den Schlitz rechts, Taster in die Front unter die DB9.
-3. Die T-RSS3 liegt auf den Stegen der Seitenwände. Die DB9-Sechskantbolzen abschrauben und durch die Frontwand wieder eindrehen, das fixiert die Platine.
-4. Das OLED sitzt im Rahmen unter dem Deckel (Pins nach hinten), mit Heißkleber fixieren. Deckel mit 4× M2,5×6 verschrauben.
+**Menü → Konfig**: Konfigurationen auf dem Gerät speichern und per Klick auf den aktiven Port abspielen. Eine Konfiguration darf bis 32 kB groß sein. Der Werksreset löscht sie nicht.
 
-Druck: PETG oder PLA, 0,2 mm Schichthöhe, 3 Wände, ohne Stützen. Den Deckel mit der Oberseite nach unten drucken.
+```
+@expect initial configuration dialog
+no
+@expect Switch>
+enable
+configure terminal
+hostname {{HOSTNAME}}
+interface GigabitEthernet1/0/48
+ description {{UPLINK}}
+end
+write memory
+```
+
+- Jede Zeile geht mit Enter raus. Im Modus **„auf Prompt warten“** wartet die Seite nach jeder Zeile, bis das Gerät wieder einen Prompt zeigt (`#`, `>`, `:` …). `--More--` wird automatisch weitergeblättert. Alternativ **feste Pause** pro Zeile.
+- `{{NAME}}` sind Platzhalter: Vor dem Start fragt ein Dialog die Werte ab und merkt sich die letzten Eingaben.
+- Steuerzeilen: `@expect Text` wartet auf eine Ausgabe (Groß/klein egal), `@pause 5` wartet 5 s, `@break` sendet BREAK, `@timeout 120` setzt die Wartezeit für die folgenden Zeilen (Standard 30 s).
+- **Bei Fehlermeldung anhalten** (Standard an): Bei `% Invalid input`, `% Incomplete command`, `Command fail` usw. stoppt die Wiedergabe und nennt die Zeile.
+- „Datei laden“ übernimmt eine Textdatei vom Handy in den Editor.
+
+## Seite lädt nicht? Diagnose
+
+1. **http://192.168.4.1/ping** öffnen. Das ist reiner Text ohne JavaScript. Kommt „OK RS232 Web Console …“ zurück, läuft der Webserver. `dns N` zeigt, wie viele Namensanfragen das Captive Portal schon beantwortet hat.
+2. **Serielle Konsole** (USB-C, 115200 Baud) mitlaufen lassen. Die Firmware protokolliert:
+
+   | Zeile | Bedeutung |
+   |---|---|
+   | `[WLAN] … Belegung Kanal 1/6/11: … -> Kanal 11` | Beim Start sucht sich der Hotspot den freiesten Kanal |
+   | `[WLAN] Hotspot RS232-XXXX auf Kanal 11, Sendeleistung 8.5 dBm` | Hotspot läuft |
+   | `[WLAN] Client hat IP 192.168.4.2` | Handy ist im WLAN |
+   | `[dns] captive.apple.com A -> 192.168.4.1` | Handy fragt den Namensdienst des Geräts (Hotspot-Erkennung) |
+   | `[HTTP]   -> captive redirect …` | Handy wird auf die Konsole umgeleitet |
+   | `[HTTP] 192.168.4.2 GET http://192.168.4.1/` und `-> 200 136682 Bytes in 180 ms` | Seite ausgeliefert, mit Dauer |
+   | `[HTTP] …: leere Verbindung verworfen` | Browser hatte eine Reserve-Verbindung offen, harmlos |
+   | `[WS]   client 0 connected` | Terminal verbunden |
+
+   **Kein `[HTTP]`-Eintrag beim Aufruf:** Der Aufruf erreicht das Gerät nicht. Das Handy schickt ihn dann über Mobilfunk: mobile Daten aus bzw. „Ohne Internet verwenden“. Bei Chrome auf dem iPhone muss außerdem die Berechtigung „Lokales Netzwerk“ erlaubt sein.
+   **Keine `[dns]`-Zeilen nach dem Verbinden:** Das Handy fragt einen anderen Namensdienst, typisch bei Firmen-iPhones mit VPN oder DNS-Profil. Die Hotspot-Seite erscheint dann nicht automatisch, `http://192.168.4.1` von Hand geht trotzdem.
+   **`-> 200 …` dauert mehrere Sekunden oder `Client getrennt` direkt danach:** Funkproblem. Unter Menü → Setup einen festen Kanal (1/6/11) wählen oder die Sendeleistung erhöhen. Das Handy nicht direkt auf die Antenne legen.
 
 ## Fehlersuche
 
 | Problem | Lösung |
 |---|---|
-| Terminal bleibt leer | Enter drücken · **Auto-Baud** · Adapter-Belegung prüfen (TX/RX, siehe Messung oben) · Rollover-Kabel statt Patchkabel? |
+| Terminal bleibt leer | Enter drücken · **Auto-Baud** · Belegung prüfen (TX/RX gekreuzt?) · Rollover-Kabel statt Patchkabel? |
 | Zeichensalat | falsche Baudrate → Auto-Baud oder Baud-Chip |
-| OLED dunkel | VCC/GND vertauscht? · SDA=08, SCL=09 · Adresse 0x3C/0x3D wird automatisch gesucht · USB-Log zeigt „OLED: nicht gefunden“ |
-| OLED Bild verschoben/Müll | falscher Controller → Setup: SSD1306 ↔ SH1106 |
-| Web-UI lädt nicht | Handy hat den Hotspot wegen „kein Internet“ verlassen · `192.168.4.1` statt `.local` verwenden (Android) · `http://192.168.4.1/ping` testen · USB-Log lesen (Tabelle in [MOCKUP.md](MOCKUP.md#seite-lädt-nicht-diagnose)) · Setup: festen Kanal oder mehr Sendeleistung |
-| Akku-% unplausibel | Teiler 100k/100k an `07`? · `BAT_CAL` kalibrieren |
+| Web-UI lädt nicht | Handy hat den Hotspot wegen „kein Internet“ verlassen · `192.168.4.1` statt `.local` verwenden (Android) · `http://192.168.4.1/ping` testen · USB-Log lesen ([Diagnose](#seite-lädt-nicht-diagnose)) · Setup: festen Kanal oder mehr Sendeleistung |
+| Akku-% unplausibel | kalibrieren, siehe [WAVESHARE.md](WAVESHARE.md#prozentanzeige-kalibrieren) |
 | Upload scheitert | BOOT halten + RST drücken (Download-Modus) |
-| Passwort vergessen | steht auf dem OLED (Seite „WLAN scannen“) und im USB-Log · sonst Werksreset per Taste |
+| Passwort vergessen | steht auf dem Display (Seite WLAN) und im USB-Log · sonst Werksreset im Web-UI |
 
 ## Web-UI ohne Hardware entwickeln
 
@@ -239,28 +205,28 @@ node tools/mock_device.js     # -> http://localhost:8080 (simuliert Gerät + Cis
 ## Projektstruktur
 
 ```
-platformio.ini            Build-Konfiguration (Arduino-ESP32 2.0.17): t-rss3, esp32dev-max3232
-MOCKUP.md                 Schnelltest mit ESP32 DevKit + MAX3232 (HW-044)
-firmware/                 fertige Binärdateien für das Mockup (Browser-Flasher / OTA)
-src/config.h              Board-Profile, Pins, Kalibrierung, Ports, Defaults
-src/main.cpp              Setup/Loop, Tasten
+platformio.ini            Build-Konfiguration (Arduino-ESP32 2.0.17): waveshare-s3-lcd2
+WAVESHARE.md              das Board: Touch-Oberfläche, Bluetooth, Pins, Akku, Debug-Konsole
+src/config.h              Pins, Kalibrierung, Ports, Defaults
+src/main.cpp              Setup/Loop, BOOT-Taste
 src/serial_bridge.*       bis zu 4 UARTs (2 Hardware, 2 Software), Replay-Puffer, Break, Auto-Baud
 src/xfer.*                XMODEM / XMODEM-1K / YMODEM-Sender
-src/configs.*             gespeicherte Konfigurationen (LittleFS)
+src/configs.*, player.*   gespeicherte Konfigurationen und ihr Abspielen am Gerät
 src/net.*                 WLAN (inkl. 802.1X), HTTP, WebSocket (Port 81), Raw-TCP, OTA
 src/certs.*               Zertifikatsspeicher (PKCS#12/PEM/DER/PKCS#7), CSR, Geräte-CA
 src/https.*               TLS-Frontend Port 443 (HTTPS + WSS)
 src/legacy_ciphers.*      DES/3DES/RC2 zum Lesen alter PKCS#12-Dateien
-src/display.*             OLED-Seiten inkl. QR-Codes
-src/power.*               Akku-Messung (LiPo / NiCd, Pin + Teiler einstellbar)
-src/status_led.*          WS2812
+src/display.h, lcd_ui.cpp Touch-Oberfläche auf dem 2″-LCD
+src/ble.*                 serielle Konsole über Bluetooth LE
+src/sdcard.*              SD-Karte: Mitschnitte
+src/power.*, bat_curve.h  Akku-Messung, Ladeerkennung, Sparmodus, Kennlinie
 src/settings.*            Einstellungen (NVS)
 src/web_assets.h          generiert aus web/ (nicht von Hand bearbeiten)
 web/                      Web-UI (index.html, app.js, style.css, xterm.js)
 tools/embed_web.py        bündelt web/ zu EINER Seite (CSS/JS eingebettet) und packt sie gzip-komprimiert in die Firmware
+tools/lcd_debug.py        Debug-Konsole: Screenshots, simulierte Taps, Akku-Rohwerte
 tools/mock_device.js      Geräte-Simulator für die UI-Entwicklung
-case/                     OpenSCAD-Gehäuse + STL (Standardmaße)
-docs/                     Verdrahtung, Screenshots
+docs/                     Screenshots der Weboberfläche
 ```
 
-Drittsoftware: xterm.js und xterm-addon-fit (MIT, `web/vendor/LICENSE-xterm.txt`), U8g2 (BSD), arduinoWebSockets (LGPL-2.1), ArduinoJson (MIT), EspSoftwareSerial (LGPL-2.1), mbedTLS (Apache-2.0, im ESP32-SDK enthalten). `src/legacy_ciphers.cpp` enthält DES-Code aus LibTomCrypt (Public Domain) und RC2-Code aus PyCryptodome (BSD-2-Clause).
+Drittsoftware: xterm.js und xterm-addon-fit (MIT, `web/vendor/LICENSE-xterm.txt`), LovyanGFX (BSD-2-Clause/MIT), NimBLE-Arduino (Apache-2.0), arduinoWebSockets (LGPL-2.1), ArduinoJson (MIT), EspSoftwareSerial (LGPL-2.1), mbedTLS (Apache-2.0, im ESP32-SDK enthalten). `src/legacy_ciphers.cpp` enthält DES-Code aus LibTomCrypt (Public Domain) und RC2-Code aus PyCryptodome (BSD-2-Clause).

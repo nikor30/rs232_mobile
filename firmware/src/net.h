@@ -8,7 +8,7 @@ namespace Net {
   void loop();
 
   void onSerialData(uint8_t port, const uint8_t *data, size_t len);   // UART -> clients
-  void onMessage(const String &msg);                    // info text -> clients + OLED
+  void onMessage(const String &msg);                    // info text -> clients + display
   void markDirty();                                     // push status soon
 
   uint8_t webClients();

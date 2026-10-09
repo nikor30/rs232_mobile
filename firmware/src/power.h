@@ -21,8 +21,8 @@ namespace Power {
   const char *setCal(uint16_t emptyMv, uint16_t fullMv);
   const char *calibrateNow(bool full);   // the voltage measured right now is 100 % (true) or 0 % (false)
 
-  // Charging, on boards with a charger but no status line to the processor
-  // (HAS_CHARGER). Derived from what can be observed: a USB host on the port and
+  // Charging: the board's charger has no status line to the processor.
+  // Derived from what can be observed: a USB host on the port and
   // the battery voltage. See power.cpp for what that can and cannot tell.
   enum Charge : uint8_t { ON_BATTERY = 0, CHARGING, FULL };
   Charge charge();

@@ -350,15 +350,11 @@
         <p class="hint">Raw-TCP kennt keine Anmeldung: Wer die LAN-IP und den Port kennt, sitzt direkt auf der Konsole des angeschlossenen Geräts – auch mitten in einer laufenden Sitzung. Im Firmennetz also nur einschalten, wenn das Segment vertrauenswürdig ist, und das Web-Passwort trotzdem setzen (das schützt nur die Weboberfläche). Ohne Haken gilt weiterhin: nur vom Hotspot 192.168.4.x aus.</p>
         <h3>Anzeige</h3>
         <div class="grid2">
-          <label>OLED
-            <select name="oledType"><option value="0">SSD1306 0,96″</option><option value="1">SH1106 1,3″</option></select>
-          </label>
           <label>Aus nach (s, 0 = nie) <input name="displayTimeout" type="number" min="0" max="3600" inputmode="numeric"></label>
-          <label>OLED-Helligkeit <input name="oledBrightness" type="range" min="0" max="255"></label>
-          <label>Status-LED <input name="ledBrightness" type="range" min="0" max="80"></label>
+          <label>Helligkeit <input name="displayBrightness" type="range" min="0" max="255"></label>
         </div>
-        <label class="check"><input name="oledFlip" type="checkbox"> OLED um 180° drehen</label>
-        <p class="hint">OLEDs haben keine Hintergrundbeleuchtung, die Helligkeit ist der Kontrastwert des Panels – ganz unten wird es deutlich dunkler, oben herum ändert sich wenig. Die Vorschau läuft live mit, gespeichert wird erst mit „Speichern &amp; Neustart“. Beim DevKit-Mockup ist die Status-LED nur an/aus, der Regler wirkt dort lediglich als Schalter (0 = aus).</p>
+        <label class="check"><input name="displayFlip" type="checkbox"> Display um 180° drehen</label>
+        <p class="hint">Die Helligkeit regelt die Hintergrundbeleuchtung. Die Vorschau läuft live mit, gespeichert wird erst mit „Speichern &amp; Neustart“.</p>
         <div class="row">
           <button class="btn primary" type="submit">Speichern &amp; Neustart</button>
         </div>
@@ -378,7 +374,7 @@
       <div class="row">
         <button id="factory" class="btn danger" type="button">Werksreset</button>
       </div>
-      <p class="hint">Löscht alle Einstellungen, erzeugt ein neues Hotspot-Passwort (steht danach auf dem OLED). Gespeicherte Konfigurationen bleiben erhalten.</p>
+      <p class="hint">Löscht alle Einstellungen, erzeugt ein neues Hotspot-Passwort (steht danach auf dem Display). Gespeicherte Konfigurationen bleiben erhalten.</p>
     </div>
   </div>
 </section>

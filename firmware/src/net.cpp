@@ -4,8 +4,6 @@
 #include "serial_bridge.h"
 #include "power.h"
 #include "display.h"
-#include "gui.h"
-#include "status_led.h"
 #include "web_assets.h"
 #include "captive_dns.h"
 #include "xfer.h"
@@ -435,11 +433,9 @@ static void handleGetSettings() {
   d["httpsCert"] = settings.httpsCert;
   d["hostname"] = settings.hostname;
   d["webPassSet"] = !settings.webPass.isEmpty();
-  d["oledType"] = settings.oledType;
-  d["oledFlip"] = settings.oledFlip;
+  d["displayFlip"] = settings.displayFlip;
   d["displayTimeout"] = settings.displayTimeout;
-  d["oledBrightness"] = settings.oledBrightness;
-  d["ledBrightness"] = settings.ledBrightness;
+  d["displayBrightness"] = settings.displayBrightness;
   d["tcpEnabled"] = settings.tcpEnabled;
   d["tcpLan"] = settings.tcpLan;
   d["tcpPort"] = RAW_TCP_PORT;
@@ -504,11 +500,9 @@ static void handlePostSettings() {
   if (d["hostname"].is<const char *>()) n.hostname = d["hostname"].as<String>();
   if (d["webPass"].is<const char *>() && d["webPass"].as<String>().length()) n.webPass = d["webPass"].as<String>();
   if (d["webPassClear"] | false) n.webPass = "";
-  if (d["oledType"].is<int>()) n.oledType = constrain(d["oledType"].as<int>(), 0, 1);
-  if (d["oledFlip"].is<bool>()) n.oledFlip = d["oledFlip"];
+  if (d["displayFlip"].is<bool>()) n.displayFlip = d["displayFlip"];
   if (d["displayTimeout"].is<int>()) n.displayTimeout = constrain(d["displayTimeout"].as<int>(), 0, 3600);
-  if (d["oledBrightness"].is<int>()) n.oledBrightness = constrain(d["oledBrightness"].as<int>(), 0, 255);
-  if (d["ledBrightness"].is<int>()) n.ledBrightness = constrain(d["ledBrightness"].as<int>(), 0, 255);
+  if (d["displayBrightness"].is<int>()) n.displayBrightness = constrain(d["displayBrightness"].as<int>(), 0, 255);
   if (d["tcpEnabled"].is<bool>()) n.tcpEnabled = d["tcpEnabled"];
   if (d["tcpLan"].is<bool>()) n.tcpLan = d["tcpLan"];
   if (d["apChannel"].is<int>()) n.apChannel = constrain(d["apChannel"].as<int>(), 0, 13);
@@ -873,7 +867,6 @@ static void handleCommand(uint8_t num, uint8_t *payload, size_t len) {
     replay(num, d["seq"], d["boot"] | 0u);
   } else if (!strcmp(cmd, "break")) {
     int ms = constrain((int)(d["ms"] | 300), 50, 2000);
-    Led::flash(255, 0, 255, 300);
     Bridge::sendBreak(port, ms);
   } else if (!strcmp(cmd, "serial")) {
     SerialCfg c = settings.port[port].serial;
@@ -891,9 +884,9 @@ static void handleCommand(uint8_t num, uint8_t *payload, size_t len) {
     dirty = true;
   } else if (!strcmp(cmd, "status")) {
     sendText(num, statusJson());
-  } else if (!strcmp(cmd, "oledBrightness")) {
+  } else if (!strcmp(cmd, "displayBrightness")) {
     // live preview while the slider moves: applied at once, stored only on "Speichern"
-    settings.oledBrightness = constrain((int)(d["value"] | 255), 0, 255);
+    settings.displayBrightness = constrain((int)(d["value"] | 255), 0, 255);
     Display::wake();
     Display::applyBrightness();
   } else if (!strcmp(cmd, "xfer")) {
@@ -1041,7 +1034,6 @@ void onMessage(const String &msg) {
   String s;
   serializeJson(d, s);
   ws.broadcastTXT(s);
-  Gui::message(msg);
   int sp = msg.indexOf(':');
   if (sp > 0) Display::message(msg.substring(0, sp).c_str(), msg.substring(sp + 1).c_str(), 2500);
   else Display::message(msg.c_str(), "", 2500);
@@ -1144,7 +1136,7 @@ void begin() {
   // No modem sleep: lowest latency. Except next to Bluetooth - the two share one
   // radio, and the WiFi driver aborts (reboot) if its station side runs without
   // modem sleep while Bluetooth is on.
-  WiFi.setSleep(HAS_BLE && settings.bleEnabled);
+  WiFi.setSleep(settings.bleEnabled);
   WiFi.setTxPower((wifi_power_t)settings.txPower);
   Serial.printf("[WLAN] Hotspot %s auf Kanal %u, Sendeleistung %.1f dBm\n", settings.apSsid.c_str(),
                 activeChannel, settings.txPower / 4.0f);

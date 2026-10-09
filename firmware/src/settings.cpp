@@ -18,7 +18,7 @@ static String macSuffix() {
 }
 
 __attribute__((unused)) static String randomPassword() {
-  // no 0/O, 1/l/I to make reading it off the OLED easy
+  // no 0/O, 1/l/I to make reading it off the display easy
   const char *alphabet = "abcdefghjkmnpqrstuvwxyz23456789";
   const size_t n = strlen(alphabet);
   String p;
@@ -134,11 +134,9 @@ void load() {
   settings.bleEnabled   = prefs.getBool("ble", true);
   settings.hostname = prefs.getString("host", DEFAULT_HOSTNAME);
   settings.webPass  = prefs.getString("webPass", "");
-  settings.oledType = prefs.getUChar("oled", 0);
-  settings.oledFlip = prefs.getBool("flip", false);
+  settings.displayFlip = prefs.getBool("flip", false);
   settings.displayTimeout = prefs.getUShort("dispTo", 60);
-  settings.oledBrightness = prefs.getUChar("oledBr", 255);
-  settings.ledBrightness  = prefs.getUChar("led", 12);
+  settings.displayBrightness = prefs.getUChar("oledBr", 255);   // key name from the OLED days
   settings.tcpEnabled     = prefs.getBool("tcp", true);
   settings.tcpLan         = prefs.getBool("tcpLan", false);
   settings.apChannel      = prefs.getUChar("chan", AP_CHANNEL_DEFAULT);
@@ -157,10 +155,8 @@ void load() {
     settings.txPower = TX_POWER_DEFAULT;
   if (settings.batType > 1) settings.batType = BAT_TYPE_DEFAULT;
   if (BatCurve::calError(settings.batType, settings.batEmptyMv, settings.batFullMv)) settings.batEmptyMv = settings.batFullMv = 0;
-#if HAS_CHARGER
   // the divider is part of the board; a "no measurement" stored by an older firmware would hide the battery
   if (settings.batPin < 0) { settings.batPin = BAT_PIN_DEFAULT; settings.batDiv = BAT_DIV_DEFAULT; }
-#endif
 
   if (settings.hostname.isEmpty()) settings.hostname = DEFAULT_HOSTNAME;
   prefs.end();
@@ -218,11 +214,9 @@ void save() {
   prefs.putBool("ble", settings.bleEnabled);
   prefs.putString("host", settings.hostname);
   prefs.putString("webPass", settings.webPass);
-  prefs.putUChar("oled", settings.oledType);
-  prefs.putBool("flip", settings.oledFlip);
+  prefs.putBool("flip", settings.displayFlip);
   prefs.putUShort("dispTo", settings.displayTimeout);
-  prefs.putUChar("oledBr", settings.oledBrightness);
-  prefs.putUChar("led", settings.ledBrightness);
+  prefs.putUChar("oledBr", settings.displayBrightness);
   prefs.putBool("tcp", settings.tcpEnabled);
   prefs.putBool("tcpLan", settings.tcpLan);
   prefs.putUChar("chan", settings.apChannel);

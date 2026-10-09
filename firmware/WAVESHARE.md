@@ -1,4 +1,4 @@
-# Mockup 2: Waveshare ESP32-S3-Touch-LCD-2
+# Waveshare ESP32-S3-Touch-LCD-2
 
 ESP32-S3R8 (16 MB Flash, 8 MB PSRAM) mit 2″-Farbdisplay 240×320 (ST7789T3), kapazitivem Touch (CST816D), Lagesensor (QMI8658), SD-Slot, LiPo-Anschluss und USB-C am nativen USB-Port.
 
@@ -6,7 +6,7 @@ ESP32-S3R8 (16 MB Flash, 8 MB PSRAM) mit 2″-Farbdisplay 240×320 (ST7789T3), k
 pio run -e waveshare-s3-lcd2 -t upload
 ```
 
-Stand 2. Oktober 2026: gebaut, geflasht und am Board geprüft, soweit unten angegeben. Core 2.0.17 wie das DevKit-Mockup.
+Stand 2. Oktober 2026: gebaut, geflasht und am Board geprüft, soweit unten angegeben. Arduino-Core 2.0.17. Seit dem 9. Oktober 2026 ist dies das einzige Board der Firmware; Weboberfläche und Netzfunktionen beschreibt [README.md](README.md).
 
 ## Was das Board zusätzlich kann
 
@@ -151,7 +151,7 @@ Bleibt die Hauptschleife länger als 3 s stehen, meldet der UI-Task das von sich
 
 ## Erfahrungswissen
 
-- **`Serial.setTxTimeoutMs(0)` blockiert, statt nie zu blockieren.** Die Schreibschleife der USB-Seriell-Klasse (Core 2.0.17) zählt den Wert herunter und läuft bei 0 über. Steckt das Board an einem Rechner, der den Port nicht geöffnet hat, bleibt `setup()` in der ersten längeren Log-Ausgabe hängen: kein Hotspot, kein Bluetooth, eingefrorene Anzeige. Das war sehr wahrscheinlich auch das „Einfrieren nach einigen Berührungen" (jede Berührung schrieb eine Logzeile). Jetzt 5 ms. Betrifft alle Boards mit USB-CDC, auch das T-RSS3.
+- **`Serial.setTxTimeoutMs(0)` blockiert, statt nie zu blockieren.** Die Schreibschleife der USB-Seriell-Klasse (Core 2.0.17) zählt den Wert herunter und läuft bei 0 über. Steckt das Board an einem Rechner, der den Port nicht geöffnet hat, bleibt `setup()` in der ersten längeren Log-Ausgabe hängen: kein Hotspot, kein Bluetooth, eingefrorene Anzeige. Das war sehr wahrscheinlich auch das „Einfrieren nach einigen Berührungen" (jede Berührung schrieb eine Logzeile). Jetzt 5 ms.
 - **WLAN-Station plus Bluetooth braucht Modem-Sleep.** Ohne ihn bricht der WLAN-Treiber mit `abort()` ab, sobald die Station startet — auch beim bloßen Netz-Scan aus dem Hotspot-Betrieb.
 - **Offene Netze nie mit einem einzigen Tippen verbinden.** Beim Testen ist genau das passiert; seitdem fragt die Oberfläche nach.
 - **Vorzeichenlose Zeitvergleiche über Task- oder Funktionsgrenzen sind eine Falle.** `now - lastActivity > timeout` schaltete das Display bei jeder Berührung ab, weil `lastActivity` nach `now` gestempelt wurde und die Differenz überlief. Immer `(int32_t)(now - x)` vergleichen.
@@ -200,5 +200,4 @@ Weitere Regeln, die dabei entstanden sind: Die Karte wird **vor** dem LCD gestar
 12. Ausschalten am Display (Setup → Ausschalten → Ja) und Einschalten mit der BOOT-Taste von Hand prüfen; ebenso das Scrollen und die größeren Tasten mit echtem Finger.
 13. Bluetooth mit dem längeren Meldeintervall vom Handy aus suchen.
 8. SD-Mitschnitte sind nur am Display bedienbar, nicht in der Weboberfläche.
-9. `esp32dev-max3232` und `t-rss3` wurden am 6. Oktober 2026 mit den Änderungen übersetzt (nicht geflasht); `viewe-5inch` nicht neu gebaut.
 10. Baudraten-Wechsel am Display gelten bis zum Neustart (wie bei der BOOT-Taste), sie werden nicht gespeichert.

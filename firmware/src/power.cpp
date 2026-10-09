@@ -2,7 +2,7 @@
 #include "config.h"
 #include "settings.h"
 #include "bat_curve.h"
-#if HAS_CHARGER && defined(CONFIG_IDF_TARGET_ESP32S3) && ARDUINO_USB_MODE
+#if ARDUINO_USB_MODE
 #include "soc/usb_serial_jtag_struct.h"
 #define USB_SOF_DETECT 1
 #else
@@ -75,7 +75,6 @@ bool empty() { return emptySecs >= BAT_OFF_S; }
 bool empty() { return false; }
 #endif
 
-#if HAS_CHARGER
 static void chargeSample() {
 #if USB_SOF_DETECT
   uint16_t sof = USB_SERIAL_JTAG.fram_num.sof_frame_index;
@@ -105,10 +104,6 @@ Charge charge() {
   bool flat = filt >= CHG_FLAT_MIN_MV && flatSince >= CHG_FLAT_S;
   return highSince >= CHG_FULL_HOLD_S || flat ? FULL : CHARGING;
 }
-#else
-static void chargeSample() {}
-Charge charge() { return ON_BATTERY; }
-#endif
 
 const char *chargeName() {
   Charge c = charge();
@@ -126,7 +121,7 @@ String diag() {
            settings.batFullMv ? settings.batFullMv : BatCurve::defaultFullMv(t), settings.batFullMv ? " kalibriert" : "",
            present() ? "Akku da" : "kein Akku",
            USB_SOF_DETECT ? (host ? "ja" : "nein") : "n/a", stepUp ? "ja" : "nein", CHG_FULL_MV, (unsigned long)highSince, (unsigned long)flatSince,
-           HAS_CHARGER ? (charge() == ON_BATTERY ? "Akkubetrieb" : chargeName()) : "ohne Laderkennung",
+           charge() == ON_BATTERY ? "Akkubetrieb" : chargeName(),
            saverForced >= 0 ? (saver() ? "erzwungen" : "gesperrt") : saver() ? "ja" : "nein", (unsigned)getCpuFrequencyMhz());
   return String(buf);
 }
@@ -191,7 +186,7 @@ void loop() {
   if (fabsf(s - filt) > 400) filt = s;
   else filt = filt * 0.85f + s * 0.15f;
   chargeSample();
-  bool battery = HAS_CHARGER && present() && settings.batType == 0 && charge() == ON_BATTERY;
+  bool battery = present() && settings.batType == 0 && charge() == ON_BATTERY;
   batSecs = !battery ? 0 : batSecs < 255 ? batSecs + 1 : 255;
 #ifdef BAT_OFF_MV
   emptySecs = !(battery && filt < BAT_OFF_MV) ? 0 : emptySecs < 255 ? emptySecs + 1 : 255;

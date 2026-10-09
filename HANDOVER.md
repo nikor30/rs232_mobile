@@ -1,6 +1,6 @@
 # RS232-WLAN-Konsole — Projektstand und Übergabe
 
-**Stand:** 1. Oktober 2026 · Firmware **v1.7.1** · Autor der Arbeiten: Claude, im Auftrag von Niko
+**Stand:** 9. Oktober 2026 · Firmware **v1.8.0** · Autor der Arbeiten: Claude, im Auftrag von Niko
 
 Dieses Dokument ist so geschrieben, dass man das Projekt allein damit und mit dem Archiv-Inhalt fortsetzen kann — ohne den Chatverlauf. Es nennt ausdrücklich auch, **was nicht verifiziert ist**.
 
@@ -10,19 +10,15 @@ Dieses Dokument ist so geschrieben, dass man das Projekt allein damit und mit de
 
 Ein mobiles Gerät für seriellen Konsolenzugang: Du verbindest Handy oder Notebook mit dem WLAN-Hotspot des Geräts, öffnest `http://192.168.4.1` und hast ein Terminal (xterm.js) auf dem angeschlossenen Switch, Router oder der Firewall. Keine App, kein Treiber, kein USB-Seriell-Adapter. Bis zu vier serielle Ports gleichzeitig, dazu Raw-TCP/Telnet, Dateiübertragung per XMODEM/YMODEM, abspielbare Konfigurationen, 802.1X fürs Firmennetz und HTTPS.
 
-## 2. Drei Hardware-Varianten, eine Quelle
+## 2. Die Hardware
 
-| Variante | Rolle | PlatformIO-Env | Core |
-|---|---|---|---|
-| **ESP32 DevKit + MAX3232 (HW-044)** | Mockup, der real benutzte Aufbau | `esp32dev-max3232` | Arduino 2.0.17 |
-| **LilyGO T-RSS3** | ursprüngliche Zielhardware (isolierter Port, OLED, Akku) | `t-rss3` | Arduino 2.0.17 |
-| **VIEWE UEDX80480050E-WB** | 5″-Touchpanel, ESP32-S3, 800×480, SD | `viewe-5inch` | Arduino **3.1.1** |
+Seit dem 9. Oktober 2026 baut die Firmware nur noch für das **Waveshare ESP32-S3-Touch-LCD-2** (ESP32-S3R8, 2″-Touch-LCD 240×320, SD, LiPo-Anschluss; PlatformIO-Env `waveshare-s3-lcd2`, Arduino-Core 2.0.17). Stand, Pins und offene Punkte: `firmware/WAVESHARE.md`.
 
-Die Variante wählt ein Profil in `src/config.h` (`BOARD_ESP32_DEVKIT`, Standard = T-RSS3, `BOARD_VIEWE_5INCH`).
+Entfernt wurden die drei früheren Varianten samt ihrem Code: **ESP32 DevKit + MAX3232 (HW-044)** mit OLED (das erste Mockup), **LilyGO T-RSS3** und das **VIEWE-5″-Panel** (LVGL-GUI, Core 3.1.1) — dazu OLED-Treiber (U8g2), Status-LED, die fertigen Images, `MOCKUP.md`, `PANEL.md` und das T-RSS3-Gehäuse. Der letzte Stand mit allen Varianten ist Commit `3bbc16c`. Wo die Abschnitte unten von diesen Boards handeln, sind sie als Erfahrungswissen stehen geblieben.
 
 ## 3. Was läuft, was nicht
 
-**Am echten Gerät erprobt (Mockup):**
+**Am echten Gerät erprobt (am früheren DevKit-Mockup; Waveshare: siehe `firmware/WAVESHARE.md`):**
 - Web-Terminal, Mehrfach-Clients, Reconnect mit Replay
 - Konsolenzugriff auf einen echten Cisco-Switch
 - Raw-TCP auf Port 2000 aus dem LAN, mit PuTTY
@@ -30,25 +26,23 @@ Die Variante wählt ein Profil in `src/config.h` (`BOARD_ESP32_DEVKIT`, Standard
 - PowerBoost 1000C mit LiPo lädt und versorgt
 
 **Übersetzt, aber nie auf Hardware gelaufen:**
-- **alles auf dem VIEWE-Panel** — das Board war bei Redaktionsschluss noch nicht geliefert. GUI, SD-Karte, Panel-Treiber: ungetestet.
-- **mbedTLS-3-Pfade** (802.1X EAP-TLS gegen echten RADIUS, PKCS#12-Upload) auf Core 3.
-- **LBO-Auswertung** (Akkuwarnleitung) — Code ist drin, Leitung war noch nicht gelötet.
+- **mbedTLS-3-Pfade** (`compat_eap.h`, `compat_mbedtls.h`, Core 3) — seit dem Wegfall des VIEWE-Panels werden sie auch nicht mehr übersetzt. 802.1X EAP-TLS gegen einen echten RADIUS steht auf jedem Core aus.
+- **LBO-Auswertung** (Akkuwarnleitung) — Code ist drin, war fürs DevKit mit PowerBoost gedacht und nie verdrahtet.
 
 **Nicht gebaut:** die I²C-Tochterplatine. Schaltplan und Layout existieren, bestellt ist nichts.
 
 ## 4. Was im Archiv liegt
 
 ```
-firmware/            das PlatformIO-Projekt, git-fertig (hier `git init`)
+firmware/            das PlatformIO-Projekt
   src/               C++-Quellen
   web/               Weboberfläche (wird gzip-komprimiert ins Image eingebettet)
-  firmware/*.bin     fertige Images für Mockup und Panel
-  README.md          Zielhardware T-RSS3
-  MOCKUP.md          Mockup-Aufbau, Tests, Akku, 4 Ports  ← die meistgebrauchte Datei
-  PANEL.md           das 5″-Board: Pinbudget, GUI, SD, Core-3-Portierung
-hardware/
+  tools/             embed_web.py, lcd_debug.py (Debug-Konsole), mock_device.js
+  README.md          Weboberfläche, Netz, 802.1X/HTTPS, XMODEM, Konfigurationen, Diagnose
+  WAVESHARE.md       das Board: Touch-Oberfläche, Bluetooth, Pins, Akku  ← die meistgebrauchte Datei
+hardware/            Entwürfe aus der Zeit vor dem Waveshare-Board
   pcb/               KiCad-Projekt der Tochterplatine + Generator-Skripte
-  gehaeuse/          OpenSCAD-Quelle, STLs, Render-Vorschauen
+  gehaeuse/          OpenSCAD-Quelle, STLs, Render-Vorschauen (LCDwiki-Basisboard)
 diagramme/           alle Zeichnungen als PNG + das matplotlib-Skript dazu
 tests/               Host-Unittests (laufen auf dem PC, nicht auf dem ESP32)
 HANDOVER.md          dieses Dokument
@@ -58,34 +52,32 @@ HANDOVER.md          dieses Dokument
 
 | Datei | Aufgabe |
 |---|---|
-| `main.cpp` | Setup/Loop, Tasten, Verteilung der seriellen Daten an alle Senken |
-| `config.h` | **Hardwareprofile** — hier beginnt jede Portierung |
+| `main.cpp` | Setup/Loop, BOOT-Taste, Verteilung der seriellen Daten an alle Senken |
+| `config.h` | Pins und Defaults des Boards |
 | `settings.h/.cpp` | persistente Einstellungen (NVS), Pin-Plausibilisierung |
 | `serial_bridge.h/.cpp` | UARTs, Sendewarteschlangen, Replay-Ringpuffer, Auto-Baud |
 | `net.h/.cpp` | WLAN, HTTP, WebSocket, **Raw-TCP/Telnet**, OTA, 802.1X |
 | `https.cpp`, `certs.cpp` | TLS-Frontend, Zertifikate, PKCS#12, CSR-Erzeugung |
-| `display.h/.cpp` | OLED (U8g2) — auf Panel-Boards leere Hüllen |
-| `gui.h/.cpp` | **LVGL-Touch-GUI** fürs 5″-Panel |
-| `sdcard.h/.cpp` | SD-Karte: Mitschnitte, Konfigurationen, Transferdateien |
-| `power.h/.cpp` | Akkumessung über ADC **und** LBO-Warnleitung |
+| `display.h`, `lcd_ui.cpp` | Touch-Oberfläche auf dem 2″-LCD (LovyanGFX) |
+| `ble.h/.cpp` | serielle Konsole über Bluetooth LE |
+| `sdcard.h/.cpp` | SD-Karte: Mitschnitte |
+| `power.h/.cpp`, `bat_curve.h` | Akkumessung, Ladeerkennung, Sparmodus, LBO-Warnleitung |
 | `xfer.cpp` | XMODEM/YMODEM im ESP32 |
-| `configs.cpp` | gespeicherte Konfigurationen abspielen |
-| `compat_eap.h` | 802.1X-API-Namen Core 2 ↔ Core 3 |
-| `compat_mbedtls.h` | mbedTLS 2 ↔ 3 |
-| `panel/` | LVGL-Port des Herstellers (Espressif, CC0) + `lv_conf.h` |
+| `configs.cpp`, `player.cpp` | gespeicherte Konfigurationen, Abspielen am Gerät |
+| `compat_eap.h` | 802.1X-API-Namen Core 2 ↔ Core 3 (Core 3 derzeit ungenutzt) |
+| `compat_mbedtls.h` | mbedTLS 2 ↔ 3 (ebenso) |
 
 ## 6. Bauen
 
 ```bash
-pio run -e esp32dev-max3232 -t upload    # Mockup
-pio run -e viewe-5inch -t upload         # 5"-Panel
+pio run -e waveshare-s3-lcd2 -t upload
 ```
 
-Die Panel-Umgebung zieht die **pioarduino**-Platform (Core 3.1.1), weil `ESP32_Display_Panel` Core 3 voraussetzt. Beide Cores existieren parallel; die `platformio.ini` im Archiv ist die normale Fassung, die über die PlatformIO-Registry auflöst — die funktioniert auf einem normalen Entwicklungsrechner.
+Die `platformio.ini` löst über die PlatformIO-Registry auf (Arduino-Core 2.0.17).
 
 > **Hinweis für eine Fortsetzung in einer Claude-Sandbox:** Dort war `api.registry.platformio.org` und `dl.espressif.com` durch die Egress-Policy gesperrt, GitHub und PyPI dagegen offen. Der Workaround war: Platform, Framework, IDF-Libs und Toolchains direkt von GitHub-Releases ziehen und mit selbstgeschriebenen `.piopm`/`package.json`-Manifesten unter `~/.platformio/packages` ablegen; Debugger- und Dateisystem-Werkzeuge als leere Stubs. Beide Core-Versionen müssen in **versionierten** Verzeichnissen liegen (`framework-arduinoespressif32@3.20017.0` neben dem einfachen Namen für 3.1.1), sonst überschreibt die eine Installation die andere. Bibliotheken gehören dann in `lib/`, weil PlatformIO transitive Abhängigkeiten sonst doch über die Registry auflösen will.
 
-## 7. Was in dieser Arbeitsphase entstand (v1.5.0 → v1.7.1)
+## 7. Was in dieser Arbeitsphase entstand (v1.5.0 → v1.8.0)
 
 | Version | Inhalt |
 |---|---|
@@ -96,6 +88,8 @@ Die Panel-Umgebung zieht die **pioarduino**-Platform (Core 3.1.1), weil `ESP32_D
 | 1.6.5 | **TCP-Sendewarteschlange** — behebt echten Datenverlust (siehe 8.4) |
 | 1.7.0 | **VIEWE-Panel**: Board-Profil, LVGL-GUI, SD-Karte, Portierung auf Arduino-Core 3 / mbedTLS 3 |
 | 1.7.1 | **LBO-Warnleitung** für Ladeboards |
+| 1.8.0 | **Waveshare ESP32-S3-Touch-LCD-2**: Board-Profil, Farb-Touch-Oberfläche, Bluetooth-LE-Konsole, SD, Akkuanzeige mit Ladeerkennung, Sparmodus und Ausschalten; **Akku-Kalibrierung** (0-%-/100-%-Punkt) für alle Boards — Stand und offene Punkte: `firmware/WAVESHARE.md` |
+| — | 9. Oktober 2026, ohne Versionssprung: **Aufräumen auf ein Board.** DevKit-Mockup, T-RSS3 und VIEWE-Panel entfernt, ebenso OLED-Treiber, LVGL-GUI und Status-LED; die Einstellungen `oledFlip`/`oledBrightness` heißen in der Web-API jetzt `displayFlip`/`displayBrightness` (NVS-Schlüssel unverändert) |
 
 ## 8. Hartes Erfahrungswissen
 
@@ -116,10 +110,10 @@ Im Arduino-Core 2.0.17 blockiert `write()` bei vollem Socket-Puffer bis zu **10 
 ### 8.5 Telnet vs. Raw auf demselben Port
 Die Firmware unterscheidet am **allerersten Byte**: `0xFF` → Telnet-Client, dann antwortet sie wie ein Terminalserver (`WILL ECHO`, `WILL SUPPRESS-GO-AHEAD`), was das lokale Echo des Clients abschaltet. Alles andere → reiner Raw-Durchgang, kein Byte wird angefasst. In PuTTY entsprechend „Telnet" **oder** „Raw" wählen; beides geht. Achtung, klassische PuTTY-Falle: Beim Umschalten des Verbindungstyps setzt PuTTY das Port-Feld auf den Standard zurück.
 
-### 8.6 Das VIEWE-Panel hat zwei freie GPIOs
+### 8.6 Das VIEWE-Panel hat zwei freie GPIOs (Board entfernt)
 Nach Abzug von RGB-Panel (≈20 Pins), SD-Karte und Touch bleiben **IO17 und IO18**, dazu das UART-Paar IO43/44 (= USB-Debug-Konsole). Vier native RS232-Ports sind damit ausgeschlossen. Der Touch-I²C auf **IO19/20** ist mitbenutzbar: GT911 liegt auf 0x5D/0x14, die SC16IS752 auf 0x48–0x57, kein Adresskonflikt. Das ist die eigentliche Begründung für die I²C-Tochterplatine.
 
-### 8.7 Lade-/Boost-Board
+### 8.7 Lade-/Boost-Board (DevKit-Mockup, entfernt)
 PowerBoost 1000C ist **ausdrücklich 1-zellig** (3,7/4,2 V) — ein 7,4-V-Pack zerstört den Laderegler. 5Vo geht auf **VIN**, nie auf 3V3. Eine Schottky (1N5817, Ring zum DevKit) zwischen 5Vo und VIN macht den Aufbau USB-sicher, sodass Flashen mit angeklemmtem Akku geht. `LBO` ist offener Kollektor und braucht keinen externen Widerstand. Schaltplan: `diagramme/powerboost_schaltplan.png`.
 
 ### 8.8 Tochterplatine: beide Kanäle nutzen
@@ -137,12 +131,11 @@ Da kein Zugriff auf die Hardware bestand, wurde das Prüfbare auf dem Host gepr�
 
 ## 10. Offene Punkte, nach Priorität
 
-1. **VIEWE-Panel in Betrieb nehmen.** Flashen, GUI ansehen, SD testen. Erwartbare Baustellen: PSRAM-Bandbreite zwischen Bildpuffer und WLAN (Flackern/Tearing; `panel/lvgl_v8_port.h` hat Anti-Tearing- und Bounce-Buffer-Schalter), Touch-Kalibrierung, die gerechnete Terminal-Geometrie (96 × 17 Zeichen).
-2. **802.1X auf Core 3 gegen echten RADIUS testen.** Die mbedTLS-3-Pfade sind nie gelaufen. Danach PKCS#12-Upload und CSR-Erzeugung durchspielen.
-3. **LBO-Leitung löten** und im Web-UI unter Menü → Ports → „Warnleitung (LBO)" auf D23 setzen.
-4. **Tochterplatine**: Stückliste gegen aktuelle LCSC-Preise prüfen, Fertigung beauftragen. Danach fehlt noch der **SC16IS752-Treiber in der Firmware** — der existiert noch nicht.
-5. **Gehäuse** für die VIEWE-Variante neu auslegen; das vorhandene passt auf das LCDwiki-Basisboard, nicht auf dieses.
-6. Die Docs-Seite (Artifact `2f26e902-4f1e-4797-bfbc-4037495d8121`) beschreibt noch das LCDwiki-Basisboard und müsste auf VIEWE umgeschrieben werden.
+1. **Waveshare-Board fertig prüfen**: MAX3232 anschließen und echter Konsolenzugriff, SD-Karte, Akkubetrieb — die Liste steht in `firmware/WAVESHARE.md` unter „Offen".
+2. **802.1X gegen echten RADIUS testen.** Danach PKCS#12-Upload und CSR-Erzeugung durchspielen.
+3. **Tochterplatine**: Stückliste gegen aktuelle LCSC-Preise prüfen, Fertigung beauftragen. Danach fehlt noch der **SC16IS752-Treiber in der Firmware** — der existiert noch nicht. Am Waveshare-Board wäre sie der Weg zu mehr als einem Port.
+4. **Gehäuse** für das Waveshare-Board; das vorhandene passt auf das LCDwiki-Basisboard.
+5. Die Docs-Seite (Artifact `2f26e902-4f1e-4797-bfbc-4037495d8121`) beschreibt noch das LCDwiki-Basisboard und müsste auf das Waveshare-Board umgeschrieben werden.
 
 ## 11. Arbeitsweise, die sich bewährt hat
 

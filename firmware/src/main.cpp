@@ -1,10 +1,10 @@
 // ============================================================================
-//  RS232 Web Console - LilyGO T-RSS3 (ESP32-S3)
+//  RS232 Web Console - Waveshare ESP32-S3-Touch-LCD-2
 //
 //  Phone/laptop  --WiFi-->  web terminal (xterm.js) / raw TCP  --> RS232 port
 //
-//  Button (IO5 on board, optional panel button on IO6):
-//    short press : wake display / next page (status, WiFi QR, URL QR, info)
+//  BOOT button (the touch display does the rest, see lcd_ui.cpp):
+//    short press : wake display / next page
 //    long press  : on status page -> next baud rate (9600 ... 115200)
 //    hold at power-on for 5 s -> factory reset (new WiFi password)
 // ============================================================================
@@ -17,11 +17,9 @@
 #include "net.h"
 #include "display.h"
 #include "power.h"
-#include "status_led.h"
 #include "xfer.h"
 #include "configs.h"
 #include "certs.h"
-#include "gui.h"
 #include "sdcard.h"
 #include "ble.h"
 #include "player.h"
@@ -37,7 +35,7 @@ struct Button {
   uint32_t changedAt, downAt;
   explicit Button(int p) : pin(p), raw(false), pressed(false), longFired(false), changedAt(0), downAt(0) {}
 };
-static Button buttons[] = {Button(PIN_KEY), Button(PIN_EXT_KEY)};
+static Button buttons[] = {Button(PIN_KEY)};
 
 static const uint32_t BAUD_PRESETS[] = {9600, 19200, 38400, 57600, 115200};
 
@@ -89,7 +87,7 @@ static void pollButton(Button &b) {
   }
 }
 
-// Hold a button (on-board IO5 or panel button IO6) while powering on -> factory reset after 5 s
+// Hold the button while powering on -> factory reset after 5 s
 static bool anyButtonDown() {
   for (auto &b : buttons)
     if (b.pin >= 0 && digitalRead(b.pin) == LOW) return true;
@@ -108,7 +106,6 @@ static void checkFactoryReset() {
       Certs::wipe();                   // private keys never survive a factory reset
       Display::message("Werksreset", "OK - Neustart", 2000);
       Display::loop();
-      Led::set(60, 0, 0);
       delay(2000);
       ESP.restart();
     }
@@ -116,18 +113,16 @@ static void checkFactoryReset() {
     snprintf(buf, sizeof(buf), "halten: %lu s", (unsigned long)(5 - held / 1000));
     Display::message("Werksreset?", buf, 500);
     Display::loop();
-    Led::set((millis() / 200) % 2 ? 40 : 0, 0, 0);
     delay(50);
   }
   Display::message("Abgebrochen", "", 1000);
 }
 
-// Everything that wants to see serial data: web/TCP clients, the panel GUI and
-// the SD recording. Keeping the fan-out here means the bridge stays unaware of
-// which front ends exist on a given board.
+// Everything that wants to see serial data: web/TCP clients, the SD recording
+// and Bluetooth. Keeping the fan-out here means the bridge stays unaware of
+// which front ends exist.
 static void onSerial(uint8_t port, const uint8_t *data, size_t len) {
   Net::onSerialData(port, data, len);
-  Gui::onSerialData(port, data, len);
   Sd::write(port, data, len);
   Ble::onSerialData(port, data, len);
 }
@@ -147,19 +142,14 @@ void setup() {
     if (b.pin >= 0) pinMode(b.pin, INPUT_PULLUP);
 
   Store::load();
-  Led::begin();
 
   Net::prepareRadio();               // credentials (true RNG with radio on) + channel scan
 
-#if HAS_PANEL
-  bool oled = Gui::begin();          // 800x480 touch panel instead of the small OLED
-#else
-  bool oled = Display::begin();
-  if (oled) {
+  bool lcd = Display::begin();
+  if (lcd) {
     Display::message(FW_NAME, "v" FW_VERSION, 1500);
     Display::loop();
   }
-#endif
   checkFactoryReset();
   Sd::begin();
 
@@ -171,15 +161,8 @@ void setup() {
   Ble::begin();
 
   Serial.printf("\n%s v%s (%s)\n", FW_NAME, FW_VERSION, BOARD_NAME);
-#if HAS_PANEL
-  Serial.printf("Panel  : %s\n", oled ? "ok" : "Fehler");
+  Serial.printf("LCD    : %s\n", lcd ? "ok" : "nicht gefunden");
   Serial.printf("SD     : %s\n", Sd::typeName());
-#else
-  Serial.printf("%s : %s\n", HAS_SPI_LCD ? "LCD   " : "OLED  ", oled ? "ok" : "nicht gefunden");
-#if HAS_SDCARD
-  Serial.printf("SD     : %s\n", Sd::typeName());
-#endif
-#endif
   Serial.printf("WLAN   : %s  Passwort: %s\n", settings.apSsid.c_str(), settings.apPass.c_str());
   Serial.printf("Web-UI : http://%s/  (http://%s.local/)\n", Net::apIp().c_str(), settings.hostname.c_str());
   for (uint8_t p = 0; p < MAX_PORTS; p++) {
@@ -228,16 +211,12 @@ void loop() {
   Net::loop();
   Power::loop();
   cpuClock();
-#if HAS_SPI_LCD
   if (Power::empty()) Display::powerOff("Akku leer");
-#endif
   for (auto &b : buttons) pollButton(b);
   Display::loop();
-  Gui::loop();
   Sd::loop();
   Ble::loop();
   Player::loop();
-  Led::loop(Net::webClients() + (Net::tcpConnected() ? 1 : 0), Power::low(), Bridge::autobaudRunning());
 
   // one-time low battery notice (with hysteresis)
   static bool lowNotified = false;

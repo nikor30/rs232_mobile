@@ -1197,11 +1197,9 @@
       f.webPassClear.parentElement.hidden = !s.webPassSet;
       f.tcpEnabled.checked = s.tcpEnabled;
       f.tcpLan.checked = s.tcpLan;
-      f.oledType.value = String(s.oledType);
-      f.oledFlip.checked = s.oledFlip;
+      f.displayFlip.checked = s.displayFlip;
       f.displayTimeout.value = s.displayTimeout;
-      f.oledBrightness.value = s.oledBrightness;
-      f.ledBrightness.value = s.ledBrightness;
+      f.displayBrightness.value = s.displayBrightness;
       $('#tcpPort').textContent = s.tcpPort;
       f.apChannel.value = String(s.apChannel || 0);
       f.txPower.value = String(s.txPower || 44);
@@ -1211,12 +1209,12 @@
   }
 
   // live preview while dragging (the device only stores it on "Speichern & Neustart")
-  let oledPrevAt = 0;
-  $('#setupForm').oledBrightness.addEventListener('input', (e) => {
+  let brightPrevAt = 0;
+  $('#setupForm').displayBrightness.addEventListener('input', (e) => {
     const now = Date.now();
-    if (!state.connected || now - oledPrevAt < 60) return;   // no toast storm while dragging
-    oledPrevAt = now;
-    sendCmd({ cmd: 'oledBrightness', value: +e.target.value });
+    if (!state.connected || now - brightPrevAt < 60) return;   // no toast storm while dragging
+    brightPrevAt = now;
+    sendCmd({ cmd: 'displayBrightness', value: +e.target.value });
   });
 
   $('#setupForm').addEventListener('submit', async (e) => {
@@ -1228,11 +1226,9 @@
       webPassClear: f.webPassClear.checked,
       tcpEnabled: f.tcpEnabled.checked,
       tcpLan: f.tcpLan.checked,
-      oledType: +f.oledType.value,
-      oledFlip: f.oledFlip.checked,
+      displayFlip: f.displayFlip.checked,
       displayTimeout: +f.displayTimeout.value,
-      oledBrightness: +f.oledBrightness.value,
-      ledBrightness: +f.ledBrightness.value,
+      displayBrightness: +f.displayBrightness.value,
       apChannel: +f.apChannel.value,
       txPower: +f.txPower.value,
     };
@@ -1278,7 +1274,7 @@
   });
 
   $('#factory').addEventListener('click', async () => {
-    if (!confirm('Alle Einstellungen löschen?\nDas Hotspot-Passwort wird neu erzeugt (steht danach auf dem OLED bzw. im USB-Log).')) return;
+    if (!confirm('Alle Einstellungen löschen?\nDas Hotspot-Passwort wird neu erzeugt (steht danach auf dem Display und im USB-Log).')) return;
     try { await fetch('/api/factory', { method: 'POST' }); toast('Werksreset – Neustart …', 4000); } catch (e) { toast('Fehler'); }
   });
 
