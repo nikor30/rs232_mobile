@@ -6,6 +6,7 @@ Firmware-Stand: **v1.8.0**
 
 - [`HANDOVER.md`](HANDOVER.md) — Projektstand, Erfahrungswissen, offene Punkte
 - [`firmware/`](firmware/) — PlatformIO-Projekt für das Waveshare ESP32-S3-Touch-LCD-2 ([Weboberfläche und Netz](firmware/README.md), [Board](firmware/WAVESHARE.md))
+- [`server/`](server/) — Leitstelle (Command-and-Control-Server): [Konzept](server/KONZEPT.md), Phase 1 lokal im Docker-Container
 - [`tests/`](tests/) — Host-Unittests
 
 ```bash

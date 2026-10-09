@@ -10,6 +10,7 @@ Mobiler serieller Konsolenserver auf dem Waveshare ESP32-S3-Touch-LCD-2 (2″-To
 
 - `firmware/` — PlatformIO-Projekt (`src/`, `web/`, `tools/`)
 - `tests/` — Host-Unittests (g++, laufen auf dem PC), Anleitung in `tests/README.md`
+- `server/` — Leitstelle (Command-and-Control-Server) in Go, läuft im Docker-Container. Konzept, Protokoll und Phasen: `server/KONZEPT.md`; Start und Admin-API: `server/README.md`. Test: `server/test/e2e.sh` (Go ist nicht installiert, gebaut wird im Container; erster Bau auf dem Pi rund 10 Minuten)
 - Doku: `firmware/WAVESHARE.md` (das Board, meistgebraucht), `firmware/README.md` (Weboberfläche, Netz, 802.1X/HTTPS, Diagnose)
 
 ## Bauen
@@ -42,6 +43,10 @@ Seit 9. Oktober 2026 gibt es nur noch das Waveshare-Board: DevKit-Mockup (OLED),
 - Telnet/Raw wird am ersten Byte (`0xFF`) unterschieden; Raw bleibt byte-genau.
 - Pinbelegungen aus KiCad-Symbolbibliothek, nicht aus Datenblatt-PDFs.
 - Byte-Logik erst auf dem Host testen, dann auf den Mikrocontroller.
+
+## Leitstelle (seit 9. Oktober 2026)
+
+Geräte melden sich ausgehend per HTTPS bei einem Server; darin ein eigener hybrider Kanal (X25519 + ML-KEM-768, nur KEMs, keine Signaturen), Registrierung mit Einladungs-Token und sechsstelligem Code vom Gerätedisplay. Phase 1 (Server, Gerätesimulator, Tests) ist fertig und nur lokal im Container geprüft. Die Firmware kann noch nichts davon — das ist Phase 2, `internal/proto/proto.go` ist die Vorlage. Nicht ins Internet stellen, bevor Phase 5 steht.
 
 ## Offene Punkte (Priorität)
 

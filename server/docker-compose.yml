@@ -1,0 +1,23 @@
+# Local test set-up:  docker compose up -d --build   (see README.md)
+services:
+  c2server:
+    build: .
+    image: rs232-c2
+    environment:
+      C2_ADMIN_TOKEN: ${C2_ADMIN_TOKEN:?set C2_ADMIN_TOKEN (at least 16 characters), e.g. in .env}
+      # How devices reach the server. Inside the compose network that is the
+      # service name; in the cloud, the public https:// address.
+      C2_PUBLIC_URL: ${C2_PUBLIC_URL:-https://c2server:8443}
+      C2_TLS: ${C2_TLS:-selfsigned}
+      C2_POLL_S: ${C2_POLL_S:-30}
+    ports:
+      - "127.0.0.1:8443:8443"   # local only; nothing here is meant for the internet yet
+    volumes:
+      - c2data:/data
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+
+volumes:
+  c2data:
