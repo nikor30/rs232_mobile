@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"slices"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -28,8 +29,10 @@ type Config struct {
 }
 
 const (
-	sessionTTL  = time.Hour        // then the device has to shake hands again (fresh keys)
-	unauthTTL   = 30 * time.Second // a handshake nobody followed up on
+	sessionTTL = time.Hour // then the device has to shake hands again (fresh keys)
+	// A handshake nobody followed up on. Not shorter: on a weak WLAN a device
+	// needs several tries of 20 s each to get its first message through.
+	unauthTTL   = 2 * time.Minute
 	maxSessions = 4096
 )
 
@@ -92,8 +95,11 @@ func readBody(w http.ResponseWriter, r *http.Request, max int64) ([]byte, bool) 
 	return b, true
 }
 
+// The length is always stated. Left alone, net/http switches to chunked
+// encoding above 2 kB, and a device should not need a chunk parser.
 func binary(w http.ResponseWriter, b []byte) {
 	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Length", strconv.Itoa(len(b)))
 	w.Write(b)
 }
 

@@ -1,0 +1,7 @@
+{
+  "name": "mlkem_native",
+  "version": "1.0.0",
+  "description": "ML-KEM (FIPS 203), C backend only. Vendored from pq-code-package/mlkem-native v1.0.0, see README.md.",
+  "license": "Apache-2.0 OR ISC OR MIT",
+  "build": { "includeDir": "src", "srcDir": "src" }
+}

@@ -10,6 +10,7 @@
 #include "configs.h"
 #include "certs.h"
 #include "https.h"
+#include "c2.h"
 
 #include <WiFi.h>
 #include <WebServer.h>
@@ -572,6 +573,39 @@ static void handleBatCal() {
                     ",\"calFull\":" + Power::calFullMv() + "}");
 }
 
+// Command-and-control server: state for the web UI, enrolling with a token, signing off.
+static void handleC2Get() {
+  if (!guard()) return;
+  C2::Info i = C2::info();
+  JsonDocument d;
+  static const char *const NAMES[] = {"off", "enrolling", "pending", "active", "refused", "failed"};
+  d["state"] = NAMES[i.state];
+  d["text"] = C2::stateName(i.state);
+  d["code"] = i.code;
+  d["id"] = i.id;
+  d["url"] = i.url;
+  d["error"] = i.error;
+  d["lastOkS"] = i.lastOkMs ? (int32_t)((millis() - i.lastOkMs) / 1000) : -1;
+  d["polls"] = i.polls;
+  d["handshakeMs"] = i.handshakeMs;
+  d["cryptoMs"] = i.cryptoMs;
+  d["stackFree"] = i.stackFree;
+  d["taskStackFree"] = i.taskStackFree;
+  d["sta"] = staConnected();
+  String out;
+  serializeJson(d, out);
+  sendJson(200, out);
+}
+
+static void handleC2Enroll() {
+  if (!guard()) return;
+  JsonDocument d;
+  if (deserializeJson(d, http.arg("plain"))) return sendJson(400, "{\"ok\":false,\"error\":\"JSON ungültig\"}");
+  const char *err = C2::enroll(d["token"] | "");
+  if (err) return sendJson(400, String("{\"ok\":false,\"error\":\"") + err + "\"}");
+  sendJson(200, "{\"ok\":true}");
+}
+
 static void handleOtaDone() {
   if (!guard()) return;
   bool ok = otaOk && !Update.hasError();
@@ -776,6 +810,13 @@ static void setupHttp() {
   http.on("/api/settings", HTTP_GET, handleGetSettings);
   http.on("/api/settings", HTTP_POST, handlePostSettings);
   http.on("/api/batcal", HTTP_POST, handleBatCal);
+  http.on("/api/c2", HTTP_GET, handleC2Get);
+  http.on("/api/c2/enroll", HTTP_POST, handleC2Enroll);
+  http.on("/api/c2/forget", HTTP_POST, []() {
+    if (!guard()) return;
+    C2::forget();
+    sendJson(200, "{\"ok\":true}");
+  });
   http.on("/api/reboot", HTTP_POST, []() {
     if (!guard()) return;
     sendJson(200, "{\"ok\":true}");

@@ -531,7 +531,7 @@
     if (tab === 'setup') loadSettings();
     if (tab === 'ports') loadPorts();
     if (tab === 'configs') loadConfigs();
-    if (tab === 'net') { loadNet(); loadTls(); }
+    if (tab === 'net') { loadNet(); loadTls(); loadC2(); }
     if (tab === 'session') {
       $('#logInfo').textContent = fmtBytes(act().logBytes) + ' aufgezeichnet (' + act().name + ')';
       $('#fontSize').textContent = TERM_OPTS.fontSize + ' px';
@@ -1275,6 +1275,44 @@
     $$('#netForm [data-auth]').forEach((el) => { el.hidden = !el.dataset.auth.includes(a); });
   }
   $('#netForm').staAuth.addEventListener('change', authVisibility);
+
+  // ---- command-and-control server
+  let c2Timer = 0;
+  async function loadC2() {
+    clearTimeout(c2Timer);
+    if ($('.tab[data-tab="net"]').hidden) return;       // only while the tab is open
+    try {
+      const c = await (await fetch('/api/c2', { cache: 'no-store' })).json();
+      let text = c.text;
+      if (c.state === 'active') text += c.lastOkS >= 0 ? ` – letzter Kontakt vor ${c.lastOkS} s` : ' – noch kein Kontakt';
+      if (c.error) text += ` – ${c.error}`;
+      if (!c.sta && c.state !== 'failed') text += ' (WLAN-Client nicht verbunden)';
+      $('#c2State').textContent = text;
+      $('#c2CodeRow').hidden = c.state !== 'pending';
+      $('#c2Code').textContent = c.code;
+      $('#c2Url').textContent = c.url || '–';
+      $('#c2Id').textContent = c.id || '–';
+      $('#c2Forget').hidden = c.state === 'off' || c.state === 'failed';
+      $('#c2Enroll').disabled = c.state === 'failed' || c.state === 'enrolling';
+    } catch (e) { /* the next round tries again */ }
+    c2Timer = setTimeout(loadC2, 3000);
+  }
+  $('#c2Enroll').addEventListener('click', async () => {
+    const token = $('#c2Token').value.trim();
+    if (!token) { toast('Erst das Einladungs-Token einfügen'); return; }
+    try {
+      const r = await fetch('/api/c2/enroll', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
+      const j = await r.json();
+      if (!j.ok) { toast(j.error || 'Anmeldung nicht möglich', 5000); return; }
+      $('#c2Token').value = '';
+      toast('Anmeldung läuft …');
+      loadC2();
+    } catch (e) { toast('Gerät nicht erreichbar'); }
+  });
+  $('#c2Forget').addEventListener('click', async () => {
+    if (!confirm('Von der Leitstelle abmelden?\nDer Geräteschlüssel wird gelöscht; für eine neue Anmeldung braucht es ein neues Token.')) return;
+    try { await fetch('/api/c2/forget', { method: 'POST' }); toast('Abgemeldet'); loadC2(); } catch (e) { toast('Gerät nicht erreichbar'); }
+  });
 
   async function loadNet() {
     try {

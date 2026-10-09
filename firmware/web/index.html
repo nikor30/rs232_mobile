@@ -274,6 +274,20 @@
         </div>
       </form>
 
+      <h3>Leitstelle</h3>
+      <p class="hint">Das Gerät meldet sich über den WLAN-Client bei einem Server im Netz, der es verwaltet und ihm Aufträge geben kann. Der Server lädt mit einem <b>Einladungs-Token</b> ein; danach zeigt das Gerät einen sechsstelligen Code, den der Administrator am Server eintippt.</p>
+      <table class="kv">
+        <tr><th>Zustand</th><td id="c2State">–</td></tr>
+        <tr id="c2CodeRow" hidden><th>Code</th><td><b id="c2Code" style="font-size:1.6em;letter-spacing:.15em"></b><br><span class="hint">Diesen Code am Server eingeben. Er steht auch auf dem Display (Seite Info).</span></td></tr>
+        <tr><th>Server</th><td id="c2Url">–</td></tr>
+        <tr><th>Geräte-ID</th><td id="c2Id">–</td></tr>
+      </table>
+      <label>Einladungs-Token <input id="c2Token" maxlength="1024" placeholder="c2e1:…" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+      <div class="row">
+        <button id="c2Enroll" class="btn" type="button">Anmelden</button>
+        <button id="c2Forget" class="btn danger" type="button" hidden>Abmelden</button>
+      </div>
+
       <h3>Zertifikate</h3>
       <p class="hint">Formate: <code>.p12</code>/<code>.pfx</code> (mit Passwort), <code>.pem</code>, <code>.crt</code>/<code>.cer</code> (DER oder Base64), <code>.p7b</code>, einzelner Schlüssel. Private Schlüssel liegen unverschlüsselt im Flash – nur Gerätezertifikate verwenden, die sich sperren lassen.</p>
       <div id="tlsCards"></div>

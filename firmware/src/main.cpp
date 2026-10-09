@@ -23,6 +23,7 @@
 #include "sdcard.h"
 #include "ble.h"
 #include "player.h"
+#include "c2.h"
 
 // Certificate parsing (PKCS#12, key check) runs in the loop task and needs more
 // than the 8 kB Arduino default.
@@ -158,6 +159,7 @@ void setup() {
   Certs::begin();
   Bridge::begin(onSerial, Net::onMessage);
   Net::begin();
+  C2::begin();
   Ble::begin();
 
   Serial.printf("\n%s v%s (%s)\n", FW_NAME, FW_VERSION, BOARD_NAME);

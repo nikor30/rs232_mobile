@@ -15,6 +15,7 @@ Talks to the firmware over the USB serial port without resetting the board:
     lcd_debug.py bat                    battery: pin voltage, result, what the charge state rests on
     lcd_debug.py batcal full            the voltage measured right now is 100 % ("empty": 0 %, "reset": undo,
                                         "3400 4050": both points in mV, 0 = the curve's own)
+    lcd_debug.py c2                     command-and-control server: state, code, timings, stack and heap
     lcd_debug.py saver 1                power saving as on battery: 1 on, 0 off, -1 automatic
     lcd_debug.py poweroff 15            switch off, wake by timer after 15 s (waits for the board to return).
                                         Without a time only the BOOT button switches it on again.
@@ -182,6 +183,9 @@ def main(argv):
         elif c == "bat":
             s.write(b"bat\n")
             sys.stdout.write(read_until(s, lambda b: b"Akku:" in b and b.endswith(b"\n"), 2).decode("utf8", "replace"))
+        elif c == "c2":
+            s.write(b"c2\n")
+            sys.stdout.write(read_until(s, lambda b: b"Leitstelle:" in b and b.endswith(b"\n"), 2).decode("utf8", "replace"))
         elif c == "batcal":
             args = [argv[i + 1]]; i += 1
             if args[0].isdigit():

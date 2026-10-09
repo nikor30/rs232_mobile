@@ -11,7 +11,9 @@ services:
       C2_TLS: ${C2_TLS:-selfsigned}
       C2_POLL_S: ${C2_POLL_S:-30}
     ports:
-      - "127.0.0.1:8443:8443"   # local only; nothing here is meant for the internet yet
+      # local only by default; nothing here is meant for the internet yet. For a
+      # device in the same LAN set C2_BIND to this machine's address there.
+      - "${C2_BIND:-127.0.0.1}:8443:8443"
     volumes:
       - c2data:/data
     read_only: true

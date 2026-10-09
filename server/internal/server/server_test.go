@@ -312,6 +312,43 @@ func TestAdminAuthAndInput(t *testing.T) {
 	}
 }
 
+// Devices read exactly Content-Length bytes; the handshake answer is larger
+// than what net/http would send unchunked by itself.
+func TestBinaryAnswersStateTheirLength(t *testing.T) {
+	e := newEnv(t)
+	c := e.enrolled()
+	hs, req, err := proto.NewClientHandshake(proto.KindSession, mustKey(t, c), c.State.ServerPub, [proto.TokenIDSize]byte{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = hs
+	for path, body := range map[string][]byte{"/v1/handshake": req, "/v1/server-key": nil} {
+		var resp *http.Response
+		if body == nil {
+			resp, err = http.Get(e.ts.URL + path)
+		} else {
+			resp, err = http.Post(e.ts.URL+path, "application/octet-stream", bytes.NewReader(body))
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 200 || resp.ContentLength != int64(len(b)) || len(resp.TransferEncoding) != 0 {
+			t.Fatalf("%s: HTTP %d, Content-Length %d, body %d bytes, transfer encoding %v", path, resp.StatusCode, resp.ContentLength, len(b), resp.TransferEncoding)
+		}
+	}
+}
+
+func mustKey(t *testing.T, c *device.Client) *proto.StaticKey {
+	t.Helper()
+	k, err := proto.ParseStatic(c.State.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return k
+}
+
 func TestDeviceEndpointsRejectGarbage(t *testing.T) {
 	e := newEnv(t)
 	post := func(path string, body []byte) int {

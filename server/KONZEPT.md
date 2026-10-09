@@ -1,8 +1,8 @@
 # Leitstelle (Command-and-Control-Server) — Konzept
 
-**Stand:** 9. Oktober 2026 · Phase 1 umgesetzt und lokal im Docker-Container getestet · Firmware-Seite noch nicht begonnen
+**Stand:** 9. Oktober 2026 · Phase 1 (Server) und Phase 2 (Firmware-Client) umgesetzt · am Waveshare-Board gegen den Server im lokalen Netz geprüft, nicht im Internet
 
-Ein Server im Internet, bei dem sich die RS232-Konsolen anmelden. Er weiß, welche Geräte es gibt und ob sie erreichbar sind, und kann ihnen Aufträge geben. Dieses Dokument beschreibt das Ziel, die Sicherheitsannahmen, das Protokoll und die Phasen. Was davon gebaut und geprüft ist, steht in §7; wie man es startet, in `README.md`.
+Ein Server im Internet, bei dem sich die RS232-Konsolen anmelden. Er weiß, welche Geräte es gibt und ob sie erreichbar sind, und kann ihnen Aufträge geben. Dieses Dokument beschreibt das Ziel, die Sicherheitsannahmen, das Protokoll und die Phasen. Was davon gebaut und geprüft ist, steht in §7; wie man es startet, in `README.md`; die Geräteseite in `firmware/README.md`.
 
 ## 1. Ziele
 
@@ -80,7 +80,7 @@ Daraus entstehen sechs gemeinsame Geheimnisse:
 Alle sechs gehen durch HKDF-SHA-256, zusammen mit einem Hash über beide Langzeitschlüssel und jedes ausgetauschte Byte. Heraus kommen je ein Schlüssel pro Richtung, die Bestätigung des Servers und — bei der Anmeldung — der Bestätigungscode.
 
 - Der **Server ist bewiesen**, wenn seine Bestätigung stimmt: Die kann nur berechnen, wer den gepinnten Langzeitschlüssel hat.
-- Das **Gerät ist bewiesen**, sobald seine erste verschlüsselte Nachricht aufgeht. Bis dahin gilt die Sitzung nichts und verfällt nach 30 s.
+- Das **Gerät ist bewiesen**, sobald seine erste verschlüsselte Nachricht aufgeht. Bis dahin gilt die Sitzung nichts und verfällt nach zwei Minuten (nicht kürzer: an einem schwachen WLAN braucht das Gerät mehrere Anläufe).
 - **Vorwärtsgeheimnis:** Wird später ein Langzeitschlüssel gestohlen, bleiben alte Mitschnitte zu.
 
 ### 4.3 Nachrichten
@@ -95,7 +95,7 @@ Gerät → Server   {"t":"enroll","name":"Labor-1","info":{"fw":"1.8.0"}}
 Server → Gerät   {"state":"pending|active","cmds":[{"id":7,"type":"ping","args":{}}],"poll_s":30}
 ```
 
-Eine Sitzung gilt eine Stunde, dann handelt das Gerät neue Schlüssel aus. Sitzungen liegen nur im Speicher des Servers; nach einem Neustart antwortet er mit 401 und das Gerät macht einen neuen Handshake. HTTP-Status für Geräte: 401 = neu aushandeln, 403 = nicht (mehr) willkommen, ohne Begründung.
+Eine Sitzung gilt eine Stunde, dann handelt das Gerät neue Schlüssel aus. Sitzungen liegen nur im Speicher des Servers; nach einem Neustart antwortet er mit 401 und das Gerät macht einen neuen Handshake. HTTP-Status für Geräte: 401 = neu aushandeln, 403 = nicht (mehr) willkommen, ohne Begründung. Das Gerät spricht schlichtes HTTP/1.0 — eine Anfrage, eine Antwort, Verbindung zu; der Server nennt immer `Content-Length`.
 
 ### 4.4 Registrierung mit zweiseitiger Prüfung
 
@@ -122,7 +122,7 @@ Damit weiß das Gerät: richtiger Server (Fingerabdruck aus dem Token, im Handsh
 |---|---|---|
 | **0 Konzept** | dieses Dokument | fertig |
 | **1 Server-Kern** | Protokoll, Registrierung mit Code, Sitzungen, Auftragswarteschlange, Admin-API, Gerätesimulator, Docker, Tests | **fertig, lokal getestet** (§7) |
-| **2 Firmware-Client** | ML-KEM-768 auf dem ESP32-S3 (Kandidaten: mlkem-native, PQClean), X25519/HKDF/AES-GCM aus mbedTLS 2; Geräteschlüssel im NVS; Token-Eingabe in der Weboberfläche; Code auf dem Touch-Display; Poll-Schleife. Zuerst Host-Test der Firmware-Krypto gegen diesen Server (Testvektoren), dann aufs Gerät. Zu messen: RAM, Stack, Dauer eines Handshakes | offen |
+| **2 Firmware-Client** | ML-KEM-768 auf dem ESP32-S3 (mlkem-native), X25519/HMAC/AES-GCM aus mbedTLS 2; Geräteschlüssel im NVS; Token-Eingabe in der Weboberfläche; Code auf dem Touch-Display; Poll-Schleife; Aufträge `ping` und `status` | **fertig, am Gerät im lokalen Netz getestet** (§7); offen: Weboberfläche im Browser ansehen, QR-Code fürs Token |
 | **3 Aufträge und Oberfläche** | Status und Telemetrie (Akku, WLAN, Ports), Einstellungen lesen, gespeicherte Konfiguration auf einen Port abspielen, Firmware-Update anstoßen; Weboberfläche für den Administrator; QR-Code fürs Token | offen |
 | **4 Fernkonsole** | serielle Konsole über die Leitstelle, Ende-zu-Ende bis zum Browser des Administrators; nur nach Freigabe am Gerät (Touch), zeitlich begrenzt, mit Protokoll. Braucht einen schnelleren Rückkanal (Long-Polling oder WebSocket) | offen |
 | **5 Cloud-Betrieb** | Datenbank statt JSON-Datei; echtes TLS-Zertifikat (Proxy oder ACME); Begrenzung der Anfragerate; Sicherung des Datenverzeichnisses; Benutzerkonten mit zweitem Faktor statt eines Tokens; Wechsel des Serverschlüssels; Überwachung | offen |
@@ -130,22 +130,39 @@ Damit weiß das Gerät: richtiger Server (Fingerabdruck aus dem Token, im Handsh
 
 Reihenfolge mit Absicht: Phase 2 vor allem anderen am Server, weil erst das echte Gerät zeigt, ob Größen und Rechenzeiten passen. Phase 5 muss vor dem ersten Betrieb im Internet abgeschlossen sein — Phase 1 ist ein lokaler Prüfstand.
 
-## 7. Was in Phase 1 geprüft ist
+## 7. Was geprüft ist
 
-Alles auf dem Raspberry Pi (arm64), Go 1.25, im Container. Nichts davon lief gegen ein echtes Gerät.
+### Phase 1: Server
+
+Alles auf dem Raspberry Pi (arm64), Go 1.25, im Container.
 
 - **Protokoll** (`internal/proto`, 9 Tests): Sitzung und Anmeldung hin und zurück; Code auf beiden Seiten gleich; falscher Server (Mann in der Mitte) wird am Gerät erkannt; falsches Token-Geheimnis ebenso; ein Fremder mit Geräte-ID und öffentlichem Schlüssel bringt keine Nachricht durch; Wiedereinspielen, verfälschte und zurückgespiegelte Nachrichten werden verworfen; jedes gekippte Byte der Handshake-Antwort fällt auf; verstümmelte Eingaben.
-- **Server über HTTP** (`internal/server`, 10 Tests): Anmelden, Bestätigen, Auftrag hin, Ergebnis zurück; vorgemerktes Gerät bekommt nichts; die Geräteliste verrät den Code nicht; falscher Code und Verwerfen nach fünf Versuchen; Token nur einmal und nur bis zum Ablauf; Token mit fremder Server-Adresse; gefälschtes Token-Geheimnis; Sperren trennt sofort und endgültig; unbekanntes Gerät; Sitzungsablauf und Server-Neustart; Admin-Token; Müll an den Geräte-Endpunkten.
+- **Server über HTTP** (`internal/server`, 11 Tests): Anmelden, Bestätigen, Auftrag hin, Ergebnis zurück; vorgemerktes Gerät bekommt nichts; die Geräteliste verrät den Code nicht; falscher Code und Verwerfen nach fünf Versuchen; Token nur einmal und nur bis zum Ablauf; Token mit fremder Server-Adresse; gefälschtes Token-Geheimnis; Sperren trennt sofort und endgültig; unbekanntes Gerät; Sitzungsablauf und Server-Neustart; Admin-Token; Müll an den Geräte-Endpunkten; binäre Antworten nennen ihre Länge.
 - **Ende zu Ende im Container** (`test/e2e.sh`): Image bauen (16 MB), Server mit leerem Datenverzeichnis starten, simuliertes Gerät in eigenem Container anmelden, Token ein zweites Mal abgelehnt, falscher und richtiger Code, Auftrag `ping` → `pong`, Neustart des Servers, Sperren.
 - **Äußeres TLS:** `openssl s_client -groups X25519MLKEM768` gegen den Container handelt TLS 1.3 mit genau dieser hybriden Gruppe aus.
+
+### Phase 2: Firmware
+
+Die Geräteseite des Protokolls ist `firmware/src/c2_proto.cpp` (ohne Arduino, läuft auch auf dem PC), der Rest — Task, Speicher, HTTP, Aufträge — `firmware/src/c2.cpp`. ML-KEM kommt aus mlkem-native v1.0.0 (`firmware/lib/mlkem_native/`), alles andere aus dem mbedTLS 2.28 des Arduino-Cores.
+
+- **Auf dem PC** (`tests/c2/run.sh`): derselbe Protokollcode, übersetzt gegen mbedTLS 2.28 (Debian bookworm im Container), meldet sich am echten Server-Container an, wird bestätigt, holt einen Auftrag ab und liefert das Ergebnis; ein Token, das einen anderen Serverschlüssel nennt, wird abgelehnt. Dazu Selbsttest mit bekannten Antworten: X25519 (RFC 7748), HKDF (RFC 5869), AES-256-GCM, ML-KEM-768 gegen einen von Gos `crypto/mlkem` errechneten Schlüssel.
+- **Am Waveshare-Board** (9. Oktober 2026, Server im Container auf dem Raspberry Pi im selben WLAN, TLS mit selbstsigniertem Zertifikat): derselbe Selbsttest läuft bei jedem Start auf dem Gerät und besteht. Anmelden mit Token über `/api/c2/enroll`; Code im Log, in `/api/c2` und auf der Info-Seite des Displays (Screenshot); falscher Code am Server abgelehnt, richtiger angenommen; Aufträge `status` und `ping` ausgeführt, Ergebnisse am Server; Neustart des Geräts — verbindet sich von selbst wieder; Sperren am Server — Gerät meldet „abgewiesen"; Abmelden löscht Schlüssel und Server.
+- **Gemessen am Gerät:** ein Handshake dauert 2,5–4,7 s, davon 1,1–1,5 s Rechnen, der Rest TLS-Aufbau und Netz. Woran die Rechenzeit im Einzelnen hängt (ML-KEM, die fünf X25519-Multiplikationen über mbedTLS, das Anlegen des Hilfstasks), ist nicht aufgeschlüsselt. ML-KEM braucht rund 19 kB Stack. Freier Heap im Betrieb mit Bluetooth 93 kB, Tiefststand während einer TLS-Verbindung 38 kB.
+- **Nicht geprüft:** der Block „Leitstelle" der Weboberfläche im Browser (die Aufrufe dahinter per curl); die Meldung mit dem Code als Einblendung auf dem Display (nur die Info-Zeile per Screenshot); Betrieb über Stunden (Sitzungswechsel nach einer Stunde am Gerät); Akkubetrieb mit 80 MHz; ein Server außerhalb des lokalen Netzes.
+
+Was die Arbeit am Gerät gezeigt hat:
+
+- **TLS und ML-KEM passen nicht gleichzeitig in den Speicher.** Eine TLS-Verbindung kostet rund 45 kB Heap, der Stack für ML-KEM 28 kB. Der Schlüsseltausch wird deshalb gerechnet, bevor die Anfrage hinausgeht und nachdem die Antwort da ist — in einem kurzlebigen Task mit großem Stack, dessen Speicher sofort wieder frei ist (`big()` in `c2.cpp`).
+- **Der Server muss `Content-Length` nennen.** Gos `net/http` schickt Antworten über 2 kB sonst in Stücken (chunked); die Handshake-Antwort hat 2257 Byte. Simulator und PC-Test hatten das nicht bemerkt, das Gerät schon.
+- **Schwaches WLAN.** Am Testplatz (−77 bis −83 dBm, Sendeleistung 8,5 dBm) kamen Pakete über etwa 1100 Byte zeitweise gar nicht durch — das betrifft auch die Weboberfläche des Geräts im LAN, nicht nur die Leitstelle. Mit 19,5 dBm ging es meist. Der Client wiederholt eine gescheiterte Anfrage deshalb bis zu dreimal und wartet bis zu 20 s; mehr kann er gegen eine schlechte Funkstrecke nicht tun. Möglich wäre, die MTU des WLAN-Clients bei schwachem Signal zu senken.
 
 ## 8. Grenzen und offene Fragen
 
 - **Eigenes Protokoll.** Der Aufbau folgt bekannten Mustern (KEM-basierte Authentifizierung wie bei KEMTLS, hybride Ableitung wie bei X25519MLKEM768), ist aber selbst zusammengesetzt und **von niemandem begutachtet**. Vor einem Betrieb im Internet sollte jemand mit Kryptografie-Erfahrung darauf sehen. Die Bausteine selbst kommen aus Gos Standardbibliothek.
-- **ML-KEM auf dem ESP32 ist ungeprüft.** Erwartung aus veröffentlichten Messungen: wenige Millisekunden je Operation, etwa 10–20 kB Stack. Ob das neben WLAN, Bluetooth und Display passt, zeigt Phase 2.
+- **Rechenzeit am Gerät:** gut eine Sekunde je Handshake (§7), einmal pro Stunde. Der Hauptschleife und damit der seriellen Brücke nimmt das nichts, der Client hat einen eigenen Task auf dem anderen Kern. Ob sich das im Akkubetrieb bei 80 MHz bemerkbar macht, ist offen.
 - **Der Geräteschlüssel liegt unverschlüsselt im Flash**, wie heute schon die 802.1X-Schlüssel. Wer das Gerät hat, hat den Schlüssel; dagegen hilft nur Sperren am Server.
 - **Sechs Ziffern** lassen einem Angreifer, der ein Token abgefangen hat, eine Chance von eins zu einer Million je Versuch, bei fünf Versuchen. Mehr Ziffern sind möglich, aber lästiger abzulesen.
 - **Keine Begrenzung der Anfragerate.** Ein Handshake kostet den Server Rechenzeit; ohne Token oder bekannte Geräte-ID wird er zwar vor der Kryptografie abgewiesen, aber eine bekannte Geräte-ID genügt, um ihn auszulösen. Gehört in Phase 5.
 - **Ein Admin-Token für alles**, keine Benutzer, kein Protokoll der Admin-Aktionen. Phase 5.
 - **Aufträge** werden einmal zugestellt. Startet das Gerät neu, bevor es das Ergebnis meldet, bleibt der Auftrag auf „gesendet" stehen. Wiederholen oder Verfallen ist Phase 3.
-- **TLS am Gerät:** ob das Gerät das Zertifikat der Leitstelle gegen eine CA prüft oder — weil der innere Kanal ohnehin den Server beweist — darauf verzichtet, ist zu entscheiden. Prüfen ist die sauberere Wahl, kostet aber ein CA-Bündel im Flash.
+- **TLS am Gerät prüft das Zertifikat nicht** (`setInsecure()`): Der innere Kanal beweist den Server ohnehin, und nur so geht ein selbstsignierter Testserver. Ob das Gerät im Betrieb zusätzlich gegen eine CA prüft, ist zu entscheiden; es wäre die sauberere Wahl, kostet aber ein CA-Bündel im Flash. Ohne Prüfung sieht ein Mann in der Mitte, **dass** ein Gerät mit der Leitstelle spricht, und kann stören — mitlesen oder sich als Server ausgeben kann er nicht.

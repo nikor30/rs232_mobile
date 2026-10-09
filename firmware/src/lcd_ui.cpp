@@ -31,6 +31,7 @@
 #include "ble.h"
 #include "configs.h"
 #include "player.h"
+#include "c2.h"
 #include <WiFi.h>
 #include <ArduinoJson.h>
 #include "esp_freertos_hooks.h"
@@ -147,6 +148,7 @@ struct Snapshot {
   uint32_t rx[MAX_PORTS], tx[MAX_PORTS];
   uint8_t ports;
   char    apSsid[33], apPass[65], apIp[16], staIp[16], hostname[33];
+  char    c2[32];              // command-and-control server: state, or the code to confirm
   bool    staConfigured, staConnected, tcpEnabled, tcpConnected;
   uint8_t webClients, apStations;
   uint8_t bleState;
@@ -383,6 +385,7 @@ static void buildSnapshot() {
   strlcpy(s.apPass, settings.apPass.c_str(), sizeof(s.apPass));      // QR payload: keep it byte exact
   copyStr(s.apIp, sizeof(s.apIp), Net::apIp());
   copyStr(s.hostname, sizeof(s.hostname), settings.hostname);
+  copyStr(s.c2, sizeof(s.c2), C2::line());
   s.staConfigured = settings.staSsid.length() > 0;
   s.staConnected = Net::staConnected();
   if (s.staConnected) copyStr(s.staIp, sizeof(s.staIp), Net::staIp());
@@ -660,6 +663,15 @@ static void console() {
       Serial.printf("[DIAG] Konfiguration \"Demo\": %s\n", err ? err : "gespeichert");
     }
     else if (!strcmp(line, "bat")) Serial.printf("[DIAG] Akku: %s\n", Power::diag().c_str());
+    else if (!strcmp(line, "c2")) {
+      C2::Info c = C2::info();
+      Serial.printf("[DIAG] Leitstelle: %s%s%s | Server %s | ID %s | %lu Abfragen, letzte vor %ld s | Handshake %lu ms (davon Rechnen %lu ms) | Stack frei %lu B (ML-KEM) / %lu B (Netz), Heap %u kB (min %u kB)%s%s\n",
+                    C2::stateName(c.state), c.code[0] ? ", Code " : "", c.code, c.url[0] ? c.url : "-", c.id[0] ? c.id : "-",
+                    (unsigned long)c.polls, c.lastOkMs ? (long)((millis() - c.lastOkMs) / 1000) : -1L,
+                    (unsigned long)c.handshakeMs, (unsigned long)c.cryptoMs, (unsigned long)c.stackFree, (unsigned long)c.taskStackFree,
+                    (unsigned)(ESP.getFreeHeap() / 1024), (unsigned)(ESP.getMinFreeHeap() / 1024),
+                    c.error[0] ? " | Fehler: " : "", c.error);
+    }
     else if (!strncmp(line, "batcal ", 7)) {
       const char *err = !strcmp(line + 7, "full") ? Power::calibrateNow(true)
                         : !strcmp(line + 7, "empty") ? Power::calibrateNow(false)
@@ -1464,6 +1476,7 @@ static void screenInfo() {
   row("Hotspot", String(S.apStations) + " Geraete");
   row("Clients", clientsLine());
   row("Raw-TCP", tcp);
+  row("Leitstelle", S.c2);
   row("Akku", batteryLine());
   row("SD", sdLine());
   row("Lage", imu);

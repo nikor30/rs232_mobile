@@ -29,7 +29,7 @@ Stand 2. Oktober 2026: gebaut, geflasht und am Board geprüft, soweit unten ange
 - **Skripte**: die in der Weboberfläche (Reiter Konfig) gespeicherten Konfigurationen. Antippen wählt aus, erst „Senden an Port N" spielt ab — zeilenweise, mit Warten auf den Prompt, Stopp bei Fehlermeldung, Steuerzeilen `@pause`, `@expect`, `@break`, `@timeout` wie im Browser (`src/player.cpp`). Konfigurationen mit `{{Variablen}}` gehen nur in der Weboberfläche.
 - **Bluetooth**: zeigt die sechsstellige PIN und schaltet Bluetooth ein/aus (wird gespeichert).
 - **System**: CPU-Last je Kern, RAM, PSRAM als Balken; dazu freier Speicher, größter Block, längste Pause der Hauptschleife, Zeichenzeit, Chip-Temperatur, Laufzeit. Die CPU-Last ist eine Schätzung aus der Leerlaufzeit (Auflösung 1 ms).
-- **Info**: Firmware, Hostname, Clients, Raw-TCP, Akku, SD-Karte, Lage, Board.
+- **Info**: Firmware, Hostname, Clients, Raw-TCP, Leitstelle (Zustand oder der Code zum Bestätigen, siehe [README.md](README.md#leitstelle)), Akku, SD-Karte, Lage, Board.
 - **Setup**: Helligkeit, Abschaltzeit des Displays, WLAN-Client, ganz unten **Ausschalten** (mit Nachfrage; quer dafür nach oben ziehen). „Netz waehlen" sucht Netze; ein verschlüsseltes Netz öffnet die Bildschirmtastatur (QWERTZ, drei Ebenen), ein offenes fragt nach. Gespeichert wird wie in der Weboberfläche, mit Neustart. 802.1X bleibt der Weboberfläche vorbehalten.
 - Das Display dreht sich zur oberen Kante; liegt das Board flach, bleibt die letzte Lage. Bewegung und Berührung wecken das dunkle Display; die erste Berührung weckt nur.
 - Helligkeit und Abschaltzeit kommen aus den vorhandenen Display-Einstellungen der Weboberfläche.
@@ -141,6 +141,7 @@ tools/lcd_debug.py rot 0 shot hoch.png     # Drehung erzwingen (bleibt, bis "rot
 tools/lcd_debug.py drag 160 180 160 40     # Finger von A nach B: ziehen (scrollen) oder wischen
 tools/lcd_debug.py bat                     # Akku: Rohwerte, worauf "laedt"/"voll" beruht, Sparmodus, CPU-Takt
 tools/lcd_debug.py batcal full             # gemessene Spannung = 100 % (empty, reset, oder zwei Werte in mV)
+tools/lcd_debug.py c2                      # Leitstelle: Zustand, Code, Dauer des Handshakes, Stack und Heap
 tools/lcd_debug.py saver 1                 # Sparmodus wie im Akkubetrieb erzwingen (0 = sperren, -1 = automatisch)
 tools/lcd_debug.py poweroff 15             # ausschalten, nach 15 s per Zeitablauf wieder an
 ```

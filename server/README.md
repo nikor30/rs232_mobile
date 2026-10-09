@@ -1,8 +1,8 @@
 # Leitstelle (Command-and-Control-Server)
 
-Server, bei dem sich die RS232-Konsolen anmelden und Aufträge abholen. Idee, Protokoll, Phasen und Grenzen: **[KONZEPT.md](KONZEPT.md)**. Stand: Phase 1 — Server und Gerätesimulator, lokal im Container getestet. Die Firmware kann noch nichts davon.
+Server, bei dem sich die RS232-Konsolen anmelden und Aufträge abholen. Idee, Protokoll, Phasen und Grenzen: **[KONZEPT.md](KONZEPT.md)**. Stand: Phase 1 (Server, Gerätesimulator) und Phase 2 (Client in der Firmware), geprüft im Container und mit dem Waveshare-Board im lokalen Netz.
 
-**Nicht ins Internet stellen.** Dafür fehlt Phase 5 (KONZEPT.md §6); die Compose-Datei bindet den Port deshalb nur an `127.0.0.1`.
+**Nicht ins Internet stellen.** Dafür fehlt Phase 5 (KONZEPT.md §6); die Compose-Datei bindet den Port deshalb nur an `127.0.0.1`, solange `C2_BIND` nichts anderes sagt.
 
 ## Starten
 
@@ -36,6 +36,16 @@ curl -sk $S/admin/v1/devices/<ID>/commands -H "$A"
 
 `-tls-skip-verify` gilt dem selbstsignierten Zertifikat des lokalen Servers. Der innere Kanal hängt davon nicht ab: Der Server muss weiterhin den Schlüssel beweisen, dessen Fingerabdruck im Token steht.
 
+## Ein echtes Gerät anmelden
+
+Das Gerät muss den Server erreichen, also an die LAN-Adresse dieses Rechners binden und sie als öffentliche Adresse nennen (in `.env` oder davor):
+
+```bash
+C2_BIND=192.168.10.232 C2_PUBLIC_URL=https://192.168.10.232:8443 docker compose up -d
+```
+
+Dann wie oben einladen. Das Token kommt in die Weboberfläche des Geräts (Menü → Netz → Leitstelle → Anmelden) oder per `curl -X POST http://<gerät>/api/c2/enroll -d '{"token":"c2e1:..."}'`; der WLAN-Client des Geräts muss verbunden sein. Der Code steht danach auf dem Display (Seite Info) und in der Weboberfläche. Details: `firmware/README.md`.
+
 ## Admin-Schnittstelle
 
 Alle Aufrufe mit `Authorization: Bearer <C2_ADMIN_TOKEN>`.
@@ -57,7 +67,8 @@ Alle Aufrufe mit `Authorization: Bearer <C2_ADMIN_TOKEN>`.
 | `C2_PUBLIC_URL` | `https://c2server:8443` (Compose) | Adresse, unter der Geräte den Server erreichen; steht im Einladungs-Token |
 | `C2_TLS` | `selfsigned` | `selfsigned`, `files` (`C2_TLS_CERT`, `C2_TLS_KEY`) oder `off` (hinter einem Proxy, der TLS beendet) |
 | `C2_TLS_HOSTS` | `localhost,127.0.0.1,c2server` | Namen im selbstsignierten Zertifikat |
-| `C2_LISTEN` | `:8443` | Adresse und Port |
+| `C2_LISTEN` | `:8443` | Adresse und Port im Container |
+| `C2_BIND` | `127.0.0.1` | nur Compose: Adresse dieses Rechners, an die der Port gebunden wird |
 | `C2_DATA_DIR` | `/data` | Zustand: `state.json` (enthält den privaten Serverschlüssel), TLS-Zertifikat |
 | `C2_POLL_S` | `30` | Abstand, in dem Geräte sich melden sollen |
 
@@ -67,6 +78,7 @@ Wer das Datenverzeichnis verliert, verliert den Serverschlüssel — alle Gerät
 
 ```bash
 ./test/e2e.sh                       # alles: Unit-Tests, Image, Ende-zu-Ende im Container
+../tests/c2/run.sh                  # der Protokollcode der Firmware auf dem PC gegen diesen Server
 docker build --target test .        # nur Formatierung, go vet und Unit-Tests
 ```
 

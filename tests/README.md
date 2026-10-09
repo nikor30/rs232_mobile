@@ -23,3 +23,15 @@ daneben. Erzeugen:
 
 So wird wirklich der ausgelieferte Code getestet und keine Kopie, die
 auseinanderlaufen kann.
+
+## Protokollcode der Leitstelle
+
+`c2/run.sh` übersetzt `firmware/src/c2_proto.cpp` samt ML-KEM für den PC — gegen
+mbedTLS 2.28, die Version des Arduino-Cores, deshalb in einem Container — und
+lässt ihn gegen den echten Server aus `server/` laufen: Selbsttest mit bekannten
+Antworten, Anmelden, Bestätigen, Auftrag und Ergebnis.
+
+    tests/c2/run.sh
+
+Braucht Docker und ArduinoJson aus einem Firmware-Build (`firmware/.pio/libdeps`).
+Der erste Lauf baut zwei Images und dauert auf dem Raspberry Pi rund zehn Minuten.

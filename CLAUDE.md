@@ -9,7 +9,7 @@ Mobiler serieller Konsolenserver auf dem Waveshare ESP32-S3-Touch-LCD-2 (2″-To
 ## Aufbau
 
 - `firmware/` — PlatformIO-Projekt (`src/`, `web/`, `tools/`)
-- `tests/` — Host-Unittests (g++, laufen auf dem PC), Anleitung in `tests/README.md`
+- `tests/` — Host-Unittests (g++, laufen auf dem PC), Anleitung in `tests/README.md`; `tests/c2/run.sh` prüft den Protokollcode der Firmware gegen den Server
 - `server/` — Leitstelle (Command-and-Control-Server) in Go, läuft im Docker-Container. Konzept, Protokoll und Phasen: `server/KONZEPT.md`; Start und Admin-API: `server/README.md`. Test: `server/test/e2e.sh` (Go ist nicht installiert, gebaut wird im Container; erster Bau auf dem Pi rund 10 Minuten)
 - Doku: `firmware/WAVESHARE.md` (das Board, meistgebraucht), `firmware/README.md` (Weboberfläche, Netz, 802.1X/HTTPS, Diagnose)
 
@@ -46,7 +46,9 @@ Seit 9. Oktober 2026 gibt es nur noch das Waveshare-Board: DevKit-Mockup (OLED),
 
 ## Leitstelle (seit 9. Oktober 2026)
 
-Geräte melden sich ausgehend per HTTPS bei einem Server; darin ein eigener hybrider Kanal (X25519 + ML-KEM-768, nur KEMs, keine Signaturen), Registrierung mit Einladungs-Token und sechsstelligem Code vom Gerätedisplay. Phase 1 (Server, Gerätesimulator, Tests) ist fertig und nur lokal im Container geprüft. Die Firmware kann noch nichts davon — das ist Phase 2, `internal/proto/proto.go` ist die Vorlage. Nicht ins Internet stellen, bevor Phase 5 steht.
+Geräte melden sich ausgehend per HTTPS bei einem Server; darin ein eigener hybrider Kanal (X25519 + ML-KEM-768, nur KEMs, keine Signaturen), Registrierung mit Einladungs-Token und sechsstelligem Code vom Gerätedisplay. Phase 1 (Server, Gerätesimulator) und Phase 2 (Client in der Firmware: `src/c2.cpp`, `src/c2_proto.cpp`, ML-KEM in `lib/mlkem_native/`) sind fertig; am Waveshare-Board gegen den Server im Container auf dem Pi geprüft (anmelden, Code, bestätigen, Aufträge, Neustart, sperren), nicht im Internet und der Web-Block nicht im Browser. Nicht ins Internet stellen, bevor Phase 5 steht.
+
+Regeln daraus: TLS (45 kB Heap) und ML-KEM (28 kB Stack) nie gleichzeitig — der Schlüsseltausch läuft in `big()` vor und nach der Anfrage. Der Server nennt immer `Content-Length` (Go schickt über 2 kB sonst chunked). Protokolländerungen erst mit `tests/c2/run.sh` auf dem PC prüfen, dann aufs Gerät. Das Board hängt am Testplatz an einem schwachen WLAN (um −80 dBm): große Pakete gehen dort zeitweise verloren — erst `ping -s 1400` prüfen, bevor man im Code sucht. Diagnose am Gerät: `lcd_debug.py c2`.
 
 ## Offene Punkte (Priorität)
 

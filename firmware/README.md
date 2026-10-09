@@ -22,6 +22,7 @@ Alles zum Board selbst — Touch-Oberfläche, Bluetooth, Pins, Akku, Stromsparen
 - **Firmennetz (802.1X):** WLAN-Client mit **WPA2/WPA3-Enterprise** – EAP-TLS mit Zertifikat (`.p12`/`.pfx`, `.pem`, `.p7b`), PEAP-MSCHAPv2 oder EAP-TTLS. Zertifikate lädst du im Web-UI hoch, Schlüsselpaar und Zertifikatsantrag (CSR) kann das Gerät auch selbst erzeugen.
 - **HTTPS für die Web-Oberfläche** (Port 443, TLS 1.2) mit eigenem Zertifikat – wahlweise dem 802.1X-Zertifikat – oder einem, das sich das Gerät selbst ausstellt. Im Firmennetz lässt sich HTTP auf HTTPS umleiten.
 - **Hotspot mit Captive Portal:** Das Handy öffnet die Konsole nach dem Verbinden automatisch. Der Hotspot wählt beim Start den freiesten Kanal (1/6/11), Kanal und Sendeleistung sind im Setup einstellbar. Optional zusätzlich WLAN-Client (z. B. Labor-WLAN), mDNS `http://rs232.local`, Diagnose unter `/ping`
+- **Leitstelle:** Das Gerät meldet sich auf Wunsch bei einem Server im Netz, der es verwaltet und ihm Aufträge geben kann — über HTTPS, darin ein eigener Kanal mit Post-Quanten-Schlüsseltausch (ML-KEM-768). Siehe [Leitstelle](#leitstelle).
 - **Firmware-Update per Browser** (OTA)
 
 ## Teststand
@@ -125,6 +126,27 @@ Netz → „Antrag erzeugen“: Das Gerät erzeugt ein Schlüsselpaar (RSA 2048 
 - Der Werksreset (Web-UI → Setup) löscht Zertifikate **und** Schlüssel.
 - Der ESP32 hat 16 Netzwerk-Sockets. HTTPS belegt je Sitzung zwei davon – wer HTTPS zusammen mit vier Raw-TCP-Ports und mehreren Browsern nutzt, sollte Raw-TCP abschalten.
 
+## Leitstelle
+
+Der Server dazu liegt in [`../server/`](../server/), Idee und Protokoll in [`../server/KONZEPT.md`](../server/KONZEPT.md). Am Gerät:
+
+1. **WLAN-Client verbinden** (Menü → Netz). Die Leitstelle wird nur darüber erreicht, nicht über den Hotspot.
+2. Der Administrator erzeugt am Server ein **Einladungs-Token** (`c2e1:…`, einmal verwendbar, läuft nach zehn Minuten ab).
+3. **Menü → Netz → Leitstelle:** Token einfügen, **Anmelden**. Das Gerät prüft, dass der Server den Schlüssel hat, den das Token nennt, und erzeugt beim ersten Mal seinen eigenen Schlüssel.
+4. Das Gerät zeigt einen **sechsstelligen Code** — in der Weboberfläche und auf dem Display (Seite Info, Zeile „Leitstelle"). Der Administrator tippt ihn am Server ein. Erst danach ist das Gerät „verbunden" und bekommt Aufträge.
+
+Danach meldet sich das Gerät von selbst alle 30 s (der Server gibt den Abstand vor) und nach jedem Neustart wieder. **Abmelden** löscht Server und Geräteschlüssel; für eine neue Anmeldung braucht es ein neues Token. Sperrt der Server das Gerät, steht dort „abgewiesen".
+
+Was das Gerät für den Server tut, steht auf einer festen Liste in `src/c2.cpp`: bisher `ping` und `status` (Firmware, Laufzeit, freier Speicher, WLAN-Pegel, Akku, IP). Alles andere lehnt es ab, was immer der Server schickt.
+
+Zu wissen:
+
+- Die Verbindung braucht Pakete voller Größe; an einem sehr schwachen WLAN (am Testplatz: um −80 dBm) scheitert die Anmeldung zeitweise mit „Server nicht erreichbar". Dann die Sendeleistung im Setup erhöhen oder näher an den Zugangspunkt.
+- Das TLS-Zertifikat des Servers wird nicht geprüft; der Server beweist sich im Kanal darin mit dem Schlüssel aus dem Token.
+- Der Geräteschlüssel liegt unverschlüsselt im Flash. Ein verlorenes Gerät am Server sperren.
+- Diagnose: `tools/lcd_debug.py c2` (Zustand, Code, Dauer des letzten Handshakes, Stack und Heap) und die Zeilen `[C2]` im USB-Log.
+- Stand der Prüfung: `../server/KONZEPT.md` §7. Der Block in der Weboberfläche ist im Browser noch nicht angesehen worden.
+
 ## Dateien per XMODEM / YMODEM senden
 
 Für ROMmon-Recovery, IOS-Images oder U-Boot: **Menü → Sitzung → Datei senden**.
@@ -218,6 +240,8 @@ src/https.*               TLS-Frontend Port 443 (HTTPS + WSS)
 src/legacy_ciphers.*      DES/3DES/RC2 zum Lesen alter PKCS#12-Dateien
 src/display.h, lcd_ui.cpp Touch-Oberfläche auf dem 2″-LCD
 src/ble.*                 serielle Konsole über Bluetooth LE
+src/c2.*, c2_proto.*      Client der Leitstelle: Task, Speicher, HTTP / Protokoll und Kryptografie
+lib/mlkem_native/         ML-KEM (FIPS 203), übernommen aus mlkem-native v1.0.0
 src/sdcard.*              SD-Karte: Mitschnitte
 src/power.*, bat_curve.h  Akku-Messung, Ladeerkennung, Sparmodus, Kennlinie
 src/settings.*            Einstellungen (NVS)
@@ -229,4 +253,4 @@ tools/mock_device.js      Geräte-Simulator für die UI-Entwicklung
 docs/                     Screenshots der Weboberfläche
 ```
 
-Drittsoftware: xterm.js und xterm-addon-fit (MIT, `web/vendor/LICENSE-xterm.txt`), LovyanGFX (BSD-2-Clause/MIT), NimBLE-Arduino (Apache-2.0), arduinoWebSockets (LGPL-2.1), ArduinoJson (MIT), EspSoftwareSerial (LGPL-2.1), mbedTLS (Apache-2.0, im ESP32-SDK enthalten). `src/legacy_ciphers.cpp` enthält DES-Code aus LibTomCrypt (Public Domain) und RC2-Code aus PyCryptodome (BSD-2-Clause).
+Drittsoftware: xterm.js und xterm-addon-fit (MIT, `web/vendor/LICENSE-xterm.txt`), mlkem-native (Apache-2.0 oder ISC oder MIT, `lib/mlkem_native/LICENSE`), LovyanGFX (BSD-2-Clause/MIT), NimBLE-Arduino (Apache-2.0), arduinoWebSockets (LGPL-2.1), ArduinoJson (MIT), EspSoftwareSerial (LGPL-2.1), mbedTLS (Apache-2.0, im ESP32-SDK enthalten). `src/legacy_ciphers.cpp` enthält DES-Code aus LibTomCrypt (Public Domain) und RC2-Code aus PyCryptodome (BSD-2-Clause).
