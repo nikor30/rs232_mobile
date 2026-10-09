@@ -9,8 +9,6 @@ Mobiler serieller Konsolenserver auf dem Waveshare ESP32-S3-Touch-LCD-2 (2″-To
 ## Aufbau
 
 - `firmware/` — PlatformIO-Projekt (`src/`, `web/`, `tools/`)
-- `hardware/pcb/` — KiCad-Tochterplatine + Generator-Skripte; `hardware/gehaeuse/` — OpenSCAD/STL (beides Entwürfe für frühere Basisboards, nicht fürs Waveshare)
-- `diagramme/` — PNGs + matplotlib-Quellen
 - `tests/` — Host-Unittests (g++, laufen auf dem PC), Anleitung in `tests/README.md`
 - Doku: `firmware/WAVESHARE.md` (das Board, meistgebraucht), `firmware/README.md` (Weboberfläche, Netz, 802.1X/HTTPS, Diagnose)
 
@@ -34,8 +32,7 @@ Seit 9. Oktober 2026 gibt es nur noch das Waveshare-Board: DevKit-Mockup (OLED),
 - Das Waveshare-Display lässt sich ohne Hinsehen prüfen: `firmware/tools/lcd_debug.py shot bild.png`, `status`, `tap X Y` (Screenshot ansehen statt raten).
 - Waveshare seit 6. Oktober 2026: Port 1 sendet auf IO21 statt IO43 (ROM-Startmeldungen); Seiten scrollen, Tasten größer; Sparmodus im Akkubetrieb (80 MHz, Abdunkeln) und Ausschalten (Tiefschlaf, BOOT-Taste weckt). Per Debug-Konsole am USB-Kabel geprüft — echter Akkubetrieb, BOOT-Wecken und Stromaufnahme nicht. `lcd_debug.py poweroff` **ohne Zeitangabe** lässt sich nur am Gerät rückgängig machen.
 - Akku-Kalibrierung (7. Oktober 2026, 0-%-/100-%-Punkt, `src/bat_curve.h`): Host-Test, Debug-Konsole, Touch-Seite Setup und `/api/batcal` (curl) am Waveshare geprüft; Web-Block im Browser ungeprüft.
-- 802.1X gegen einen echten RADIUS steht aus. Die Firmware baut nur noch auf Arduino-Core 2.0.17 / mbedTLS 2: Core-3-Kompatibilität (`compat_eap.h`, `compat_mbedtls.h`) und die LBO-Warnleitung sind seit 9. Oktober 2026 entfernt.
-- Nicht gebaut: I²C-Tochterplatine; SC16IS752-Treiber fehlt in der Firmware.
+- 802.1X gegen einen echten RADIUS steht aus. Die Firmware baut nur noch auf Arduino-Core 2.0.17 / mbedTLS 2: Core-3-Kompatibilität (`compat_eap.h`, `compat_mbedtls.h`) und die LBO-Warnleitung sind seit 9. Oktober 2026 entfernt, ebenso `hardware/` (KiCad-Tochterplatine, Gehäuse fürs LCDwiki-Board) und `diagramme/` — letzter Stand damit: Commit `43e7939`.
 
 ## Regeln aus Erfahrung (Details: HANDOVER.md §8)
 
@@ -50,6 +47,5 @@ Seit 9. Oktober 2026 gibt es nur noch das Waveshare-Board: DevKit-Mockup (OLED),
 
 1. Waveshare: MAX3232 anschließen, echter Konsolenzugriff; SD-Karte; Akkubetrieb — Liste in `firmware/WAVESHARE.md` („Offen“)
 2. 802.1X gegen echten RADIUS, danach PKCS#12 und CSR
-3. Tochterplatine: Stückliste prüfen, fertigen, SC16IS752-Treiber schreiben (für mehr als einen Port)
-4. Gehäuse für das Waveshare-Board
-5. Docs-Artifact `2f26e902-4f1e-4797-bfbc-4037495d8121` beschreibt noch das LCDwiki-Basisboard — auf Waveshare umschreiben
+3. Gehäuse für das Waveshare-Board (es gibt noch keins)
+4. Docs-Artifact `2f26e902-4f1e-4797-bfbc-4037495d8121` beschreibt noch das LCDwiki-Basisboard — auf Waveshare umschreiben

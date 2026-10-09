@@ -14,7 +14,7 @@ Ein mobiles Gerät für seriellen Konsolenzugang: Du verbindest Handy oder Noteb
 
 Seit dem 9. Oktober 2026 baut die Firmware nur noch für das **Waveshare ESP32-S3-Touch-LCD-2** (ESP32-S3R8, 2″-Touch-LCD 240×320, SD, LiPo-Anschluss; PlatformIO-Env `waveshare-s3-lcd2`, Arduino-Core 2.0.17). Stand, Pins und offene Punkte: `firmware/WAVESHARE.md`.
 
-Entfernt wurden die drei früheren Varianten samt ihrem Code: **ESP32 DevKit + MAX3232 (HW-044)** mit OLED (das erste Mockup), **LilyGO T-RSS3** und das **VIEWE-5″-Panel** (LVGL-GUI, Core 3.1.1) — dazu OLED-Treiber (U8g2), Status-LED, die fertigen Images, `MOCKUP.md`, `PANEL.md` und das T-RSS3-Gehäuse. Der letzte Stand mit allen Varianten ist Commit `3bbc16c`. Wo die Abschnitte unten von diesen Boards handeln, sind sie als Erfahrungswissen stehen geblieben.
+Entfernt wurden die drei früheren Varianten samt ihrem Code: **ESP32 DevKit + MAX3232 (HW-044)** mit OLED (das erste Mockup), **LilyGO T-RSS3** und das **VIEWE-5″-Panel** (LVGL-GUI, Core 3.1.1) — dazu OLED-Treiber (U8g2), Status-LED, die fertigen Images, `MOCKUP.md`, `PANEL.md` und das T-RSS3-Gehäuse. Ebenfalls entfernt sind `hardware/` (KiCad-Projekt der I²C-Tochterplatine, Gehäuse fürs LCDwiki-Basisboard) und `diagramme/` (PowerBoost-Schaltpläne, DB9-Nullmodem); deren letzter Stand ist Commit `43e7939`. Der letzte Stand mit allen Varianten ist Commit `3bbc16c`. Wo die Abschnitte unten von diesen Boards handeln, sind sie als Erfahrungswissen stehen geblieben.
 
 ## 3. Was läuft, was nicht
 
@@ -30,7 +30,7 @@ Entfernt wurden die drei früheren Varianten samt ihrem Code: **ESP32 DevKit + M
 
 Mit den alten Boards entfernt, weil nie gelaufen: die **Core-3-/mbedTLS-3-Pfade** (`compat_eap.h`, `compat_mbedtls.h`) und die **LBO-Auswertung** (Akkuwarnleitung fürs DevKit mit PowerBoost). Die Firmware ruft jetzt direkt die APIs von Arduino-Core 2.0.17 / mbedTLS 2 auf; ein Umstieg auf Core 3 braucht die Anpassungen aus Commit `c4b24bb` wieder.
 
-**Nicht gebaut:** die I²C-Tochterplatine. Schaltplan und Layout existieren, bestellt ist nichts.
+**Nicht gebaut:** die I²C-Tochterplatine. Schaltplan und Layout liegen nur noch in der Git-Historie (Commit `43e7939`), bestellt war nichts.
 
 ## 4. Was im Archiv liegt
 
@@ -41,10 +41,6 @@ firmware/            das PlatformIO-Projekt
   tools/             embed_web.py, lcd_debug.py (Debug-Konsole), mock_device.js
   README.md          Weboberfläche, Netz, 802.1X/HTTPS, XMODEM, Konfigurationen, Diagnose
   WAVESHARE.md       das Board: Touch-Oberfläche, Bluetooth, Pins, Akku  ← die meistgebrauchte Datei
-hardware/            Entwürfe aus der Zeit vor dem Waveshare-Board
-  pcb/               KiCad-Projekt der Tochterplatine + Generator-Skripte
-  gehaeuse/          OpenSCAD-Quelle, STLs, Render-Vorschauen (LCDwiki-Basisboard)
-diagramme/           alle Zeichnungen als PNG + das matplotlib-Skript dazu
 tests/               Host-Unittests (laufen auf dem PC, nicht auf dem ESP32)
 HANDOVER.md          dieses Dokument
 ```
@@ -113,9 +109,9 @@ Die Firmware unterscheidet am **allerersten Byte**: `0xFF` → Telnet-Client, da
 Nach Abzug von RGB-Panel (≈20 Pins), SD-Karte und Touch bleiben **IO17 und IO18**, dazu das UART-Paar IO43/44 (= USB-Debug-Konsole). Vier native RS232-Ports sind damit ausgeschlossen. Der Touch-I²C auf **IO19/20** ist mitbenutzbar: GT911 liegt auf 0x5D/0x14, die SC16IS752 auf 0x48–0x57, kein Adresskonflikt. Das ist die eigentliche Begründung für die I²C-Tochterplatine.
 
 ### 8.7 Lade-/Boost-Board (DevKit-Mockup, entfernt)
-PowerBoost 1000C ist **ausdrücklich 1-zellig** (3,7/4,2 V) — ein 7,4-V-Pack zerstört den Laderegler. 5Vo geht auf **VIN**, nie auf 3V3. Eine Schottky (1N5817, Ring zum DevKit) zwischen 5Vo und VIN macht den Aufbau USB-sicher, sodass Flashen mit angeklemmtem Akku geht. `LBO` ist offener Kollektor und braucht keinen externen Widerstand (die Auswertung in der Firmware gibt es nicht mehr). Schaltplan: `diagramme/powerboost_schaltplan.png`.
+PowerBoost 1000C ist **ausdrücklich 1-zellig** (3,7/4,2 V) — ein 7,4-V-Pack zerstört den Laderegler. 5Vo geht auf **VIN**, nie auf 3V3. Eine Schottky (1N5817, Ring zum DevKit) zwischen 5Vo und VIN macht den Aufbau USB-sicher, sodass Flashen mit angeklemmtem Akku geht. `LBO` ist offener Kollektor und braucht keinen externen Widerstand (die Auswertung in der Firmware gibt es nicht mehr). Der Schaltplan (`diagramme/powerboost_schaltplan.png`) liegt nur noch in der Git-Historie.
 
-### 8.8 Tochterplatine: beide Kanäle nutzen
+### 8.8 Tochterplatine: beide Kanäle nutzen (Entwurf entfernt)
 Erste Fassung war 4× SC16IS750 + 4× MAX3232 — je ein Chippaar pro Port. Beide Bausteinfamilien sind aber zweikanalig: der SC16IS**752** ist der I²C-fähige Doppel-UART, und der MAX3232 hat ohnehin zwei Transceiver, die sich dieselben vier Ladepumpen-Kondensatoren teilen. Jetzt **2× SC16IS752 + 2× MAX3232** für vier Ports. Halbe Chipzahl, Platine von 112,5 auf **107 × 110 mm**, Materialkosten von geschätzt ~58 € auf **~20 €**. Pinbelegungen wurden gegen KiCads eigene Symbolbibliothek geprüft, nicht aus Datenblatt-PDFs abgetippt — das hatte sich vorher als unzuverlässig erwiesen.
 
 ## 9. Wie geprüft wurde
@@ -126,15 +122,13 @@ Da kein Zugriff auf die Hardware bestand, wurde das Prüfbare auf dem Host gepr�
 - **`tests/iac_filter_test.cpp`** — die ältere Filterfassung, 8 Fälle über alle Chunk-Größen.
 - **Builds** beider Umgebungen mit **0 Warnungen** im eigenen Code.
 - **Binärprüfung**: Bootloader und Partitionstabelle der Mockup-Images sind byte-identisch zur vorigen Auslieferung, Flash-Parameter unverändert (dio/4 MB/40 MHz) — OTA ist dadurch gefahrlos, Einstellungen überleben.
-- 3D-Gehäuse: alle drei STL manifold (`Volumes: 2`), Seitenansicht-Renders zur Kontrolle der RJ45-Ausschnitte.
 
 ## 10. Offene Punkte, nach Priorität
 
 1. **Waveshare-Board fertig prüfen**: MAX3232 anschließen und echter Konsolenzugriff, SD-Karte, Akkubetrieb — die Liste steht in `firmware/WAVESHARE.md` unter „Offen".
 2. **802.1X gegen echten RADIUS testen.** Danach PKCS#12-Upload und CSR-Erzeugung durchspielen.
-3. **Tochterplatine**: Stückliste gegen aktuelle LCSC-Preise prüfen, Fertigung beauftragen. Danach fehlt noch der **SC16IS752-Treiber in der Firmware** — der existiert noch nicht. Am Waveshare-Board wäre sie der Weg zu mehr als einem Port.
-4. **Gehäuse** für das Waveshare-Board; das vorhandene passt auf das LCDwiki-Basisboard.
-5. Die Docs-Seite (Artifact `2f26e902-4f1e-4797-bfbc-4037495d8121`) beschreibt noch das LCDwiki-Basisboard und müsste auf das Waveshare-Board umgeschrieben werden.
+3. **Gehäuse** für das Waveshare-Board — es gibt noch keins.
+4. Die Docs-Seite (Artifact `2f26e902-4f1e-4797-bfbc-4037495d8121`) beschreibt noch das LCDwiki-Basisboard und müsste auf das Waveshare-Board umgeschrieben werden.
 
 ## 11. Arbeitsweise, die sich bewährt hat
 
