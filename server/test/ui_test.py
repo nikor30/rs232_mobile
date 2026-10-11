@@ -122,6 +122,7 @@ with sync_playwright() as p:
         expect(page.locator("#commands")).to_be_hidden()
 
     elif stage == "accounts":
+        SLOW = 30000    # a password costs the server 600 000 rounds of hashing: seconds on a busy Raspberry Pi
         # the administrator creates the account and gets a setup code, shown once
         expect(page.locator("#noUsers")).to_be_visible()
         page.click("#addUser")
@@ -144,22 +145,22 @@ with sync_playwright() as p:
         page.fill("#setupPass", "ein langes Passwort 1")
         page.fill("#setupPass2", "ein langes Passwort 1")
         page.click("#setupForm button")
-        expect(page.locator("#setupErr")).to_contain_text("stimmt nicht")
+        expect(page.locator("#setupErr")).to_contain_text("stimmt nicht", timeout=SLOW)
         page.fill("#setupCode", setup.lower())           # typed as somebody would
         page.fill("#setupPass2", "ein anderes Passwort")
         page.click("#setupForm button")
         expect(page.locator("#setupErr")).to_contain_text("nicht gleich")
         page.fill("#setupPass2", "ein langes Passwort 1")
         page.click("#setupForm button")
-        expect(page.locator("#totpForm")).to_be_visible()
+        expect(page.locator("#totpForm")).to_be_visible(timeout=SLOW)
         secret = page.locator("#totpSecret").inner_text()
         assert page.evaluate("document.querySelector('#totpQr').width") > 100
         page.fill("#totpCode", "000000" if totp(secret) != "000000" else "111111")
         page.click("#totpForm button")
-        expect(page.locator("#setupErr")).to_contain_text("Code stimmt nicht")
+        expect(page.locator("#setupErr")).to_contain_text("Code stimmt nicht", timeout=SLOW)
         page.fill("#totpCode", totp(secret))
         page.click("#totpForm button")
-        expect(page.locator("#app")).to_be_visible()
+        expect(page.locator("#app")).to_be_visible(timeout=SLOW)
         expect(page.locator("#whoami")).to_have_text("anna")
         errors.clear()                               # the refusals above were the point
         expect(page.locator("#users tbody tr", has_text="anna")).to_contain_text("aktiv")
@@ -191,12 +192,12 @@ with sync_playwright() as p:
         page.fill("#loginPass", "das falsche Passwort!")
         page.fill("#loginCode", totp(secret, 1))
         page.click("#loginForm button")
-        expect(page.locator("#loginErr")).to_have_text("Anmeldung fehlgeschlagen")
+        expect(page.locator("#loginErr")).to_have_text("Anmeldung fehlgeschlagen", timeout=SLOW)
         errors.clear()
         page.fill("#loginPass", "ein langes Passwort 1")
         page.fill("#loginCode", totp(secret, 1))
         page.click("#loginForm button")
-        expect(page.locator("#app")).to_be_visible()
+        expect(page.locator("#app")).to_be_visible(timeout=SLOW)
         expect(page.locator("#audit tbody tr").first).to_contain_text("Anmeldung")
         # she cannot lock herself out
         page.locator("#users tbody tr", has_text="anna").get_by_text("Löschen").click()

@@ -122,11 +122,15 @@ static LGFX_Sprite canvas(&lcd);
 static LovyanGFX *g = &lcd;              // the off-screen canvas, or the panel itself if there is no RAM for one
 static uint8_t canvasBits = 0;           // 16 = PSRAM, 8 = internal RAM, 0 = no canvas
 
-// colours are RGB888 (uint32_t), LovyanGFX converts them
-static const uint32_t C_BG = 0x0B0F14, C_PANEL = 0x1C2733, C_LINE = 0x2E3D4D, C_TEXT = 0xF2F5F8,
-                      C_DIM = 0x8FA1B3, C_ACCENT = 0x22D3EE, C_GREEN = 0x34D399, C_AMBER = 0xFBBF24,
-                      C_RED = 0xF87171, C_BLUE = 0x60A5FA, C_BTN = 0x263545, C_BTN_DOWN = 0x3B82F6,
-                      C_TERM = 0x9AE6B4;
+// colours are RGB888 (uint32_t), LovyanGFX converts them. The same family as
+// the two web interfaces: black ground, grey surfaces in two steps, one tint
+// (C_TINT) for what leads somewhere, and green, amber and red only for state.
+// A pressed button takes the tint: on a small panel the answer to a touch has
+// to be seen past the finger.
+static const uint32_t C_BG = 0x000000, C_PANEL = 0x2C2C2E, C_LINE = 0x48484A, C_TEXT = 0xF5F5F7,
+                      C_DIM = 0x98989D, C_ACCENT = 0x64D2FF, C_GREEN = 0x30D158, C_AMBER = 0xFF9F0A,
+                      C_RED = 0xFF453A, C_BLUE = 0x0A84FF, C_BTN = 0x3A3A3C, C_BTN_DOWN = 0x0A84FF,
+                      C_TINT = 0x0A84FF, C_TERM = 0x9AE6B4;
 
 enum Screen : uint8_t { S_STATUS = 0, S_TERM, S_SCRIPTS, S_WIFI, S_URL, S_BT, S_SYSTEM, S_INFO, S_SETUP, S_COUNT };
 static const char *const TITLES[S_COUNT] = {"Status", "Terminal", "Skripte", "WLAN", "Web-UI", "Bluetooth",
@@ -983,7 +987,7 @@ static bool isDown(int x, int y, int w, int h) {
 static void button(int x, int y, int w, int h, const char *label, uint8_t id, uint32_t textColor = C_TEXT,
                    uint8_t arg = 0, const lgfx::IFont *font = &fonts::DejaVu12) {
   bool down = isDown(x, y, w, h);
-  g->fillRoundRect(x, y, w, h, 6, down ? C_BTN_DOWN : C_BTN);
+  g->fillRoundRect(x, y, w, h, 10, down ? C_BTN_DOWN : C_BTN);
   g->setFont(font);
   if (g->textWidth(label) > w - 6) g->setFont(&fonts::DejaVu9);      // a long label on a narrow button
   g->setTextDatum(lgfx::middle_center);
@@ -1233,7 +1237,7 @@ static void dot(int x, int y, bool lit, uint32_t color) {
 static void drawHeader() {
   g->fillRect(0, 0, W, HEAD_H, C_PANEL);
   g->setFont(&fonts::DejaVu18);
-  g->setTextColor(C_DIM);
+  g->setTextColor(C_TINT);                 // the arrows lead somewhere: they carry the tint
   g->setTextDatum(lgfx::middle_center);
   g->drawString("<", 16, HEAD_H / 2);
   if (modal()) {                         // a sub-page: the arrow leads back, nothing else leaves it
@@ -1247,6 +1251,7 @@ static void drawHeader() {
     addHotspot(0, 0, 64, HEAD_H + 6, B_BACK);
     return;
   }
+  g->setTextColor(C_TINT);
   g->drawString(">", W - 16, HEAD_H / 2);
   // While the server has a console open, every page says so in place of its
   // title; a tap there leads to "Beenden".
@@ -1517,8 +1522,8 @@ static void bar(const char *label, int pct, const String &text, uint32_t color) 
   g->setTextColor(C_DIM);
   g->drawString(label, 8, rowY + 2);
   int x = 64, w = W - x - 10;
-  g->fillRoundRect(x, rowY, w, 16, 4, C_PANEL);
-  if (pct) g->fillRoundRect(x, rowY, max(8, w * pct / 100), 16, 4, color);
+  g->fillRoundRect(x, rowY, w, 16, 7, C_PANEL);
+  if (pct) g->fillRoundRect(x, rowY, max(16, w * pct / 100), 16, 7, color);
   g->setTextColor(C_TEXT);
   g->setTextDatum(lgfx::middle_center);
   g->drawString(fit(text, w - 4).c_str(), x + w / 2, rowY + 9);
@@ -1554,7 +1559,7 @@ static int listRows(int top, int bottom) { return max(1, (bottom - top) / LIST_R
 
 static void listRow(int index, int y, const char *text, const char *right, bool selected, uint8_t id) {
   bool down = isDown(4, y, W - 8, LIST_ROW_H - 2);
-  g->fillRoundRect(4, y, W - 8, LIST_ROW_H - 2, 5, selected || down ? C_BTN_DOWN : C_PANEL);
+  g->fillRoundRect(4, y, W - 8, LIST_ROW_H - 2, 8, selected || down ? C_BTN_DOWN : C_PANEL);
   g->setFont(&fonts::DejaVu12);
   g->setTextColor(C_TEXT);
   int rw = right ? g->textWidth(right) + 10 : 0;
@@ -1734,8 +1739,8 @@ static void screenSetup() {
   button(8, y, bw, BTN_H, "-", B_BRIGHT_DOWN, C_TEXT, 0, &fonts::DejaVu24);
   button(right0 - bw, y, bw, BTN_H, "+", B_BRIGHT_UP, C_TEXT, 0, &fonts::DejaVu24);
   int bx = 8 + bw + 8, bwid = right0 - bw - 8 - bx;
-  g->fillRoundRect(bx, y + BTN_H / 2 - 7, bwid, 14, 4, C_PANEL);
-  g->fillRoundRect(bx, y + BTN_H / 2 - 7, max(8, bwid * (S.brightness + 1) / 256), 14, 4, C_ACCENT);
+  g->fillRoundRect(bx, y + BTN_H / 2 - 7, bwid, 14, 6, C_PANEL);
+  g->fillRoundRect(bx, y + BTN_H / 2 - 7, max(14, bwid * (S.brightness + 1) / 256), 14, 6, C_TINT);
 
   y += BTN_H + 10;
   g->setFont(&fonts::DejaVu12);
@@ -1805,8 +1810,8 @@ static void drawMessage() {
   w = min(w + 28, W - 8);
   int h = 20 + na * h1 + (nb ? 6 + nb * LINE_H : 0);
   int x = (W - w) / 2, y = (H - h) / 2;
-  g->fillRoundRect(x, y, w, h, 8, C_PANEL);
-  g->drawRoundRect(x, y, w, h, 8, C_ACCENT);
+  g->fillRoundRect(x, y, w, h, 12, C_PANEL);
+  g->drawRoundRect(x, y, w, h, 12, C_LINE);
   g->setTextDatum(lgfx::top_center);
   g->setTextColor(C_TEXT);
   g->setFont(f1);
@@ -1825,8 +1830,8 @@ static void drawConsoleDialog() {
   btnCount = 0;                          // nothing underneath can be touched
   cTop = cBot = 0;
   int w = W - 16, h = 156, x = 8, y = (H - h) / 2;
-  g->fillRoundRect(x, y, w, h, 8, C_PANEL);
-  g->drawRoundRect(x, y, w, h, 8, ask ? C_AMBER : C_RED);
+  g->fillRoundRect(x, y, w, h, 12, C_PANEL);
+  g->drawRoundRect(x, y, w, h, 12, ask ? C_AMBER : C_RED);
   g->setTextDatum(lgfx::top_center);
   g->setFont(&fonts::DejaVu18);
   g->setTextColor(C_TEXT);

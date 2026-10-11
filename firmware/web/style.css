@@ -1,16 +1,25 @@
+/* Look and feel after Apple's design language, for a tool that is held in one
+   hand next to a rack: the system font, dark surfaces in three clear levels
+   (terminal, bars, grouped cards), targets a thumb can hit, controls that answer
+   on the press itself, a settings sheet that leaves the way it came, and less
+   motion or transparency for people who asked for that. */
 :root {
-  --bg: #0b0f14;
-  --bar: #121821;
-  --panel: #151c26;
-  --line: #243041;
-  --text: #d6dde6;
-  --muted: #8b98a9;
-  --accent: #4aa3ff;
-  --ok: #3fb950;
-  --warn: #d29922;
-  --bad: #f85149;
-  --key: #1c2533;
-  --key-on: #2f81f7;
+  --bg: #000;                 /* the terminal: nothing competes with it */
+  --bar: #161618;             /* bars around it */
+  --panel: #000;              /* the settings sheet: grouped cards on black */
+  --card: #1c1c1e;
+  --line: rgba(84, 84, 88, .6);
+  --text: #f5f5f7;
+  --muted: #98989d;
+  --accent: #0a84ff;
+  --ok: #30d158;
+  --warn: #ff9f0a;
+  --bad: #ff453a;
+  --key: rgba(118, 118, 128, .24);
+  --key-down: rgba(118, 118, 128, .48);
+  --key-on: #0a84ff;
+  --ease: cubic-bezier(.2, .8, .2, 1);        /* quick to answer, soft to settle */
+  --sheet: cubic-bezier(.32, .72, 0, 1);      /* a sheet coming to rest */
   --app-h: 100dvh;
   color-scheme: dark;
 }
@@ -22,7 +31,8 @@ html, body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font: 15px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
   overscroll-behavior: none;
 }
 
@@ -35,7 +45,8 @@ body {
   padding-right: env(safe-area-inset-right);
 }
 
-button { font: inherit; color: inherit; }
+button { font: inherit; color: inherit; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 55%, transparent); }
 
 /* ---------- top bar ---------- */
 #bar {
@@ -46,31 +57,37 @@ button { font: inherit; color: inherit; }
   padding: calc(6px + env(safe-area-inset-top)) 10px 6px;
   background: var(--bar);
   border-bottom: 1px solid var(--line);
-  min-height: 46px;
+  min-height: 50px;
 }
 .dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; background: var(--bad); }
-.dot.on { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+.dot.on { background: var(--ok); }
 .dot.wait { background: var(--warn); animation: pulse 1s infinite; }
 @keyframes pulse { 50% { opacity: .35; } }
-.host { font-weight: 600; max-width: 28vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.host { font-weight: 600; letter-spacing: -.01em; max-width: 28vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .grow { flex: 1; }
 .chip {
-  border: 1px solid var(--line);
+  border: 0;
   background: var(--key);
   border-radius: 999px;
-  padding: 4px 10px;
+  padding: 6px 12px;
   font-size: 13px;
+  font-weight: 500;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
-button.chip { cursor: pointer; }
+/* What can be pressed answers at once - it gives way and darkens the moment the
+   finger lands - and eases back when let go. */
+button.chip, .icon, .ptab, .btn, #keys button, .tabs button { transition: transform .25s var(--ease), background-color .2s, filter .2s; }
+button.chip:active, .icon:active, .ptab:active, .btn:active, .tabs button:active { transform: scale(.96); transition-duration: 0s; }
+button.chip { cursor: pointer; min-height: 32px; }
+button.chip:active { background: var(--key-down); }
 .chip.static { cursor: default; }
-.chip.low { color: #fff; background: var(--bad); border-color: var(--bad); }
-.chip.warn { border-color: #6b4a12; color: #f0c05a; }
-.chip.warn.armed { background: var(--bad); border-color: var(--bad); color: #fff; }
+.chip.low { color: #fff; background: var(--bad); }
+.chip.warn { color: var(--warn); }
+.chip.warn.armed { background: var(--bad); color: #fff; }
 .icon {
-  background: none; border: 0; padding: 6px; border-radius: 8px; cursor: pointer;
-  display: inline-flex; align-items: center; justify-content: center; color: var(--text);
+  background: none; border: 0; padding: 0; min-width: 44px; min-height: 38px; border-radius: 10px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; color: var(--accent);
 }
 .icon:active { background: var(--key); }
 
@@ -88,17 +105,18 @@ button.chip { cursor: pointer; }
 #portbar::-webkit-scrollbar { display: none; }
 .ptab {
   flex: 0 0 auto;
-  border: 1px solid var(--line);
+  border: 0;
   background: var(--key);
   color: var(--muted);
-  border-radius: 8px;
-  padding: 5px 12px;
+  border-radius: 999px;
+  padding: 7px 14px;
   font-size: 13px;
+  font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
   position: relative;
 }
-.ptab.active { background: var(--key-on); border-color: var(--key-on); color: #fff; font-weight: 600; }
+.ptab.active { background: var(--key-on); color: #fff; font-weight: 600; }
 .ptab.unread::after {
   content: ""; position: absolute; top: 3px; right: 3px; width: 7px; height: 7px; border-radius: 50%; background: var(--ok);
 }
@@ -122,7 +140,7 @@ button.chip { cursor: pointer; }
   align-items: center;
   gap: 10px;
   padding: 6px 8px;
-  background: #16202c;
+  background: var(--card);
   border-top: 1px solid var(--line);
 }
 .runinfo { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
@@ -151,7 +169,8 @@ body.termonly #keys { display: none; }
   font-size: 16px;            /* >= 16 px: no iOS zoom on focus */
   padding: 8px 10px;
 }
-#cmdSend { padding: 8px 16px; }
+#cmd:focus { box-shadow: none; background: var(--key-down); }   /* it has the focus nearly always: no ring, a lighter field */
+#cmdSend { padding: 8px 18px; }
 
 /* ---------- special keys ---------- */
 #keys {
@@ -167,22 +186,23 @@ body.termonly #keys { display: none; }
   touch-action: pan-x;
 }
 #keys::-webkit-scrollbar { display: none; }
+/* Keys like on a keyboard: big enough for a thumb, lit the instant they are touched. */
 #keys button {
   flex: 0 0 auto;
-  min-width: 42px;
-  height: 38px;
-  padding: 0 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  min-width: 46px;
+  height: 42px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 9px;
   background: var(--key);
   font-size: 14px;
+  font-weight: 500;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   -webkit-user-select: none;
   user-select: none;
-  -webkit-tap-highlight-color: transparent;
 }
-#keys button:active { background: #2a3547; }
-#keys button.on { background: var(--key-on); border-color: var(--key-on); color: #fff; }
+#keys button:active { background: var(--key-down); transition-duration: 0s; }
+#keys button.on { background: var(--key-on); color: #fff; }
 
 /* ---------- toast ---------- */
 #toast {
@@ -191,20 +211,26 @@ body.termonly #keys { display: none; }
   bottom: calc(64px + env(safe-area-inset-bottom));
   transform: translateX(-50%) translateY(20px);
   max-width: min(92vw, 520px);
-  background: #26303d;
-  border: 1px solid var(--line);
-  color: var(--text);
-  padding: 8px 14px;
-  border-radius: 10px;
+  background: rgba(58, 58, 60, .78);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  color: #fff;
+  padding: 10px 16px;
+  border-radius: 14px;
   font-size: 14px;
+  font-weight: 500;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, .4);
   opacity: 0;
   pointer-events: none;
-  transition: opacity .2s, transform .2s;
+  transition: opacity .25s var(--ease), transform .3s var(--ease);
   z-index: 30;
 }
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
 /* ---------- panel ---------- */
+/* The settings are a sheet: it rises from the bottom edge and leaves the same
+   way. A transition, not a fixed animation, so that opening it again while it is
+   still on its way out turns it round where it is. */
 #panel {
   position: fixed;
   inset: 0;
@@ -212,7 +238,11 @@ body.termonly #keys { display: none; }
   background: var(--panel);
   display: flex;
   flex-direction: column;
+  transform: translateY(100%);
+  transition: transform .42s var(--sheet);
+  will-change: transform;
 }
+#panel.open { transform: none; }
 #panel[hidden] { display: none; }
 .panel-head {
   display: flex;
@@ -222,12 +252,18 @@ body.termonly #keys { display: none; }
   border-bottom: 1px solid var(--line);
   background: var(--bar);
 }
-.tabs { display: flex; gap: 4px; flex: 1; overflow-x: auto; scrollbar-width: none; }
-.tabs button {
-  border: 0; background: none; padding: 8px 10px; border-radius: 8px; cursor: pointer; color: var(--muted);
-  white-space: nowrap;
+/* More tabs than fit: they fade out at the edge instead of being cut off, which says "there is more this way". */
+.tabs {
+  display: flex; gap: 2px; flex: 1; overflow-x: auto; scrollbar-width: none; padding-right: 20px;
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
 }
-.tabs button.active { background: var(--key); color: var(--text); font-weight: 600; }
+.tabs::-webkit-scrollbar { display: none; }
+.tabs button {
+  border: 0; background: none; padding: 9px 12px; border-radius: 9px; cursor: pointer; color: var(--muted);
+  white-space: nowrap; font-weight: 500;
+}
+.tabs button.active { background: var(--key-down); color: var(--text); font-weight: 600; }
 .panel-body {
   flex: 1;
   overflow-y: auto;
@@ -235,94 +271,124 @@ body.termonly #keys { display: none; }
   -webkit-overflow-scrolling: touch;
 }
 .tab { max-width: 640px; margin: 0 auto; }
-h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 22px 0 8px; }
+h3 { font-size: 13px; font-weight: 400; text-transform: uppercase; letter-spacing: .02em; color: var(--muted); margin: 26px 0 8px; }
 .tab > h3:first-child, form > h3:first-child { margin-top: 4px; }
-.hint { color: var(--muted); font-size: 13px; margin: 6px 0; }
-code { background: var(--key); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+.hint { color: var(--muted); font-size: 13px; line-height: 1.4; margin: 6px 0; }
+code { background: var(--key); padding: 1px 6px; border-radius: 5px; font-size: 12px; }
 
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
 @media (max-width: 420px) { .grid2 { grid-template-columns: 1fr; } }
 
 label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
 label.inline { flex-direction: row; align-items: center; gap: 8px; }
-label.check { flex-direction: row; align-items: center; gap: 8px; color: var(--text); font-size: 14px; margin: 10px 0; }
+label.check { flex-direction: row; align-items: center; gap: 10px; color: var(--text); font-size: 15px; margin: 10px 0; min-height: 44px; }
+label.check > span { flex: 1; min-width: 0; }
 input, select, textarea {
   font: inherit;
   font-size: 16px;            /* prevents iOS zoom on focus */
   color: var(--text);
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 8px 10px;
+  background: var(--key);
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 9px 12px;
+  min-height: 42px;
   width: 100%;
   min-width: 0;
 }
 label.inline select { width: auto; }
-input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--accent); }
-input[type=range] { padding: 0; accent-color: var(--accent); }
+input[type=checkbox] { width: 22px; height: 22px; min-height: 0; flex: none; accent-color: var(--accent); }
+input[type=range] { padding: 0; min-height: 28px; background: none; accent-color: var(--accent); }
 input[type=file] { font-size: 14px; padding: 6px; }
 textarea { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; resize: vertical; }
-input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+input:focus, select:focus, textarea:focus { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 55%, transparent); }
 
 .row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 12px 0; }
 .btn {
-  border: 1px solid var(--line);
+  border: 0;
   background: var(--key);
-  border-radius: 10px;
-  padding: 10px 16px;
+  color: var(--accent);
+  border-radius: 12px;
+  padding: 11px 18px;
+  min-height: 44px;
   cursor: pointer;
   font-weight: 500;
 }
-.btn:active { filter: brightness(1.2); }
-.btn:disabled { opacity: .5; }
-.btn.primary { background: var(--key-on); border-color: var(--key-on); color: #fff; }
-.btn.warn { border-color: #6b4a12; color: #f0c05a; }
-.btn.danger { border-color: #6e2a2a; color: #ff8b85; }
+.btn:active { background: var(--key-down); }
+.btn:disabled { opacity: .4; }
+.btn.primary { background: var(--key-on); color: #fff; font-weight: 600; }
+.btn.primary:active { background: var(--key-on); filter: brightness(.82); }
+.btn.warn { color: var(--warn); }
+.btn.danger { color: var(--bad); }
 .val { min-width: 56px; text-align: center; font-variant-numeric: tabular-nums; }
 progress { width: 100%; height: 10px; accent-color: var(--accent); }
 
 table.kv { width: 100%; border-collapse: collapse; font-size: 14px; }
 table.kv th { text-align: left; color: var(--muted); font-weight: 400; padding: 8px 10px 8px 0; width: 42%; vertical-align: top; }
 table.kv td { padding: 8px 0; font-variant-numeric: tabular-nums; word-break: break-word; }
-table.kv tr + tr { border-top: 1px solid var(--line); }
+table.kv tr + tr > * { border-top: 1px solid var(--line); }
 
 /* ---------- dialogs ---------- */
+/* A question that has to be answered first: what is behind it is dimmed, and
+   the box arrives as a thing instead of blinking on. */
 .modal {
-  position: fixed; inset: 0; z-index: 40; background: rgba(0, 0, 0, .55);
+  position: fixed; inset: 0; z-index: 40; background: rgba(0, 0, 0, .5);
   display: flex; align-items: flex-start; justify-content: center; padding: calc(40px + env(safe-area-inset-top)) 16px 16px;
+  animation: scrim-in .25s ease-out;
 }
 .modal-box {
-  width: min(460px, 100%); background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px;
-  max-height: 80vh; overflow-y: auto; display: flex; flex-direction: column; gap: 10px;
+  width: min(460px, 100%); background: var(--card); border: 0; border-radius: 18px; padding: 18px;
+  max-height: 80vh; overflow-y: auto; display: flex; flex-direction: column; gap: 12px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .6);
+  animation: box-in .3s var(--ease);
 }
-.modal-box h3 { margin: 0; }
+.modal-box h3 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -.01em; text-transform: none; color: var(--text); }
+@keyframes scrim-in { from { background: rgba(0, 0, 0, 0); } }
+@keyframes box-in { from { opacity: 0; transform: scale(.95) translateY(10px); } }
 
 /* ---------- lists / cards ---------- */
 .portline { font-size: 14px; color: var(--text); margin: 0 0 10px; font-weight: 600; }
 .list { display: flex; flex-direction: column; gap: 6px; }
 .item {
-  display: flex; align-items: center; gap: 8px; padding: 8px 10px;
-  border: 1px solid var(--line); border-radius: 10px; background: var(--bg);
+  display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 14px; min-height: 52px;
+  border: 0; border-radius: 12px; background: var(--card);
 }
 .iname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .isize { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
-.btn.small { padding: 6px 12px; font-size: 14px; }
-.filebtn { position: relative; overflow: hidden; display: inline-flex; flex-direction: row; align-items: center; font-size: 15px; color: var(--text); }
+.btn.small { padding: 7px 14px; min-height: 36px; font-size: 14px; border-radius: 10px; }
+.filebtn { position: relative; overflow: hidden; display: inline-flex; flex-direction: row; align-items: center; font-size: 15px; color: var(--accent); }
 .filebtn input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 textarea#cfgText { margin-top: 8px; min-height: 180px; }
 
-.pcard { border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px 4px; margin: 10px 0; background: var(--bg); }
-.pcard.off { opacity: .6; }
+.pcard { border: 0; border-radius: 14px; padding: 10px 14px 6px; margin: 10px 0; background: var(--card); }
+.pcard.off { opacity: .55; }
 .pcard-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .pcard-head label.check { margin: 4px 0; font-weight: 600; }
-.tag { font-size: 12px; border-radius: 999px; padding: 2px 8px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
-.tag.sw { border-color: #6b4a12; color: #f0c05a; }
+.tag { font-size: 12px; font-weight: 500; border-radius: 999px; padding: 3px 9px; background: var(--key); color: var(--muted); white-space: nowrap; }
+.tag.sw { color: var(--warn); }
 .grid3 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
 .grid3 .wide { grid-column: 1 / -1; }
 .wiring { margin: 8px 0 6px; }
-select.bad, input.bad { border-color: var(--bad); outline: 2px solid var(--bad); outline-offset: -1px; }
+select.bad, input.bad { border-color: var(--bad); box-shadow: 0 0 0 2px var(--bad); }
 
 /* Netz tab: certificate cards */
 .pcard .kv th { width: 34%; }
-b.warn { color: #ff8b85; }
+b.warn { color: var(--bad); }
 #tlsCards input[type=file] { max-width: 230px; font-size: 13px; }
+
+/* ---------- what people asked their system for ---------- */
+/* Less motion: things fade instead of travelling, and nothing gives way. */
+@media (prefers-reduced-motion: reduce) {
+  #panel { transform: none; opacity: 0; transition: opacity .2s; }
+  #panel.open { opacity: 1; }
+  .modal-box { animation: none; }
+  button.chip:active, .icon:active, .ptab:active, .btn:active, .tabs button:active { transform: none; }
+  .dot.wait { animation: none; }
+  #toast { transition: opacity .2s; }
+}
+@media (prefers-reduced-transparency: reduce) {
+  #toast { background: #3a3a3c; -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
+@media (prefers-contrast: more) {
+  :root { --line: #8e8e93; --muted: #d1d1d6; --key: rgba(118, 118, 128, .4); }
+  .btn, .chip, .ptab, #keys button, input, select, textarea, .item, .pcard, .modal-box { outline: 1px solid var(--line); }
+}

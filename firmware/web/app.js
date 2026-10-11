@@ -36,7 +36,7 @@
     fontSize: store.get('fontSize', window.innerWidth < 500 ? 12 : 14),
     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", "DejaVu Sans Mono", monospace',
     scrollback: 10000,
-    theme: { background: '#0b0f14', foreground: '#d6dde6', cursor: '#7ee787', selectionBackground: '#264f78' },
+    theme: { background: '#000000', foreground: '#e5e5ea', cursor: '#30d158', selectionBackground: '#0a4a8f' },
   };
   const ports = [];               // by port id: {id, name, info, term, fit, el, seq, log, logBytes, welcomed, unread, tail, outCount}
   const dec = new TextDecoder('latin1');
@@ -511,16 +511,34 @@
 
   // ------------------------------------------------------------------ panel
   let currentTab = 'serial';
+  // The panel is a sheet that slides (style.css). "hidden" stays the one truth
+  // about whether it is there: it goes on only once the sheet has left.
+  let panelTimer = 0;
   function openPanel(tab) {
-    $('#panel').hidden = false;
+    const p = $('#panel');
+    clearTimeout(panelTimer);
+    p.hidden = false;
+    p.getBoundingClientRect();              // let the browser see it off-screen first, so it has somewhere to come from
+    p.classList.add('open');
     showTab(tab || currentTab);
     act().term.blur();
   }
-  function closePanel() {
-    $('#panel').hidden = true;
+  function panelGone() {
+    const p = $('#panel');
+    clearTimeout(panelTimer);
+    if (p.hidden || p.classList.contains('open')) return;   // opened again on its way out
+    p.hidden = true;
     refit();
     if (document.body.classList.contains('termonly')) act().term.focus();   // cursor blinks again
   }
+  function closePanel() {
+    const p = $('#panel');
+    if (p.hidden) return;
+    p.classList.remove('open');
+    clearTimeout(panelTimer);
+    panelTimer = setTimeout(panelGone, 600);  // in case no transition runs (old browser, tab in the background)
+  }
+  $('#panel').addEventListener('transitionend', (e) => { if (e.target === e.currentTarget) panelGone(); });
   function showTab(tab) {
     currentTab = tab;
     $$('.tabs button').forEach((b) => {

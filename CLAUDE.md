@@ -54,6 +54,18 @@ Phase 5 ist begonnen (seit 11. Oktober 2026, `server/KONZEPT.md` §5.1): Konten 
 
 Regeln daraus: Aufträge führt die Hauptschleife aus (`C2::loop()`), nicht der Netz-Task; neue Auftragsarten an zwei Stellen eintragen (`commandArgs` am Server, `execute()` am Gerät) und alles Verändernde an `c2Control` binden. TLS (45 kB Heap) und ML-KEM (28 kB Stack) nie gleichzeitig — der Schlüsseltausch läuft in `big()` vor und nach der Anfrage. Der Server nennt immer `Content-Length` (Go schickt über 2 kB sonst chunked). Protokolländerungen erst mit `tests/c2/run.sh` auf dem PC prüfen, dann aufs Gerät. Das Board hängt am Testplatz an einem schwachen WLAN (um −80 dBm): große Pakete gehen dort zeitweise verloren — erst `ping -s 1400` prüfen, bevor man im Code sucht. Diagnose am Gerät: `lcd_debug.py c2`. Die Content-Security-Policy der Admin-Weboberfläche bleibt bei `style-src 'self'`: xterm.js läuft darunter nur mit `web/xterm-csp.js` (vor `xterm.js` laden), nicht `unsafe-inline` erlauben. Neue Admin-Aufrufe über `sv.admin(...)` anmelden — das prüft Anmeldung und `X-C2` und schreibt das Protokoll; was nicht ins Protokoll soll, setzt `note(r).skip`. Die Go-Tests laufen mit fester Uhr: Wer viele Anmeldungen oder Handshakes in einem Test braucht, stellt die Uhr vor, sonst greift die Anfragerate. Im Browsertest kein `full_page`-Bild, solange das Terminal den Fokus hat — der nächste Klick verfehlt sonst seinen Knopf.
 
+## Gestaltung (seit 11. Oktober 2026)
+
+Alle drei Oberflächen — Admin-Seite der Leitstelle (`server/internal/server/web/style.css`), Weboberfläche des Geräts (`firmware/web/style.css`) und Touch-Display (`src/lcd_ui.cpp`, Farbtabelle oben) — folgen derselben, an Apples Gestaltungssprache angelehnten Linie: Systemschrift, schwarzer bzw. ruhiger Grund mit grauen Flächen in klaren Stufen, **eine** Akzentfarbe (Blau `#0a84ff`/`#0071e3`) für alles, was irgendwohin führt, Grün/Orange/Rot nur für Zustände. Regeln, die bei Änderungen gelten:
+
+- Was sich drücken lässt, antwortet beim Drücken, nicht beim Loslassen (`:active` ohne Verzögerung, am Display die Akzentfarbe beim Berühren).
+- Was hereinkommt, geht auf demselben Weg wieder: Das Einstellungsblatt der Geräteseite fährt von unten herein und dorthin zurück, als Transition (`#panel.open`), damit es sich mitten im Schließen wieder öffnen lässt; `hidden` wird erst gesetzt, wenn es draußen ist.
+- Ziele für den Daumen mindestens 44 px hoch; Zustände nie nur als Farbe, immer mit Wort.
+- `prefers-reduced-motion`, `prefers-reduced-transparency` und `prefers-contrast` sind in beiden Stylesheets bedient — bei neuen Animationen mitpflegen.
+- Die Geräteseite lässt sich ohne Board ansehen: `tools/mock_device.js` (braucht `npm install ws`; Port 8080 ist auf dem Pi belegt, also `HTTP_PORT=18090 WS_PORT=18091`).
+
+Geprüft per Screenshot: Admin-Seite über `server/test/ui.sh`, Geräteseite im Simulator und vom echten Board (Chromium, Handy-Format), Display über `lcd_debug.py shot`. Nicht geprüft: echte Handys, Safari, heller Modus der Admin-Seite im Browser, die Medienabfragen für weniger Bewegung/Transparenz/mehr Kontrast, und wie sich das Drücken unter einem echten Finger anfühlt.
+
 ## Offene Punkte (Priorität)
 
 0. Fernkonsole (Phase 4): Ausgabe des Ports am Board prüfen, sobald der MAX3232 dran ist
