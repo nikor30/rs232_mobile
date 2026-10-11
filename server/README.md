@@ -1,6 +1,6 @@
 # Leitstelle (Command-and-Control-Server)
 
-Server, bei dem sich die RS232-Konsolen anmelden und Aufträge abholen. Idee, Protokoll, Phasen und Grenzen: **[KONZEPT.md](KONZEPT.md)**. Stand: Phase 1 (Server, Gerätesimulator) und Phase 2 (Client in der Firmware), geprüft im Container und mit dem Waveshare-Board im lokalen Netz.
+Server, bei dem sich die RS232-Konsolen anmelden und Aufträge abholen. Idee, Protokoll, Phasen und Grenzen: **[KONZEPT.md](KONZEPT.md)**. Stand: Phasen 1 bis 3 — Server mit Weboberfläche, Gerätesimulator, Client in der Firmware —, geprüft im Container und mit dem Waveshare-Board im lokalen Netz.
 
 **Nicht ins Internet stellen.** Dafür fehlt Phase 5 (KONZEPT.md §6); die Compose-Datei bindet den Port deshalb nur an `127.0.0.1`, solange `C2_BIND` nichts anderes sagt.
 
@@ -12,6 +12,8 @@ echo "C2_ADMIN_TOKEN=$(head -c 24 /dev/urandom | base64)" > .env
 docker compose up -d --build        # erster Bau auf dem Raspberry Pi: rund 10 Minuten
 curl -k https://127.0.0.1:8443/healthz
 ```
+
+Die **Weboberfläche** liegt unter <https://127.0.0.1:8443/> (selbstsigniertes Zertifikat, der Browser warnt): Admin-Token eintippen, dann Geräte einladen, bestätigen, Aufträge schicken, sperren. Alles Folgende geht dort auch per Klick.
 
 Der Container enthält nur die beiden Programme (`/c2server`, `/devsim`), läuft ohne Root und mit schreibgeschütztem Dateisystem; der Zustand liegt im Volume `c2data`.
 
@@ -30,7 +32,7 @@ sim enroll -name Labor-1 'c2e1:...'                                        # -> 
 curl -sk -X POST $S/admin/v1/devices/<ID>/approve -H "$A" -d '{"sas":"123456"}'
 # 4. Auftrag einreihen, Gerät holt ihn ab, Ergebnis ansehen
 curl -sk -X POST $S/admin/v1/devices/<ID>/commands -H "$A" -d '{"type":"ping"}'
-sim run -n 1
+sim run -n 1                          # mit -control auch "play" und "reboot", sonst lehnt der Simulator sie ab wie ein Gerät ohne Freigabe
 curl -sk $S/admin/v1/devices/<ID>/commands -H "$A"
 ```
 
@@ -56,8 +58,9 @@ Alle Aufrufe mit `Authorization: Bearer <C2_ADMIN_TOKEN>`.
 | `GET /admin/v1/devices` | Geräte mit Zustand (`pending`, `active`, `revoked`), zuletzt gesehen, letzter Status |
 | `POST /admin/v1/devices/{id}/approve` `{"sas":"123456"}` | bestätigen mit dem Code vom Gerätedisplay; fünf falsche Eingaben verwerfen die Anmeldung |
 | `POST /admin/v1/devices/{id}/revoke` | sperren, sofort und endgültig |
-| `POST /admin/v1/devices/{id}/commands` `{"type":"ping","args":{}}` | Auftrag einreihen (Arten: `ping`, `status`) |
-| `GET /admin/v1/devices/{id}/commands` | Aufträge mit Zustand und Ergebnis |
+| `POST /admin/v1/devices/{id}/commands` `{"type":"play","args":{"name":"Demo","port":1}}` | Auftrag einreihen. Arten: `ping`, `status`, `settings`, `configs` (lesen), `play`, `reboot` (nur mit Freigabe am Gerät) — KONZEPT.md §4.3 |
+| `GET /admin/v1/server` | Fingerabdruck des Serverschlüssels, öffentliche Adresse, Auftragsarten |
+| `GET /admin/v1/devices/{id}/commands` | Aufträge mit Zustand (`queued`, `sent`, `done`, `failed`, `expired`) und Ergebnis |
 
 ## Einstellungen (Umgebung)
 
@@ -78,6 +81,7 @@ Wer das Datenverzeichnis verliert, verliert den Serverschlüssel — alle Gerät
 
 ```bash
 ./test/e2e.sh                       # alles: Unit-Tests, Image, Ende-zu-Ende im Container
+./test/ui.sh                        # die Weboberfläche in einem Browser ohne Bildschirm (Playwright-Image, 3 GB)
 ../tests/c2/run.sh                  # der Protokollcode der Firmware auf dem PC gegen diesen Server
 docker build --target test .        # nur Formatierung, go vet und Unit-Tests
 ```
@@ -92,6 +96,8 @@ cmd/devsim/          Gerätesimulator
 internal/proto/      Protokoll: Handshake, Nachrichten, Einladungs-Token  ← Vorlage für die Firmware
 internal/device/     Geräteseite über HTTP (Simulator, Tests)
 internal/server/     HTTP: Geräte-Endpunkte und Admin-Schnittstelle
+internal/server/web/ Weboberfläche (eingebettet); qrcode.js ist qrcode-generator von Kazuhiko Arase, MIT, Commit 83b7e8f
 internal/store/      Zustand (JSON-Datei)
 test/e2e.sh          Ende-zu-Ende-Test gegen den Container
+test/ui.sh, ui_test.py   Browsertest der Weboberfläche
 ```

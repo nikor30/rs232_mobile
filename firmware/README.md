@@ -131,13 +131,16 @@ Netz → „Antrag erzeugen“: Das Gerät erzeugt ein Schlüsselpaar (RSA 2048 
 Der Server dazu liegt in [`../server/`](../server/), Idee und Protokoll in [`../server/KONZEPT.md`](../server/KONZEPT.md). Am Gerät:
 
 1. **WLAN-Client verbinden** (Menü → Netz). Die Leitstelle wird nur darüber erreicht, nicht über den Hotspot.
-2. Der Administrator erzeugt am Server ein **Einladungs-Token** (`c2e1:…`, einmal verwendbar, läuft nach zehn Minuten ab).
-3. **Menü → Netz → Leitstelle:** Token einfügen, **Anmelden**. Das Gerät prüft, dass der Server den Schlüssel hat, den das Token nennt, und erzeugt beim ersten Mal seinen eigenen Schlüssel.
+2. Der Administrator erzeugt am Server ein **Einladungs-Token** (`c2e1:…`, einmal verwendbar, läuft nach zehn Minuten ab). Die Weboberfläche des Servers zeigt es auch als QR-Code.
+3. **Menü → Netz → Leitstelle:** Token einfügen, **Anmelden**. Oder den QR-Code mit einem Handy scannen, das im Hotspot des Geräts ist: Die Seite öffnet sich mit eingetragenem Token (`http://192.168.4.1/#c2=…`), „Anmelden" bleibt ein eigener Tipp. Das Gerät prüft, dass der Server den Schlüssel hat, den das Token nennt, und erzeugt beim ersten Mal seinen eigenen Schlüssel.
 4. Das Gerät zeigt einen **sechsstelligen Code** — in der Weboberfläche und auf dem Display (Seite Info, Zeile „Leitstelle"). Der Administrator tippt ihn am Server ein. Erst danach ist das Gerät „verbunden" und bekommt Aufträge.
 
 Danach meldet sich das Gerät von selbst alle 30 s (der Server gibt den Abstand vor) und nach jedem Neustart wieder. **Abmelden** löscht Server und Geräteschlüssel; für eine neue Anmeldung braucht es ein neues Token. Sperrt der Server das Gerät, steht dort „abgewiesen".
 
-Was das Gerät für den Server tut, steht auf einer festen Liste in `src/c2.cpp`: bisher `ping` und `status` (Firmware, Laufzeit, freier Speicher, WLAN-Pegel, Akku, IP). Alles andere lehnt es ab, was immer der Server schickt.
+Was das Gerät für den Server tut, steht auf einer festen Liste in `src/c2.cpp` (`execute()`); alles andere lehnt es ab, was immer der Server schickt:
+
+- **Lesen, immer erlaubt:** `ping`, `status` (was auch die eigene Weboberfläche zeigt: Ports, Zähler, Netz, Akku), `settings` (Einstellungen ohne Passwörter), `configs` (Liste der gespeicherten Konfigurationen).
+- **Verändern, nur mit Freigabe:** `play` (eine gespeicherte Konfiguration auf einen Port abspielen, wie „Skripte" am Display) und `reboot`. Dafür muss unter Menü → Netz → Leitstelle der Haken **„Die Leitstelle darf Konfigurationen abspielen und das Gerät neu starten"** gesetzt sein. Er ist ab Werk aus und lässt sich nur hier setzen, nie vom Server aus.
 
 Zu wissen:
 
@@ -145,7 +148,7 @@ Zu wissen:
 - Das TLS-Zertifikat des Servers wird nicht geprüft; der Server beweist sich im Kanal darin mit dem Schlüssel aus dem Token.
 - Der Geräteschlüssel liegt unverschlüsselt im Flash. Ein verlorenes Gerät am Server sperren.
 - Diagnose: `tools/lcd_debug.py c2` (Zustand, Code, Dauer des letzten Handshakes, Stack und Heap) und die Zeilen `[C2]` im USB-Log.
-- Stand der Prüfung: `../server/KONZEPT.md` §7. Der Block in der Weboberfläche ist im Browser noch nicht angesehen worden.
+- Stand der Prüfung: `../server/KONZEPT.md` §7.
 
 ## Dateien per XMODEM / YMODEM senden
 

@@ -4,6 +4,9 @@
 #include "settings.h"
 #include "power.h"
 #include "display.h"
+#include "net.h"
+#include "configs.h"
+#include "player.h"
 
 #include <ArduinoJson.h>
 #include <Preferences.h>
@@ -12,6 +15,7 @@
 #include <esp_heap_caps.h>
 #include <esp_random.h>
 #include <functional>
+#include <vector>
 
 // The radio is on whenever this is called, so this is the hardware's true RNG.
 extern "C" void c2_randombytes(uint8_t *out, size_t len) { esp_fill_random(out, len); }
@@ -35,6 +39,18 @@ static SemaphoreHandle_t mux;
 static Info shared;                      // under mux
 static String reqToken;                  // under mux: token waiting for the task
 static bool reqForget = false;           // under mux
+
+// Most of what the server can ask for touches state that belongs to the main
+// loop (ports, settings, the configuration player). The task hands such
+// commands over; C2::loop() carries them out and hands the answers back.
+struct MainJob {
+  uint32_t id;
+  String type, args;                     // args: the command's JSON object, or empty
+};
+static std::vector<MainJob> jobs;        // under mux: task -> main loop
+static std::vector<String> jobResults;   // under mux: main loop -> task, one JSON object each
+static const size_t MAX_JOBS = 8;
+static volatile bool rebootWanted = false, rebootNow = false;
 static char devName[33];
 
 struct Lock {
@@ -156,6 +172,8 @@ static void forgetAll() {
   state = OFF;
   {
     Lock l;
+    jobs.clear();
+    jobResults.clear();
     shared.lastOkMs = shared.polls = shared.handshakeMs = shared.cryptoMs = 0;
   }
   publish("");
@@ -366,23 +384,49 @@ static void fillStatus(JsonObject o) {
   }
 }
 
-// Only what this list knows is ever carried out, whatever the server sends.
+// Takes a command from the server. "ping" is answered here; everything else is
+// queued for the main loop, which knows what it will and will not do.
 static void run(JsonObject cmd) {
   const char *type = cmd["type"] | "";
-  JsonObject res = results.as<JsonArray>().add<JsonObject>();
-  res["id"] = cmd["id"];
-  res["ok"] = true;
-  if (!strcmp(type, "ping")) res["out"] = "pong";
-  else if (!strcmp(type, "status")) {
-    JsonObject o = res["out"].to<JsonObject>();
-    fillStatus(o);
-    o["ip"] = WiFi.localIP().toString();
-    o["board"] = BOARD_NAME;
+  uint32_t id = cmd["id"] | 0UL;
+  const char *refused = nullptr;
+  if (!strcmp(type, "ping")) {
+    JsonObject res = results.as<JsonArray>().add<JsonObject>();
+    res["id"] = id;
+    res["ok"] = true;
+    res["out"] = "pong";
   } else {
-    res["ok"] = false;
-    res["out"] = "unbekannter Auftrag";
+    MainJob job;
+    job.id = id;
+    job.type = type;
+    if (cmd["args"].is<JsonObject>()) serializeJson(cmd["args"], job.args);
+    Lock l;
+    if (jobs.size() >= MAX_JOBS) refused = "zu viele Auftraege auf einmal";
+    else jobs.push_back(job);
   }
-  Serial.printf("[C2]   Auftrag %lu \"%s\" %s\n", (unsigned long)(cmd["id"] | 0UL), type, res["ok"] ? "ausgefuehrt" : "abgelehnt");
+  if (refused) {
+    JsonObject res = results.as<JsonArray>().add<JsonObject>();
+    res["id"] = id;
+    res["ok"] = false;
+    res["out"] = refused;
+  }
+  Serial.printf("[C2]   Auftrag %lu \"%s\" %s\n", (unsigned long)id, type, refused ? refused : "angenommen");
+}
+
+// Moves the main loop's answers into the next poll. Returns how many there were.
+static size_t collectJobResults() {
+  std::vector<String> done;
+  {
+    Lock l;
+    done.swap(jobResults);
+  }
+  for (const String &r : done) {
+    JsonDocument d;
+    if (deserializeJson(d, r)) continue;
+    if (!results.is<JsonArray>()) results.to<JsonArray>();
+    results.as<JsonArray>().add(d);
+  }
+  return done.size();
 }
 
 // ---------------------------------------------------------------- enroll / poll
@@ -477,6 +521,7 @@ static void doPoll() {
       ex = handshake(C2Proto::KIND_SESSION, nullptr);
       if (ex != EX_OK) break;
     }
+    collectJobResults();
     msg.clear();
     msg["t"] = "poll";
     fillStatus(msg["status"].to<JsonObject>());
@@ -493,6 +538,7 @@ static void doPoll() {
   }
   if (ex != EX_OK) return retry(ex == EX_NET ? "Server nicht erreichbar" : "Antwort des Servers unbrauchbar");
 
+  if (rebootWanted && results.size()) rebootNow = true;    // the answer to "reboot" has arrived at the server
   results.clear();
   retryMs = RETRY_MIN_MS;
   const char *st = reply["state"] | "";
@@ -546,6 +592,12 @@ static void task(void *) {
     }
     if (forget) forgetAll();
     if (token.length()) doEnroll(token);
+    bool answers;
+    {
+      Lock l;
+      answers = !jobResults.empty();
+    }
+    if (answers && state == ACTIVE) nextPollAt = millis();   // answers go back at once
     if (serverPub && WiFi.status() == WL_CONNECTED && (int32_t)(millis() - nextPollAt) >= 0) doPoll();
     vTaskDelay(pdMS_TO_TICKS(200));
   }
@@ -559,6 +611,88 @@ void begin() {
   strlcpy(devName, settings.apSsid.c_str(), sizeof(devName));
   // core 0, next to WiFi and the display: the serial bridge has core 1 to itself
   xTaskCreatePinnedToCore(task, "c2", TASK_STACK, nullptr, 1, nullptr, 0);
+}
+
+// ---------------------------------------------------------------- main loop side
+
+static uint32_t playJob = 0;             // command that started the configuration now playing
+
+static void answer(uint32_t id, bool ok, const String &outJson) {
+  String r = String("{\"id\":") + id + ",\"ok\":" + (ok ? "true" : "false") + ",\"out\":" + outJson + "}";
+  Lock l;
+  jobResults.push_back(r);
+}
+
+static String quoted(const char *text) {
+  JsonDocument d;
+  d.set(text);
+  String out;
+  serializeJson(d, out);
+  return out;
+}
+
+static String playReport() {
+  JsonDocument d;
+  d["name"] = Player::name();
+  d["port"] = Player::port() + 1;
+  d["line"] = Player::line();
+  d["lines"] = Player::lines();
+  d["result"] = Player::result();
+  String out;
+  serializeJson(d, out);
+  return out;
+}
+
+// The whole list of what this device does for the server. Reading is always
+// allowed; anything that changes something needs settings.c2Control, which can
+// only be switched at the device itself.
+static void execute(const MainJob &job) {
+  JsonDocument args;
+  if (job.args.length()) deserializeJson(args, job.args);
+  const char *denied = "am Geraet nicht freigegeben (Menue -> Netz -> Leitstelle)";
+  if (job.type == "status") answer(job.id, true, Net::deviceStatus());
+  else if (job.type == "settings") answer(job.id, true, Net::deviceSettings());
+  else if (job.type == "configs") answer(job.id, true, Configs::listJson());
+  else if (job.type == "play") {
+    const char *name = args["name"] | "";
+    int port = args["port"] | 1;
+    if (!settings.c2Control) answer(job.id, false, quoted(denied));
+    else if (Player::state() == Player::RUNNING) answer(job.id, false, quoted("es wird schon eine Konfiguration abgespielt"));
+    else if (port < 1 || port > MAX_PORTS || !Player::start(name, port - 1)) answer(job.id, false, quoted(port < 1 || port > MAX_PORTS ? "Port unbekannt" : Player::result()));
+    else {
+      playJob = job.id;                  // answered when the player has finished
+      Serial.printf("[C2]   spielt \"%s\" auf Port %d ab\n", name, port);
+    }
+  } else if (job.type == "reboot") {
+    if (!settings.c2Control) answer(job.id, false, quoted(denied));
+    else {
+      answer(job.id, true, quoted("Neustart"));
+      rebootWanted = true;               // carried out once the answer has reached the server
+    }
+  } else answer(job.id, false, quoted("unbekannter Auftrag"));
+}
+
+void loop() {
+  if (!mux) return;
+  if (rebootNow) {
+    Serial.println("[C2]   Neustart auf Auftrag der Leitstelle");
+    Display::message("Leitstelle", "Neustart ...", 3000);
+    Display::loop();
+    delay(800);
+    ESP.restart();
+  }
+  if (playJob && Player::state() != Player::RUNNING) {
+    answer(playJob, Player::state() == Player::DONE, playReport());
+    playJob = 0;
+  }
+  MainJob job;
+  {
+    Lock l;
+    if (jobs.empty()) return;
+    job = jobs.front();
+    jobs.erase(jobs.begin());
+  }
+  execute(job);
 }
 
 Info info() {

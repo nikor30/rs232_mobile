@@ -33,6 +33,7 @@ namespace C2 {
   };
 
   void begin();
+  void loop();                              // main loop: carries out what the server asked for
   Info info();
   const char *stateName(State s);
   String line();                            // one line for the display

@@ -70,6 +70,7 @@ func main() {
 		fs := flag.NewFlagSet("run", flag.ExitOnError)
 		n := fs.Int("n", 0, "stop after this many polls (0 = never)")
 		interval := fs.Duration("interval", 0, "time between polls (0 = what the server asks for)")
+		control := fs.Bool("control", false, "allow commands that change something (play, reboot), as the switch at a real device does")
 		fs.Parse(flag.Args()[1:])
 		start := time.Now()
 		var results []device.Result
@@ -87,13 +88,39 @@ func main() {
 				fmt.Printf("STATE %s\n", r.State)
 				for _, cmd := range r.Cmds {
 					res := device.Result{ID: cmd.ID, OK: true}
+					// what the firmware answers, in miniature
+					denied := "am Geraet nicht freigegeben (Menue -> Netz -> Leitstelle)"
 					switch cmd.Type {
 					case "ping":
 						res.Out = "pong"
 					case "status":
 						res.Out = status
+					case "settings":
+						res.Out = map[string]any{"hostname": "rs232", "apSsid": "RS232-SIM", "webPassSet": false}
+					case "configs":
+						res.Out = map[string]any{"ok": true, "configs": []map[string]any{{"name": "Demo", "size": 38}, {"name": "Uplink", "size": 211}}}
+					case "play":
+						var a struct {
+							Name string `json:"name"`
+							Port int    `json:"port"`
+						}
+						json.Unmarshal(cmd.Args, &a)
+						switch {
+						case !*control:
+							res.OK, res.Out = false, denied
+						case a.Name != "Demo" && a.Name != "Uplink":
+							res.OK, res.Out = false, "Konfiguration nicht gefunden"
+						default:
+							res.Out = map[string]any{"name": a.Name, "port": a.Port, "line": 3, "lines": 3, "result": "fertig"}
+						}
+					case "reboot":
+						if *control {
+							res.Out = "Neustart"
+						} else {
+							res.OK, res.Out = false, denied
+						}
 					default:
-						res.OK, res.Out = false, "unknown command"
+						res.OK, res.Out = false, "unbekannter Auftrag"
 					}
 					fmt.Printf("CMD %d %s %s\n", cmd.ID, cmd.Type, cmd.Args)
 					results = append(results, res)

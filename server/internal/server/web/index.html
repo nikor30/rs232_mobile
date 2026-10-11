@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RS232-Leitstelle</title>
+<link rel="stylesheet" href="/ui/style.css">
+</head>
+<body>
+<header>
+  <h1>RS232-Leitstelle</h1>
+  <span id="srvInfo" class="dim"></span>
+  <button id="logout" class="btn small" hidden>Abmelden</button>
+</header>
+
+<main id="login" hidden>
+  <form id="loginForm" class="card narrow">
+    <h2>Anmelden</h2>
+    <label>Admin-Token
+      <input id="adminToken" type="password" autocomplete="current-password" required>
+    </label>
+    <p id="loginErr" class="err" hidden></p>
+    <button class="btn primary" type="submit">Anmelden</button>
+    <p class="dim">Das Token bleibt nur in diesem Browser-Tab und wird mit jedem Aufruf an diesen Server geschickt.</p>
+  </form>
+</main>
+
+<main id="app" hidden>
+  <section class="card">
+    <div class="row">
+      <h2>Geräte</h2>
+      <button id="invite" class="btn primary">Gerät einladen</button>
+    </div>
+    <table id="devices">
+      <thead><tr><th>Name</th><th>Zustand</th><th>Zuletzt gesehen</th><th>Akku</th><th>WLAN</th><th>Firmware</th><th>Offen</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <p id="noDevices" class="dim" hidden>Noch kein Gerät. Mit „Gerät einladen“ beginnt die Anmeldung.</p>
+  </section>
+
+  <section id="detail" class="card" hidden>
+    <div class="row">
+      <h2 id="dName"></h2>
+      <span id="dState" class="badge"></span>
+    </div>
+    <table class="kv">
+      <tr><th>Geräte-ID</th><td id="dId" class="mono"></td></tr>
+      <tr><th>Fingerabdruck</th><td id="dFp" class="mono"></td></tr>
+      <tr><th>Angemeldet</th><td id="dEnrolled"></td></tr>
+      <tr><th>Zuletzt gesehen</th><td id="dSeen"></td></tr>
+      <tr><th>Gerät</th><td id="dInfo"></td></tr>
+      <tr><th>Meldet</th><td id="dStatus"></td></tr>
+    </table>
+
+    <form id="approveForm" hidden>
+      <h3>Bestätigen</h3>
+      <p>Das Gerät zeigt einen sechsstelligen Code – auf seinem Display (Seite Info) und in seiner Weboberfläche. Hier eintippen, was <b>dort</b> steht.</p>
+      <div class="row left">
+        <input id="sas" class="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="000000" autocomplete="off" required>
+        <button class="btn primary" type="submit">Bestätigen</button>
+      </div>
+      <p class="dim">Fünf falsche Eingaben verwerfen die Anmeldung.</p>
+    </form>
+
+    <div id="commands" hidden>
+      <h3>Aufträge</h3>
+      <div class="row left wrap">
+        <button class="btn" data-cmd="ping">Ping</button>
+        <button class="btn" data-cmd="status">Zustand</button>
+        <button class="btn" data-cmd="settings">Einstellungen</button>
+        <button class="btn" data-cmd="configs">Konfigurationen</button>
+        <button class="btn warn" data-cmd="reboot">Neustart</button>
+      </div>
+      <form id="playForm" class="row left wrap">
+        <label>Konfiguration abspielen
+          <input id="playName" list="playNames" maxlength="48" placeholder="Name" required>
+          <datalist id="playNames"></datalist>
+        </label>
+        <label>Port
+          <select id="playPort"><option>1</option><option>2</option><option>3</option><option>4</option></select>
+        </label>
+        <button class="btn warn" type="submit">Abspielen</button>
+      </form>
+      <p class="dim">„Neustart“ und „Abspielen“ führt das Gerät nur aus, wenn das an ihm selbst erlaubt wurde (Menü → Netz → Leitstelle).</p>
+    </div>
+
+    <h3 id="histTitle" hidden>Verlauf</h3>
+    <table id="history" hidden>
+      <thead><tr><th>Nr.</th><th>Auftrag</th><th>Zustand</th><th>Wann</th><th>Antwort</th></tr></thead>
+      <tbody></tbody>
+    </table>
+
+    <div class="row">
+      <span></span>
+      <button id="revoke" class="btn danger">Gerät sperren</button>
+    </div>
+  </section>
+</main>
+
+<dialog id="inviteDlg">
+  <h2>Gerät einladen</h2>
+  <ol>
+    <li>Am Gerät den WLAN-Client verbinden – darüber erreicht es diesen Server.</li>
+    <li>Mit dem Handy in den Hotspot des Geräts gehen und den Code scannen. Die Weboberfläche des Geräts öffnet sich mit dem Token; dort „Anmelden“ tippen.</li>
+    <li>Das Gerät erscheint hier als „wartet“. Den Code von seinem Display eintippen.</li>
+  </ol>
+  <canvas id="qr" width="10" height="10"></canvas>
+  <label>Oder das Token von Hand einfügen (Menü → Netz → Leitstelle)
+    <textarea id="tokenText" rows="4" readonly></textarea>
+  </label>
+  <div class="row">
+    <span id="tokenExp" class="dim"></span>
+    <span>
+      <button id="copyToken" class="btn">Kopieren</button>
+      <button id="closeInvite" class="btn primary">Schließen</button>
+    </span>
+  </div>
+</dialog>
+
+<div id="toast" hidden></div>
+<script src="/ui/qrcode.js"></script>
+<script src="/ui/app.js"></script>
+</body>
+</html>

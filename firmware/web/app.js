@@ -1293,6 +1293,7 @@
       $('#c2Url').textContent = c.url || '–';
       $('#c2Id').textContent = c.id || '–';
       $('#c2Forget').hidden = c.state === 'off' || c.state === 'failed';
+      if (document.activeElement !== $('#c2Control')) $('#c2Control').checked = !!c.control;
       $('#c2Enroll').disabled = c.state === 'failed' || c.state === 'enrolling';
     } catch (e) { /* the next round tries again */ }
     c2Timer = setTimeout(loadC2, 3000);
@@ -1309,6 +1310,27 @@
       loadC2();
     } catch (e) { toast('Gerät nicht erreichbar'); }
   });
+  $('#c2Control').addEventListener('change', async (e) => {
+    const allow = e.target.checked;
+    if (allow && !confirm('Der Server kann dann gespeicherte Konfigurationen auf die Konsole des angeschlossenen Geräts abspielen und dieses Gerät neu starten. Erlauben?')) { e.target.checked = false; return; }
+    try {
+      await fetch('/api/c2/control', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ allow }) });
+      toast(allow ? 'Erlaubt' : 'Nur noch lesen');
+    } catch (err) { toast('Gerät nicht erreichbar'); }
+    loadC2();
+  });
+  // An invitation scanned as a QR code arrives as http://192.168.4.1/#c2=<token>:
+  // open the tab with the token filled in. Enrolling stays a deliberate tap.
+  if (location.hash.startsWith('#c2=')) {
+    const token = decodeURIComponent(location.hash.slice(4));
+    history.replaceState(null, '', location.pathname);
+    setTimeout(() => {
+      openPanel('net');
+      $('#c2Token').value = token;
+      $('#c2Token').scrollIntoView({ block: 'center' });
+      toast('Einladungs-Token übernommen – mit „Anmelden“ bestätigen', 5000);
+    }, 300);
+  }
   $('#c2Forget').addEventListener('click', async () => {
     if (!confirm('Von der Leitstelle abmelden?\nDer Geräteschlüssel wird gelöscht; für eine neue Anmeldung braucht es ein neues Token.')) return;
     try { await fetch('/api/c2/forget', { method: 'POST' }); toast('Abgemeldet'); loadC2(); } catch (e) { toast('Gerät nicht erreichbar'); }

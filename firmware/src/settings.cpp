@@ -128,6 +128,7 @@ void load() {
   settings.httpsLanOnly = prefs.getBool("httpsLan", false);
   settings.httpsCert    = prefs.getUChar("httpsCrt", 0);
   settings.bleEnabled   = prefs.getBool("ble", true);
+  settings.c2Control    = prefs.getBool("c2ctl", false);
   settings.hostname = prefs.getString("host", DEFAULT_HOSTNAME);
   settings.webPass  = prefs.getString("webPass", "");
   settings.displayFlip = prefs.getBool("flip", false);
@@ -207,6 +208,7 @@ void save() {
   prefs.putBool("httpsLan", settings.httpsLanOnly);
   prefs.putUChar("httpsCrt", settings.httpsCert);
   prefs.putBool("ble", settings.bleEnabled);
+  prefs.putBool("c2ctl", settings.c2Control);
   prefs.putString("host", settings.hostname);
   prefs.putString("webPass", settings.webPass);
   prefs.putBool("flip", settings.displayFlip);

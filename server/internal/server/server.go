@@ -4,13 +4,17 @@
 package server
 
 import (
+	"bytes"
 	"crypto/subtle"
+	"embed"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"log"
+	"mime"
 	"net/http"
+	"path"
 	"slices"
 	"sort"
 	"strconv"
@@ -47,6 +51,52 @@ type session struct {
 	expires  time.Time
 }
 
+// What an administrator can ask of a device. The device has the last word: it
+// carries out only what its own list knows, and "play" and "reboot" only if
+// that was allowed at the device itself.
+var commandArgs = map[string]func(args json.RawMessage) error{
+	"ping":     noArgs,
+	"status":   noArgs, // ports, counters, network, battery
+	"settings": noArgs, // settings without passwords or keys
+	"configs":  noArgs, // stored configurations
+	"reboot":   noArgs,
+	"play": func(args json.RawMessage) error { // play a stored configuration to a serial port
+		var a struct {
+			Name string `json:"name"`
+			Port int    `json:"port"`
+		}
+		dec := json.NewDecoder(bytes.NewReader(args))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&a); err != nil {
+			return errors.New(`play needs {"name": "...", "port": 1}`)
+		}
+		if a.Name == "" || len(a.Name) > 48 {
+			return errors.New("name: 1 to 48 characters")
+		}
+		if a.Port < 1 || a.Port > 4 {
+			return errors.New("port: 1 to 4")
+		}
+		return nil
+	},
+}
+
+func noArgs(args json.RawMessage) error {
+	if t := bytes.TrimSpace(args); len(t) != 0 && string(t) != "null" && string(t) != "{}" {
+		return errors.New("this command takes no arguments")
+	}
+	return nil
+}
+
+// AllCommands lists every command type the server knows.
+func AllCommands() []string {
+	out := make([]string, 0, len(commandArgs))
+	for k := range commandArgs {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
 type Server struct {
 	cfg   Config
 	st    *store.Store
@@ -61,7 +111,7 @@ func New(cfg Config, st *store.Store) *Server {
 		cfg.PollS = 30
 	}
 	if cfg.Commands == nil {
-		cfg.Commands = []string{"ping", "status"}
+		cfg.Commands = AllCommands()
 	}
 	return &Server{cfg: cfg, st: st, now: time.Now, sess: map[[proto.IDSize]byte]*session{}}
 }
@@ -75,6 +125,9 @@ func (sv *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/server-key", sv.serverKey)
 	mux.HandleFunc("POST /v1/handshake", sv.handshake)
 	mux.HandleFunc("POST /v1/msg", sv.msg)
+	mux.HandleFunc("GET /{$}", sv.ui("index.html"))
+	mux.HandleFunc("GET /ui/{file}", func(w http.ResponseWriter, r *http.Request) { sv.ui(r.PathValue("file"))(w, r) })
+	mux.HandleFunc("GET /admin/v1/server", sv.admin(sv.serverInfo))
 	mux.HandleFunc("POST /admin/v1/enroll-tokens", sv.admin(sv.newToken))
 	mux.HandleFunc("GET /admin/v1/devices", sv.admin(sv.listDevices))
 	mux.HandleFunc("POST /admin/v1/devices/{id}/approve", sv.admin(sv.approve))
@@ -307,6 +360,39 @@ func fail(w http.ResponseWriter, err error) {
 	writeJSON(w, code, map[string]string{"error": err.Error()})
 }
 
+//go:embed web
+var webFiles embed.FS
+
+// ui serves one file of the administrator's web interface. The page itself is
+// public and holds no data; everything it shows comes from the admin API, with
+// the token the administrator types in.
+func (sv *Server) ui(name string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		b, err := webFiles.ReadFile("web/" + path.Base(name))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		h := w.Header()
+		h.Set("Content-Type", mime.TypeByExtension(path.Ext(name)))
+		h.Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("Cache-Control", "no-cache")
+		w.Write(b)
+	}
+}
+
+func (sv *Server) serverInfo(w http.ResponseWriter, _ *http.Request) {
+	fp := proto.Fingerprint(sv.st.ServerKey().Public())
+	writeJSON(w, http.StatusOK, map[string]any{
+		"fingerprint": hex.EncodeToString(fp[:]),
+		"public_url":  sv.cfg.PublicURL,
+		"commands":    sv.cfg.Commands,
+		"poll_s":      sv.cfg.PollS,
+	})
+}
+
 func (sv *Server) newToken(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		TTLS int    `json:"ttl_s"`
@@ -406,12 +492,17 @@ func (sv *Server) enqueue(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad JSON"})
 		return
 	}
-	if !slices.Contains(sv.cfg.Commands, in.Type) {
+	check := commandArgs[in.Type]
+	if check == nil || !slices.Contains(sv.cfg.Commands, in.Type) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown command type"})
 		return
 	}
 	if len(in.Args) > 4096 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "args too large"})
+		return
+	}
+	if err := check(in.Args); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	c, err := sv.st.Enqueue(r.PathValue("id"), in.Type, in.Args)

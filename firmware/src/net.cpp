@@ -418,8 +418,9 @@ static void sendJson(int code, const String &body) {
   http.send(code, "application/json", body);
 }
 
-static void handleGetSettings() {
-  if (!guard()) return;
+String deviceStatus() { return statusJson(); }
+
+String deviceSettings() {
   JsonDocument d;
   d["apSsid"] = settings.apSsid;
   d["staSsid"] = settings.staSsid;
@@ -468,7 +469,12 @@ static void handleGetSettings() {
   d["batDiv"] = settings.batDiv;
   String out;
   serializeJson(d, out);
-  sendJson(200, out);
+  return out;
+}
+
+static void handleGetSettings() {
+  if (!guard()) return;
+  sendJson(200, deviceSettings());
 }
 
 static bool validHostname(const String &h) {
@@ -592,6 +598,7 @@ static void handleC2Get() {
   d["stackFree"] = i.stackFree;
   d["taskStackFree"] = i.taskStackFree;
   d["sta"] = staConnected();
+  d["control"] = settings.c2Control;
   String out;
   serializeJson(d, out);
   sendJson(200, out);
@@ -812,6 +819,14 @@ static void setupHttp() {
   http.on("/api/batcal", HTTP_POST, handleBatCal);
   http.on("/api/c2", HTTP_GET, handleC2Get);
   http.on("/api/c2/enroll", HTTP_POST, handleC2Enroll);
+  http.on("/api/c2/control", HTTP_POST, []() {   // may the server change things? Decided here, at the device.
+    if (!guard()) return;
+    JsonDocument d;
+    if (deserializeJson(d, http.arg("plain")) || !d["allow"].is<bool>()) return sendJson(400, "{\"ok\":false,\"error\":\"JSON ungültig\"}");
+    settings.c2Control = d["allow"];
+    Store::save();
+    sendJson(200, "{\"ok\":true}");
+  });
   http.on("/api/c2/forget", HTTP_POST, []() {
     if (!guard()) return;
     C2::forget();

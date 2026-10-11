@@ -219,6 +219,7 @@ void loop() {
   Sd::loop();
   Ble::loop();
   Player::loop();
+  C2::loop();
 
   // one-time low battery notice (with hysteresis)
   static bool lowNotified = false;

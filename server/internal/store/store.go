@@ -25,10 +25,19 @@ const (
 	StateActive  = "active"
 	StateRevoked = "revoked"
 
-	CmdQueued = "queued"
-	CmdSent   = "sent"
-	CmdDone   = "done"
-	CmdFailed = "failed"
+	CmdQueued  = "queued"
+	CmdSent    = "sent"
+	CmdDone    = "done"
+	CmdFailed  = "failed"
+	CmdExpired = "expired" // never fetched, or fetched and never answered
+
+	// A command nobody fetched is dropped after QueueTTL: an order given today
+	// must not be carried out when the device shows up again next week. One that
+	// was fetched but not answered (the device restarted, lost its link) is
+	// closed after AnswerTTL - it is never sent a second time, because running
+	// something twice can be worse than not running it.
+	QueueTTL  = 24 * time.Hour
+	AnswerTTL = 2 * time.Hour
 
 	// Wrong codes typed for one pending device before its enrollment is thrown
 	// away: six digits must not be guessable by trying.
@@ -57,6 +66,7 @@ type Command struct {
 	Args    json.RawMessage `json:"args,omitempty"`
 	State   string          `json:"state"`
 	Created time.Time       `json:"created"`
+	Sent    *time.Time      `json:"sent,omitempty"`
 	Done    *time.Time      `json:"done,omitempty"`
 	Result  json.RawMessage `json:"result,omitempty"`
 }
@@ -88,7 +98,12 @@ type Store struct {
 	d    data
 	key  *proto.StaticKey
 	now  func() time.Time
+	// "last seen" and the reported status change with every poll of every
+	// device. They are written with the next real change, or after seenFlush.
+	lastSave time.Time
 }
+
+const seenFlush = time.Minute
 
 // Open loads the state file in dir, creating it (and the server key) on first use.
 func Open(dir string) (*Store, error) {
@@ -138,6 +153,7 @@ func (s *Store) save() error {
 	if err := os.WriteFile(tmp, b, 0o600); err != nil {
 		return err
 	}
+	s.lastSave = s.now()
 	return os.Rename(tmp, s.path)
 }
 
@@ -187,6 +203,17 @@ func clone(d *Device) *Device {
 	return &c
 }
 
+// expire closes commands that have waited too long. Callers hold the lock.
+func (s *Store) expire(d *Device) {
+	now := s.now()
+	for _, c := range d.Commands {
+		if (c.State == CmdQueued && now.Sub(c.Created) > QueueTTL) ||
+			(c.State == CmdSent && c.Sent != nil && now.Sub(*c.Sent) > AnswerTTL) {
+			c.State, c.Done = CmdExpired, &now
+		}
+	}
+}
+
 func (s *Store) Device(id string) (*Device, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -194,6 +221,7 @@ func (s *Store) Device(id string) (*Device, error) {
 	if d == nil {
 		return nil, ErrNotFound
 	}
+	s.expire(d)
 	return clone(d), nil
 }
 
@@ -202,6 +230,7 @@ func (s *Store) Devices() []*Device {
 	defer s.mu.Unlock()
 	out := make([]*Device, 0, len(s.d.Devices))
 	for _, d := range s.d.Devices {
+		s.expire(d)
 		out = append(out, clone(d))
 	}
 	return out
@@ -279,6 +308,7 @@ func (s *Store) Enqueue(id, typ string, args json.RawMessage) (*Command, error) 
 	if d.State != StateActive {
 		return nil, ErrState
 	}
+	s.expire(d)
 	open := 0
 	for _, c := range d.Commands {
 		if c.State == CmdQueued || c.State == CmdSent {
@@ -318,24 +348,30 @@ func (s *Store) Poll(id string, status json.RawMessage, results []Result) (state
 	if status != nil {
 		d.Status = status
 	}
-	if d.State != StateActive {
-		return d.State, nil, s.save()
-	}
-	for _, r := range results {
-		for _, c := range d.Commands {
-			if c.ID == r.ID && c.State == CmdSent {
-				c.State, c.Result, c.Done = CmdDone, r.Out, &now
-				if !r.OK {
-					c.State = CmdFailed
+	changed := now.Sub(s.lastSave) > seenFlush
+	if d.State == StateActive {
+		for _, r := range results {
+			for _, c := range d.Commands {
+				if c.ID == r.ID && c.State == CmdSent {
+					c.State, c.Result, c.Done = CmdDone, r.Out, &now
+					if !r.OK {
+						c.State = CmdFailed
+					}
+					changed = true
 				}
 			}
 		}
-	}
-	for _, c := range d.Commands {
-		if c.State == CmdQueued {
-			c.State = CmdSent
-			cmds = append(cmds, *c)
+		s.expire(d)
+		for _, c := range d.Commands {
+			if c.State == CmdQueued {
+				c.State, c.Sent = CmdSent, &now
+				cmds = append(cmds, *c)
+				changed = true
+			}
 		}
 	}
-	return d.State, cmds, s.save()
+	if changed {
+		err = s.save()
+	}
+	return d.State, cmds, err
 }

@@ -283,6 +283,8 @@
         <tr><th>Geräte-ID</th><td id="c2Id">–</td></tr>
       </table>
       <label>Einladungs-Token <input id="c2Token" maxlength="1024" placeholder="c2e1:…" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+      <label class="check"><input id="c2Control" type="checkbox"> Die Leitstelle darf Konfigurationen abspielen und das Gerät neu starten</label>
+      <p class="hint">Ohne Haken kann der Server nur lesen: Zustand, Einstellungen (ohne Passwörter) und die Liste der Konfigurationen. Der Haken lässt sich nur hier setzen, nie vom Server aus.</p>
       <div class="row">
         <button id="c2Enroll" class="btn" type="button">Anmelden</button>
         <button id="c2Forget" class="btn danger" type="button" hidden>Abmelden</button>

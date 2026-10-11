@@ -148,7 +148,7 @@ func TestEnrollApproveCommandRoundTrip(t *testing.T) {
 	}
 
 	var cmd store.Command
-	if code := e.admin("POST", "/admin/v1/devices/"+c.ID()+"/commands", map[string]any{"type": "ping", "args": map[string]int{"n": 1}}, &cmd); code != 201 {
+	if code := e.admin("POST", "/admin/v1/devices/"+c.ID()+"/commands", map[string]any{"type": "ping"}, &cmd); code != 201 {
 		t.Fatalf("enqueue: HTTP %d", code)
 	}
 	r, err = c.Poll(map[string]int{"uptime": 5}, nil)
@@ -347,6 +347,118 @@ func mustKey(t *testing.T, c *device.Client) *proto.StaticKey {
 		t.Fatal(err)
 	}
 	return k
+}
+
+func TestCommandTypesAndArguments(t *testing.T) {
+	e := newEnv(t)
+	c := e.enrolled()
+	post := func(body string) int {
+		req, _ := http.NewRequest("POST", e.ts.URL+"/admin/v1/devices/"+c.ID()+"/commands", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+adminToken)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	for body, want := range map[string]int{
+		`{"type":"status"}`:                                     201,
+		`{"type":"settings","args":{}}`:                         201,
+		`{"type":"configs"}`:                                    201,
+		`{"type":"reboot"}`:                                     201,
+		`{"type":"play","args":{"name":"Demo","port":1}}`:       201,
+		`{"type":"reboot","args":{"force":true}}`:               400, // takes no arguments
+		`{"type":"play"}`:                                       400,
+		`{"type":"play","args":{"name":"","port":1}}`:           400,
+		`{"type":"play","args":{"name":"Demo","port":9}}`:       400,
+		`{"type":"play","args":{"name":"Demo","port":1,"x":1}}`: 400, // nothing the device does not expect
+		`{"type":"shell","args":{"cmd":"reload"}}`:              400,
+		`{"type":"play","args":{"name":"Demo","port":"1; rm"}}`: 400,
+	} {
+		if got := post(body); got != want {
+			t.Errorf("%s: HTTP %d, want %d", body, got, want)
+		}
+	}
+	// the device gets exactly what was accepted
+	r, err := c.Poll(nil, nil)
+	if err != nil || len(r.Cmds) != 5 {
+		t.Fatalf("poll: %+v %v", r, err)
+	}
+}
+
+func TestCommandsExpire(t *testing.T) {
+	e := newEnv(t)
+	c := e.enrolled()
+	cmds := func() (out []store.Command) {
+		e.admin("GET", "/admin/v1/devices/"+c.ID()+"/commands", nil, &out)
+		return out
+	}
+	e.admin("POST", "/admin/v1/devices/"+c.ID()+"/commands", map[string]string{"type": "ping"}, nil)
+	// fetched, but the device never answers
+	if r, err := c.Poll(nil, nil); err != nil || len(r.Cmds) != 1 {
+		t.Fatalf("poll: %+v %v", r, err)
+	}
+	e.now = e.now.Add(store.AnswerTTL - time.Minute)
+	if got := cmds()[0].State; got != store.CmdSent {
+		t.Fatalf("before the limit: %s", got)
+	}
+	e.now = e.now.Add(2 * time.Minute)
+	if got := cmds()[0].State; got != store.CmdExpired {
+		t.Fatalf("after the limit: %s", got)
+	}
+	// a late answer changes nothing, and the command is not sent again
+	r, err := c.Poll(nil, []device.Result{{ID: cmds()[0].ID, OK: true, Out: "late"}})
+	if err != nil || len(r.Cmds) != 0 || cmds()[0].State != store.CmdExpired {
+		t.Fatalf("late answer: %+v %v %s", r, err, cmds()[0].State)
+	}
+	// queued and never fetched
+	e.admin("POST", "/admin/v1/devices/"+c.ID()+"/commands", map[string]string{"type": "reboot"}, nil)
+	e.now = e.now.Add(store.QueueTTL + time.Minute)
+	if r, err := c.Poll(nil, nil); err != nil || len(r.Cmds) != 0 {
+		t.Fatalf("an order from yesterday was delivered: %+v %v", r, err)
+	}
+	if got := cmds()[1].State; got != store.CmdExpired {
+		t.Fatalf("queued command: %s", got)
+	}
+}
+
+func TestWebInterface(t *testing.T) {
+	e := newEnv(t)
+	for path, want := range map[string]string{"/": "RS232-Leitstelle", "/ui/app.js": "use strict", "/ui/style.css": "--accent", "/ui/qrcode.js": "QR Code Generator"} {
+		resp, err := http.Get(e.ts.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 200 || !strings.Contains(string(b), want) {
+			t.Errorf("%s: HTTP %d, %d bytes", path, resp.StatusCode, len(b))
+		}
+		if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "script-src 'self'") || strings.Contains(csp, "unsafe") {
+			t.Errorf("%s: Content-Security-Policy %q", path, csp)
+		}
+	}
+	for _, path := range []string{"/ui/nope.js", "/ui/..%2fserver.go", "/index.html"} {
+		resp, _ := http.Get(e.ts.URL + path)
+		resp.Body.Close()
+		if resp.StatusCode != 404 {
+			t.Errorf("%s: HTTP %d", path, resp.StatusCode)
+		}
+	}
+	// the page is public, the data behind it is not
+	resp, _ := http.Get(e.ts.URL + "/admin/v1/server")
+	resp.Body.Close()
+	if resp.StatusCode != 401 {
+		t.Fatalf("/admin/v1/server without token: HTTP %d", resp.StatusCode)
+	}
+	var info struct {
+		Fingerprint string
+		Commands    []string
+	}
+	if code := e.admin("GET", "/admin/v1/server", nil, &info); code != 200 || len(info.Fingerprint) != 64 || len(info.Commands) != 6 {
+		t.Fatalf("server info: HTTP %d %+v", code, info)
+	}
 }
 
 func TestDeviceEndpointsRejectGarbage(t *testing.T) {
