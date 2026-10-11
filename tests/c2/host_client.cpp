@@ -1,9 +1,12 @@
-// The firmware's protocol code (firmware/src/c2_proto.cpp) on a PC, talking to
-// the real server over plain HTTP. Driven by run.sh.
+// The firmware's protocol code (firmware/src/c2_proto.cpp, c2_console.cpp) on a
+// PC, talking to the real server over plain HTTP. Driven by run.sh.
 //
 //   c2host selftest
 //   c2host enroll STATEFILE TOKEN      -> "ID <hex>", "CODE <six digits>"
 //   c2host poll STATEFILE              -> "STATE <state>", "CMD <id> <type>" ...
+//   c2host console STATEFILE           says yes to a request for the remote console and plays the
+//                                      serial port -> "CONSOLE <id> open", "CLOSED <reason>",
+//                                      "TYPED <hex>", "BRK <count>"
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <sys/random.h>
@@ -13,11 +16,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <fstream>
 #include <string>
 #include <vector>
 
 #include <ArduinoJson.h>
+#include "c2_console.h"
 #include "c2_proto.h"
 
 extern "C" void c2_randombytes(uint8_t *out, size_t len) {
@@ -171,5 +176,65 @@ int main(int argc, char **argv) {
     if (results.size()) exchange(d, s, next);     // second record on the same session
     return 0;
   }
-  die("usage: c2host selftest | enroll STATEFILE TOKEN | poll STATEFILE");
+  if (cmd == "console" && argc == 3) {
+    Device d = load(argv[2]);
+    C2Proto::Session s = handshake(d, C2Proto::KIND_SESSION, nullptr);
+    time_t start = time(nullptr);
+    // the request, and the yes that a tap on the display gives on the device
+    uint32_t id = 0;
+    JsonDocument yes;
+    yes["t"] = "poll";
+    while (!id) {
+      JsonDocument msg;
+      msg["t"] = "poll";
+      JsonDocument reply = exchange(d, s, msg);
+      for (JsonObject c : reply["cmds"].as<JsonArray>()) {
+        if (strcmp(c["type"] | "", "console")) continue;
+        id = c["id"] | 0U;
+        JsonObject r = yes["results"].to<JsonArray>().add<JsonObject>();
+        r["id"] = id;
+        r["ok"] = true;
+        r["out"]["port"] = c["args"]["port"];
+        r["out"]["minutes"] = c["args"]["minutes"];
+      }
+      if (!id) {
+        if (time(nullptr) - start > 20) die("console: nobody asked");
+        usleep(200000);
+      }
+    }
+    exchange(d, s, yes);
+    printf("CONSOLE %lu open\n", (unsigned long)id);
+    fflush(stdout);
+
+    // The "port": greets with more than one message holds, echoes what is
+    // typed and answers a BREAK.
+    static C2Console::Stream st;
+    for (int i = 0; i < 200; i++) st.outPut((const uint8_t *)"0123456789", 10);
+    std::string typed;
+    unsigned breaks = 0;
+    for (unsigned round = 1;; round++) {
+      if (time(nullptr) - start > 90) die("console: still open after 90 s");
+      JsonDocument msg;
+      size_t n = C2Console::buildMessage(msg, id, st, 60, "");
+      JsonDocument reply = exchange(d, s, msg);
+      // Every third answer is "lost": the same message goes out again, as the
+      // device does it. Nothing may arrive twice, in either direction.
+      if (round % 3 == 0) reply = exchange(d, s, msg);
+      C2Console::accepted(st, n);
+      if (const char *end = C2Console::applyReply(reply, st)) {
+        printf("CLOSED %s\n", end);
+        break;
+      }
+      size_t take = st.inLen < st.outRoom() ? st.inLen : st.outRoom();
+      typed.append((const char *)st.in, take);
+      st.outPut(st.in, take);
+      st.inDrop(take);
+      for (; st.brkDue && st.outRoom() >= 7; st.brkDue--, breaks++) st.outPut((const uint8_t *)"[BREAK]", 7);
+    }
+    printf("TYPED ");
+    for (unsigned char c : typed) printf("%02x", c);
+    printf("\nBRK %u\n", breaks);
+    return 0;
+  }
+  die("usage: c2host selftest | enroll STATEFILE TOKEN | poll STATEFILE | console STATEFILE");
 }

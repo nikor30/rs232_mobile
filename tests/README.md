@@ -29,7 +29,9 @@ auseinanderlaufen kann.
 `c2/run.sh` übersetzt `firmware/src/c2_proto.cpp` samt ML-KEM für den PC — gegen
 mbedTLS 2.28, die Version des Arduino-Cores, deshalb in einem Container — und
 lässt ihn gegen den echten Server aus `server/` laufen: Selbsttest mit bekannten
-Antworten, Anmelden, Bestätigen, Auftrag und Ergebnis.
+Antworten, Anmelden, Bestätigen, Auftrag und Ergebnis. Dazu eine Fernkonsole mit
+`firmware/src/c2_console.cpp`: Ausgabe, Eingabe und BREAK, wobei jede dritte Antwort
+des Servers als verloren gilt und nichts doppelt ankommen darf.
 
     tests/c2/run.sh
 
