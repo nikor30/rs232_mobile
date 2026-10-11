@@ -1,6 +1,6 @@
 # Leitstelle (Command-and-Control-Server)
 
-Server, bei dem sich die RS232-Konsolen anmelden und Aufträge abholen. Idee, Protokoll, Phasen und Grenzen: **[KONZEPT.md](KONZEPT.md)**. Stand: Phasen 1 bis 3 — Server mit Weboberfläche, Gerätesimulator, Client in der Firmware —, geprüft im Container und mit dem Waveshare-Board im lokalen Netz. Phase 4, die Fernkonsole, ist gebaut und am Server mit dem Simulator getestet; die Firmware-Seite ist ungeprüft (KONZEPT.md §7).
+Server, bei dem sich die RS232-Konsolen anmelden und Aufträge abholen. Idee, Protokoll, Phasen und Grenzen: **[KONZEPT.md](KONZEPT.md)**. Stand: Phasen 1 bis 3 — Server mit Weboberfläche, Gerätesimulator, Client in der Firmware —, geprüft im Container und mit dem Waveshare-Board im lokalen Netz. Phase 4, die Fernkonsole, ist am Server mit dem Simulator und am Waveshare-Board getestet; am Board fehlt die Richtung Port → Server, weil dort nichts am seriellen Port hängt (KONZEPT.md §7).
 
 **Nicht ins Internet stellen.** Dafür fehlt Phase 5 (KONZEPT.md §6); die Compose-Datei bindet den Port deshalb nur an `127.0.0.1`, solange `C2_BIND` nichts anderes sagt.
 
@@ -46,7 +46,7 @@ Das Gerät muss den Server erreichen, also an die LAN-Adresse dieses Rechners bi
 C2_BIND=192.168.10.232 C2_PUBLIC_URL=https://192.168.10.232:8443 docker compose up -d
 ```
 
-Dann wie oben einladen. Das Token kommt in die Weboberfläche des Geräts (Menü → Netz → Leitstelle → Anmelden) oder per `curl -X POST http://<gerät>/api/c2/enroll -d '{"token":"c2e1:..."}'`; der WLAN-Client des Geräts muss verbunden sein. Der Code steht danach auf dem Display (Seite Info) und in der Weboberfläche. Details: `firmware/README.md`.
+Dann wie oben einladen. Das Token kommt in die Weboberfläche des Geräts (Menü → Netz → Leitstelle → Anmelden) oder per `curl -X POST http://<gerät>/api/c2/enroll -H 'Content-Type: application/json' -d '{"token":"c2e1:..."}'`; der WLAN-Client des Geräts muss verbunden sein. Der Code steht danach auf dem Display (Seite Info) und in der Weboberfläche. Details: `firmware/README.md`.
 
 ## Admin-Schnittstelle
 
