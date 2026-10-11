@@ -41,4 +41,17 @@ namespace C2 {
   // From the main loop. Both return at once; the task does the work.
   const char *enroll(const String &token);  // nullptr, or why the token is not usable
   void forget();                            // drop server and device key
+
+  // Remote console: the server asks, a person at the display decides - every
+  // time. While it is open, what the administrator types goes to the port as
+  // if typed in the web terminal, and the port's output goes to the server.
+  struct Console {
+    uint8_t  state;         // 0 none, 1 asked (waiting for the tap), 2 open
+    uint8_t  port;          // 0-based
+    uint16_t minutes;       // asked for
+    uint32_t leftS;         // open: seconds until it closes by itself
+  };
+  Console console();
+  void consoleAnswer(bool allow);           // main loop: the tap on the display
+  void consoleEnd();                        // main loop: close it from here
 }

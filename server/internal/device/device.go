@@ -105,6 +105,19 @@ func (c *Client) handshake(kind byte, tokenID [proto.TokenIDSize]byte, psk []byt
 }
 
 func (c *Client) exchange(msg any) (*Reply, error) {
+	var r Reply
+	return &r, c.exchangeInto(msg, &r)
+}
+
+func (c *Client) exchangeInto(msg, reply any) error {
+	pt, err := c.exchangeRaw(msg)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(pt, reply)
+}
+
+func (c *Client) exchangeRaw(msg any) ([]byte, error) {
 	b, err := json.Marshal(msg)
 	if err != nil {
 		return nil, err
@@ -117,12 +130,44 @@ func (c *Client) exchange(msg any) (*Reply, error) {
 	if err != nil {
 		return nil, err
 	}
-	pt, err := c.sess.Open(resp)
-	if err != nil {
-		return nil, err
+	return c.sess.Open(resp)
+}
+
+// ConMsg is one step of a remote console, device to server: output of the
+// serial port from offset Off on, and how much input the device has taken.
+type ConMsg struct {
+	T     string `json:"t"`
+	ID    uint64 `json:"id"`
+	Off   int64  `json:"off"`
+	D     []byte `json:"d,omitempty"`
+	IAck  int64  `json:"iack"`
+	LeftS int    `json:"left_s"`
+	End   string `json:"end,omitempty"`
+}
+
+// ConReply brings input for the serial port (from offset IOff), the number of
+// BREAKs asked for so far, and End if the session is over.
+type ConReply struct {
+	IOff int64  `json:"ioff"`
+	D    []byte `json:"d"`
+	Brk  int    `json:"brk"`
+	End  string `json:"end"`
+}
+
+// Console sends one console message on the current session.
+func (c *Client) Console(m ConMsg) (*ConReply, error) {
+	if c.sess == nil {
+		if err := c.handshake(proto.KindSession, [proto.TokenIDSize]byte{}, nil); err != nil {
+			return nil, err
+		}
 	}
-	var r Reply
-	return &r, json.Unmarshal(pt, &r)
+	m.T = "con"
+	var r ConReply
+	err := c.exchangeInto(m, &r)
+	if err != nil {
+		c.sess = nil
+	}
+	return &r, err
 }
 
 // Enroll registers the device with the server named in the token and returns

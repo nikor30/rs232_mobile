@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RS232-Leitstelle</title>
+<link rel="stylesheet" href="/ui/xterm.css">
 <link rel="stylesheet" href="/ui/style.css">
 </head>
 <body>
@@ -84,6 +85,35 @@
       <p class="dim">„Neustart“ und „Abspielen“ führt das Gerät nur aus, wenn das an ihm selbst erlaubt wurde (Menü → Netz → Leitstelle).</p>
     </div>
 
+    <div id="console" hidden>
+      <h3>Fernkonsole</h3>
+      <form id="conForm" class="row left wrap">
+        <label>Port
+          <select id="conPort"><option>1</option><option>2</option><option>3</option><option>4</option></select>
+        </label>
+        <label>Dauer
+          <select id="conMinutes"><option value="5">5 min</option><option value="15" selected>15 min</option><option value="30">30 min</option><option value="60">60 min</option></select>
+        </label>
+        <button class="btn warn" type="submit">Konsole anfragen</button>
+      </form>
+      <p id="conState" class="dim"></p>
+      <div id="conBox" hidden>
+        <div id="term"></div>
+        <div class="row">
+          <span id="conInfo" class="dim"></span>
+          <span>
+            <button id="conBreak" class="btn">BREAK</button>
+            <button id="conClose" class="btn danger">Beenden</button>
+          </span>
+        </div>
+      </div>
+      <p class="dim">Jede Sitzung muss am Gerät auf dem Touch-Display erlaubt werden und endet nach der angefragten Zeit von selbst. Wer am Gerät steht, kann sie jederzeit beenden. Dieser Server leitet die Zeichen durch und könnte sie mitlesen; aufgezeichnet wird nur, wann eine Sitzung lief und wie viele Zeichen durchgingen.</p>
+      <table id="conLog" hidden>
+        <thead><tr><th>Nr.</th><th>Port</th><th>Beginn</th><th>Dauer</th><th>Ende</th><th>Zeichen hin / zurück</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
     <h3 id="histTitle" hidden>Verlauf</h3>
     <table id="history" hidden>
       <thead><tr><th>Nr.</th><th>Auftrag</th><th>Zustand</th><th>Wann</th><th>Antwort</th></tr></thead>
@@ -119,6 +149,9 @@
 
 <div id="toast" hidden></div>
 <script src="/ui/qrcode.js"></script>
+<script src="/ui/xterm-csp.js"></script>
+<script src="/ui/xterm.js"></script>
+<script src="/ui/addon-fit.js"></script>
 <script src="/ui/app.js"></script>
 </body>
 </html>

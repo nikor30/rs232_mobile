@@ -9,6 +9,7 @@ namespace Display {
   bool begin();                  // false if the panel did not start (everything else keeps working)
   void loop();
   bool isOn();
+  bool usable();                 // the panel works: questions can be asked on it
   void wake();                   // switch on + restart timeout
   void off();
   void nextPage();

@@ -86,6 +86,28 @@ with sync_playwright() as p:
         assert page.evaluate("window.pwned === undefined"), "markup from a device name was executed"
         assert page.locator("#devices img").count() == 0
         page.screenshot(path="/out/ui-commands.png", full_page=True)
+        # remote console: ask, the (simulated) device agrees, type, read, BREAK, close
+        page.select_option("#conMinutes", "5")
+        page.click("#conForm button")
+        expect(page.locator("#conState")).to_contain_text("Offen auf Port 1", timeout=20000)
+        term = page.locator("#term .xterm-rows")
+        expect(term).to_contain_text("Switch>", timeout=20000)
+        page.locator("#term .xterm-helper-textarea").focus()
+        page.keyboard.type("show")
+        page.keyboard.press("Enter")
+        expect(term).to_contain_text("GigabitEthernet0/40 is up", timeout=20000)
+        page.click("#conBreak")
+        expect(term).to_contain_text("[BREAK]", timeout=20000)
+        expect(page.locator("#conInfo")).to_contain_text("noch")
+        expect(page.locator("#conForm")).to_be_hidden()
+        # not full_page: with the terminal focused that leaves the page scrolled somewhere
+        # else than the browser believes, and the next click misses its button
+        page.locator("#console").scroll_into_view_if_needed()
+        page.screenshot(path="/out/ui-console.png")
+        page.click("#conClose")
+        expect(term).to_contain_text("vom Administrator beendet", timeout=20000)
+        expect(page.locator("#conLog tbody tr").first).to_contain_text("vom Administrator beendet", timeout=20000)
+        expect(page.locator("#conForm")).to_be_visible()
         page.click("#revoke")
         expect(page.locator("#dState")).to_have_text("gesperrt")
         expect(page.locator("#commands")).to_be_hidden()

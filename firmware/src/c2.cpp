@@ -1,5 +1,7 @@
 #include "c2.h"
 #include "c2_proto.h"
+#include "c2_console.h"
+#include "serial_bridge.h"
 #include "config.h"
 #include "settings.h"
 #include "power.h"
@@ -58,6 +60,32 @@ struct Lock {
   ~Lock() { xSemaphoreGive(mux); }
 };
 
+// ---- remote console (under mux). The main loop owns the serial port and the
+// decision; the task carries the bytes. They meet in con.stream.
+enum ConState : uint8_t {
+  CON_NONE = 0,
+  CON_ASK,       // the server has asked; waiting for a tap on the display
+  CON_OPEN,
+  CON_END,       // closed here; the task still has to tell the server
+};
+static struct {
+  ConState state = CON_NONE;
+  uint32_t id = 0;               // the command that asked
+  uint8_t port = 0;
+  uint16_t minutes = 0;
+  uint32_t askedMs = 0, untilMs = 0;
+  uint32_t seq = 0;              // next byte of the port's output to pass on (Bridge numbering)
+  char reason[48] = "";
+  C2Console::Stream *stream = nullptr;
+} con;
+static volatile bool conBusy = false;    // con.state != CON_NONE, readable without the lock
+static bool conAnnounced = false;        // task: the server has the "yes" to the console that is open now
+static bool conAtCollect = false;
+static bool keepAlive = false;           // task: the connection stays up between requests (see requestOnce)
+static uint32_t conRefuseUntil = 0;      // main loop: after a "no", further requests are turned down for a while
+static const uint32_t CON_ASK_MS = 60000, CON_REFUSE_MS = 60000, CON_MAX_MIN = 60;
+static const uint32_t CON_LOST_MS = 30000;   // without the server for this long, the console is closed
+
 struct BigJob {
   const std::function<void()> *fn;
   TaskHandle_t caller;
@@ -70,7 +98,10 @@ struct BigJob {
 // up when the idle task next runs, and the TLS connection that follows needs
 // those 28 kB back at once. So the helper parks itself when it is done and the
 // caller removes it and frees the stack.
+static void connClose();
+
 static bool big(const std::function<void()> &fn) {
+  connClose();                           // never together with a TLS connection
   StackType_t *stack = (StackType_t *)heap_caps_malloc(KEM_STACK, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   StaticTask_t *tcb = (StaticTask_t *)heap_caps_malloc(sizeof(StaticTask_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   BigJob job = {&fn, xTaskGetCurrentTaskHandle()};
@@ -174,6 +205,14 @@ static void forgetAll() {
     Lock l;
     jobs.clear();
     jobResults.clear();
+    if (con.state != CON_NONE) {
+      delete con.stream;
+      con.stream = nullptr;
+      con.state = CON_NONE;
+      conBusy = false;
+    }
+    conAnnounced = false;
+    keepAlive = false;
     shared.lastOkMs = shared.polls = shared.handshakeMs = shared.cryptoMs = 0;
   }
   publish("");
@@ -192,9 +231,9 @@ static int requestOnce(const std::string &base, const char *path, const uint8_t 
 // copy did arrive, the server takes the second for a replay and answers 401,
 // and the caller shakes hands again.
 static int request(const std::string &base, const char *path, const uint8_t *body, size_t len,
-                   uint8_t *out, size_t outMax, size_t &outLen) {
+                   uint8_t *out, size_t outMax, size_t &outLen, int tries = 3) {
   int code = -1;
-  for (int attempt = 0; attempt < 3; attempt++) {
+  for (int attempt = 0; attempt < tries; attempt++) {
     if (attempt) vTaskDelay(pdMS_TO_TICKS(1500));
     code = requestOnce(base, path, body, len, out, outMax, outLen);
     if (code >= 0) break;
@@ -207,8 +246,24 @@ enum { NET_URL = -1, NET_CONNECT = -2, NET_SEND = -3, NET_TIMEOUT = -4, NET_ANSW
 static const char *const NET_NAMES[] = {"", "Adresse unbrauchbar", "keine Verbindung", "Senden gescheitert",
                                         "keine Antwort", "Antwort unbrauchbar"};
 
-// HTTP/1.0 by hand: one request, one answer, connection closed. Small enough to
-// see exactly where a weak link gives up.
+// The connection. Normally it lives for one request. While a remote console is
+// open (keepAlive) it stays up, and every request goes over it: the console
+// asks several times a second, and a second TLS connection would not fit.
+static WiFiClient *connPlain = nullptr;
+static WiFiClientSecure *connTls = nullptr;
+static Client *conn = nullptr;
+
+static void connClose() {
+  if (conn) conn->stop();
+  delete connPlain;
+  delete connTls;
+  connPlain = nullptr;
+  connTls = nullptr;
+  conn = nullptr;
+}
+
+// HTTP by hand: one request, one answer, and (unless keepAlive) the connection
+// closed. Small enough to see exactly where a weak link gives up.
 static int requestOnce(const std::string &base, const char *path, const uint8_t *body, size_t len,
                        uint8_t *out, size_t outMax, size_t &outLen) {
   const uint32_t TIMEOUT_MS = 20000;     // generous: a few kilobytes can take seconds at the edge of a WLAN
@@ -228,26 +283,32 @@ static int requestOnce(const std::string &base, const char *path, const uint8_t 
   }
   if (host.isEmpty() || !port) return NET_URL;
 
-  WiFiClient plain;
-  WiFiClientSecure tls;
-  Client *c = &plain;
   int code = NET_CONNECT;
   const char *step = "Verbinden";
-  bool up;
-  if (https) {
-    // The certificate is not checked: the server is authenticated inside, by
-    // the key the enrollment token pinned (KONZEPT.md §8, open question).
-    tls.setInsecure();
-    tls.setHandshakeTimeout(TIMEOUT_MS / 1000);
-    up = tls.connect(host.c_str(), port, (int32_t)TIMEOUT_MS);   // also the limit for one write
-    c = &tls;
-  } else {
-    up = plain.connect(host.c_str(), port, (int32_t)TIMEOUT_MS);
+  bool up = conn && conn->connected();
+  if (!up) {
+    connClose();
+    if (https) {
+      // The certificate is not checked: the server is authenticated inside, by
+      // the key the enrollment token pinned (KONZEPT.md §8, open question).
+      connTls = new WiFiClientSecure();
+      connTls->setInsecure();
+      connTls->setHandshakeTimeout(TIMEOUT_MS / 1000);
+      up = connTls->connect(host.c_str(), port, (int32_t)TIMEOUT_MS);   // also the limit for one write
+      conn = connTls;
+    } else {
+      connPlain = new WiFiClient();
+      up = connPlain->connect(host.c_str(), port, (int32_t)TIMEOUT_MS);
+      conn = connPlain;
+    }
   }
+  Client *c = conn;
   if (up) {
     step = "Senden";
     code = NET_SEND;
-    String head = String(body ? "POST " : "GET ") + path + " HTTP/1.0\r\nHost: " + host + "\r\nConnection: close\r\n";
+    String head = String(body ? "POST " : "GET ") + path +
+                  (keepAlive ? " HTTP/1.1\r\nHost: " : " HTTP/1.0\r\nHost: ") + host +
+                  (keepAlive ? "\r\nConnection: keep-alive\r\n" : "\r\nConnection: close\r\n");
     if (body) head += "Content-Type: application/octet-stream\r\nContent-Length: " + String((unsigned)len) + "\r\n";
     head += "\r\n";
     bool sent = c->write((const uint8_t *)head.c_str(), head.length()) == head.length();
@@ -296,7 +357,7 @@ static int requestOnce(const std::string &base, const char *path, const uint8_t 
       }
     }
   }
-  c->stop();
+  if (!keepAlive || code != 200) connClose();   // after anything unexpected the stream is not trusted any more
   if (code != 200)
     Serial.printf("[C2]   %s: %s%s nach %lu ms bei \"%s\" (Heap %u kB)\n", path,
                   code < 0 ? NET_NAMES[-code] : "HTTP ", code < 0 ? "" : String(code).c_str(),
@@ -346,8 +407,10 @@ static Ex handshake(C2Proto::Kind kind, const C2Proto::Token *tok) {
   return ex;
 }
 
-// Sends one message and reads the answer on the current session.
-static Ex exchange(JsonDocument &msg, JsonDocument &reply) {
+// Sends one message and reads the answer on the current session. With
+// once = true a request that gets no answer is not repeated and the session is
+// kept: the caller seals a fresh record and tries again.
+static Ex exchange(JsonDocument &msg, JsonDocument &reply, bool once = false) {
   String plain;
   serializeJson(msg, plain);
   const size_t MAX_REPLY = 8192;       // commands are small; nothing here needs the protocol's 32 kB
@@ -357,7 +420,7 @@ static Ex exchange(JsonDocument &msg, JsonDocument &reply) {
   if (body && resp) {
     memcpy(body, session.id, C2Proto::ID_SIZE);
     if (session.seal((const uint8_t *)plain.c_str(), plain.length(), body + C2Proto::ID_SIZE, n)) {
-      ex = fromHttp(request(serverUrl, "/v1/msg", body, bodyLen, resp, MAX_REPLY, got));
+      ex = fromHttp(request(serverUrl, "/v1/msg", body, bodyLen, resp, MAX_REPLY, got, once ? 1 : 3));
       if (ex == EX_OK) {
         // decrypts in place: the plaintext is shorter than the record
         if (!session.open(resp, got, resp, n) || deserializeJson(reply, (const char *)resp, n)) ex = EX_BAD;
@@ -366,7 +429,7 @@ static Ex exchange(JsonDocument &msg, JsonDocument &reply) {
   }
   free(body);
   free(resp);
-  if (ex != EX_OK) haveSession = false;
+  if (ex != EX_OK && !(once && ex == EX_NET)) haveSession = false;
   return ex;
 }
 
@@ -419,6 +482,9 @@ static size_t collectJobResults() {
   {
     Lock l;
     done.swap(jobResults);
+    // The "yes" and the change to CON_OPEN happen under one lock, so a
+    // console that is open here has its answer in this poll or an earlier one.
+    conAtCollect = con.state == CON_OPEN || con.state == CON_END;
   }
   for (const String &r : done) {
     JsonDocument d;
@@ -539,6 +605,7 @@ static void doPoll() {
   if (ex != EX_OK) return retry(ex == EX_NET ? "Server nicht erreichbar" : "Antwort des Servers unbrauchbar");
 
   if (rebootWanted && results.size()) rebootNow = true;    // the answer to "reboot" has arrived at the server
+  if (conAtCollect) conAnnounced = true;
   results.clear();
   retryMs = RETRY_MIN_MS;
   const char *st = reply["state"] | "";
@@ -562,6 +629,71 @@ static void doPoll() {
     shared.polls++;
   }
   publish("");
+}
+
+// ---------------------------------------------------------------- remote console, task side
+
+static uint32_t conOkMs = 0;             // last console message the server answered
+
+static void conFinish(const char *reason) {
+  {
+    Lock l;
+    delete con.stream;
+    con.stream = nullptr;
+    con.state = CON_NONE;
+    conBusy = false;
+  }
+  conAnnounced = false;
+  conOkMs = 0;
+  keepAlive = false;
+  connClose();
+  nextPollAt = millis() + 1000;
+  Serial.printf("[C2]   Fernkonsole beendet: %s\n", reason);
+  char text[40];
+  snprintf(text, sizeof(text), "%s", reason);
+  Display::message("Fernkonsole beendet", text, 5000);
+}
+
+// One question to the server: here is what the port has sent, what has been typed?
+static void conStep() {
+  JsonDocument msg, reply;
+  size_t n;
+  char endReason[48] = "";
+  {
+    Lock l;
+    if (con.state != CON_OPEN && con.state != CON_END) return;
+    if (con.state == CON_END) strlcpy(endReason, con.reason, sizeof(endReason));
+    uint32_t left = con.state == CON_OPEN && (int32_t)(con.untilMs - millis()) > 0 ? (con.untilMs - millis()) / 1000 : 0;
+    n = C2Console::buildMessage(msg, con.id, *con.stream, left, endReason);
+  }
+  if (!conOkMs) conOkMs = millis();
+  keepAlive = true;
+  Ex ex = haveSession ? exchange(msg, reply, true) : EX_REHANDSHAKE;
+  if (ex == EX_REHANDSHAKE) {            // an hour has passed, or the server was restarted
+    ex = handshake(C2Proto::KIND_SESSION, nullptr);
+    if (ex == EX_OK) return;             // next round, on the new session
+  }
+  if (ex == EX_REFUSED) {
+    conFinish("vom Server abgewiesen");
+    nextPollAt = millis();               // the poll finds out what that means
+    return;
+  }
+  if (ex != EX_OK) {
+    if (endReason[0] || millis() - conOkMs > CON_LOST_MS) conFinish(endReason[0] ? endReason : "Server nicht erreichbar");
+    else vTaskDelay(pdMS_TO_TICKS(500));
+    return;
+  }
+  conOkMs = millis();
+  const char *end = "abgemeldet";
+  {
+    Lock l;
+    if (con.stream) {
+      C2Console::accepted(*con.stream, n);
+      end = C2Console::applyReply(reply, *con.stream);
+    }
+  }
+  if (endReason[0]) conFinish(endReason);
+  else if (end) conFinish(end);
 }
 
 static void task(void *) {
@@ -598,8 +730,29 @@ static void task(void *) {
       answers = !jobResults.empty();
     }
     if (answers && state == ACTIVE) nextPollAt = millis();   // answers go back at once
-    if (serverPub && WiFi.status() == WL_CONNECTED && (int32_t)(millis() - nextPollAt) >= 0) doPoll();
-    vTaskDelay(pdMS_TO_TICKS(200));
+    bool online = serverPub && WiFi.status() == WL_CONNECTED;
+    if (online && (int32_t)(millis() - nextPollAt) >= 0) doPoll();
+    // While a console is open the task asks without pause; the server holds
+    // each question for a moment when there is nothing to say.
+    bool conLive = false, conClosed = false;
+    char why[48] = "";
+    if (conBusy) {
+      Lock l;
+      conLive = con.state == CON_OPEN || con.state == CON_END;
+      conClosed = con.state == CON_END;
+      strlcpy(why, con.reason, sizeof(why));
+    }
+    if (!conLive) conOkMs = 0;
+    else if (!conAnnounced || state != ACTIVE) {
+      // the server does not know of it yet; if it has ended already, there is nothing to tell
+      if (conClosed) conFinish(why);
+      conLive = false;
+    } else if (online) conStep();
+    else {
+      if (!conOkMs) conOkMs = millis();
+      if (millis() - conOkMs > CON_LOST_MS) conFinish("WLAN getrennt");
+    }
+    vTaskDelay(pdMS_TO_TICKS(conLive && online ? 5 : 200));
   }
 }
 
@@ -669,7 +822,125 @@ static void execute(const MainJob &job) {
       answer(job.id, true, quoted("Neustart"));
       rebootWanted = true;               // carried out once the answer has reached the server
     }
+  } else if (job.type == "console") {
+    // Never without a tap on the display, whatever the settings say.
+    int port = args["port"] | 1, minutes = constrain((int)(args["minutes"] | 15), 1, (int)CON_MAX_MIN);
+    const char *no = nullptr;
+    Lock l;
+    if (con.state != CON_NONE) no = "es ist schon eine Fernkonsole offen oder angefragt";
+    else if (port < 1 || port > MAX_PORTS || !Bridge::enabled(port - 1)) no = "Port unbekannt";
+    else if (!Display::usable()) no = "das Geraet hat kein Display, an dem jemand zustimmen koennte";
+    else if ((int32_t)(conRefuseUntil - millis()) > 0) no = "am Geraet gerade abgelehnt";
+    if (no) {
+      String r = String("{\"id\":") + job.id + ",\"ok\":false,\"out\":" + quoted(no) + "}";
+      jobResults.push_back(r);
+      return;
+    }
+    con.state = CON_ASK;
+    conBusy = true;
+    con.id = job.id;
+    con.port = port - 1;
+    con.minutes = minutes;
+    con.askedMs = millis();
+    Display::wake();
+    Serial.printf("[C2]   Fernkonsole angefragt: Port %d, %d min - wartet auf Zustimmung am Display\n", port, minutes);
   } else answer(job.id, false, quoted("unbekannter Auftrag"));
+}
+
+// Closes the console from this side; the task tells the server. Under mux.
+static void conEndLocked(const char *reason) {
+  if (con.state != CON_OPEN) return;
+  con.state = CON_END;
+  strlcpy(con.reason, reason, sizeof(con.reason));
+}
+
+void consoleAnswer(bool allow) {
+  if (!mux) return;
+  String r;
+  {
+    Lock l;
+    if (con.state != CON_ASK) return;
+    C2Console::Stream *st = allow ? new (std::nothrow) C2Console::Stream() : nullptr;
+    const char *no = !allow ? "am Geraet abgelehnt" : !st ? "zu wenig Speicher" : nullptr;
+    if (no) {
+      r = String("{\"id\":") + con.id + ",\"ok\":false,\"out\":" + quoted(no) + "}";
+      con.state = CON_NONE;
+      conBusy = false;
+      conRefuseUntil = millis() + CON_REFUSE_MS;
+    } else {
+      r = String("{\"id\":") + con.id + ",\"ok\":true,\"out\":{\"port\":" + (con.port + 1) + ",\"minutes\":" + con.minutes + "}}";
+      con.stream = st;
+      con.seq = Bridge::seqNow(con.port);    // from now on; what was on the screen before stays here
+      con.untilMs = millis() + con.minutes * 60000UL;
+      con.state = CON_OPEN;
+    }
+    jobResults.push_back(r);
+  }
+  Serial.printf("[C2]   Fernkonsole %s\n", allow ? "am Display erlaubt" : "am Display abgelehnt");
+  if (allow) Net::onMessage(String("Leitstelle: Fernkonsole auf ") + Store::portName(con.port) + " für " + con.minutes + " min erlaubt");
+}
+
+void consoleEnd() {
+  if (!mux) return;
+  Lock l;
+  conEndLocked("am Geraet beendet");
+}
+
+Console console() {
+  Console c = {0, 0, 0, 0};
+  if (!mux || !conBusy) return c;
+  Lock l;
+  c.state = con.state == CON_ASK ? 1 : con.state == CON_OPEN ? 2 : 0;
+  c.port = con.port;
+  c.minutes = con.minutes;
+  if (con.state == CON_OPEN && (int32_t)(con.untilMs - millis()) > 0) c.leftS = (con.untilMs - millis()) / 1000;
+  return c;
+}
+
+// Main loop: moves the bytes between the serial port and con.stream.
+static void conPump() {
+  uint32_t now = millis();
+  bool brk = false;
+  uint8_t port;
+  {
+    Lock l;
+    port = con.port;
+    if (con.state == CON_ASK && now - con.askedMs > CON_ASK_MS) {
+      String r = String("{\"id\":") + con.id + ",\"ok\":false,\"out\":" + quoted("am Geraet hat niemand geantwortet") + "}";
+      jobResults.push_back(r);
+      con.state = CON_NONE;
+      conBusy = false;
+      conRefuseUntil = now + CON_REFUSE_MS;
+      Serial.println("[C2]   Fernkonsole: niemand hat am Display geantwortet");
+    }
+    if (con.state != CON_OPEN) return;
+    C2Console::Stream &st = *con.stream;
+    if ((int32_t)(con.untilMs - now) <= 0) return conEndLocked("Zeit abgelaufen");
+    if (!Bridge::enabled(port)) return conEndLocked("Port abgeschaltet");
+    // port -> server. What does not fit waits in the port's ring; if the ring
+    // has moved on, the gap is counted so the offsets stay true.
+    uint32_t first = Bridge::ringStartSeq(port);
+    if ((int32_t)(first - con.seq) > 0 && !st.outLen) {
+      st.outSkip(first - con.seq);
+      con.seq = first;
+    }
+    if (st.outRoom() && (int32_t)(first - con.seq) <= 0) {
+      size_t n = Bridge::copyFrom(port, con.seq, st.out + st.outLen, st.outRoom());
+      st.outLen += n;
+      con.seq += n;
+    }
+    // server -> port: like typing in the web terminal. Input the port will
+    // not take now (file transfer, auto-baud) is dropped, as it is there.
+    if (st.inLen) {
+      size_t room = Bridge::txFree(port), n = Bridge::write(port, st.in, min(st.inLen, room));
+      st.inDrop(n ? n : room ? st.inLen : 0);
+    }
+    if (st.brkDue) {
+      st.brkDue--;
+      brk = true;
+    }
+  }
+  if (brk) Bridge::sendBreak(port);      // takes 300 ms: not under the lock
 }
 
 void loop() {
@@ -685,6 +956,7 @@ void loop() {
     answer(playJob, Player::state() == Player::DONE, playReport());
     playJob = 0;
   }
+  if (conBusy) conPump();
   MainJob job;
   {
     Lock l;
@@ -716,6 +988,10 @@ String line() {
   Info i = info();
   if (i.state == PENDING) return String("Code ") + i.code;
   if (i.state == ACTIVE && i.error[0]) return "nicht erreichbar";
+  if (i.state == ACTIVE && conBusy) {
+    Console c = console();
+    if (c.state == 2) return String("Fernkonsole Port ") + (c.port + 1);
+  }
   return stateName(i.state);
 }
 

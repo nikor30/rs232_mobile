@@ -425,7 +425,7 @@ func TestCommandsExpire(t *testing.T) {
 
 func TestWebInterface(t *testing.T) {
 	e := newEnv(t)
-	for path, want := range map[string]string{"/": "RS232-Leitstelle", "/ui/app.js": "use strict", "/ui/style.css": "--accent", "/ui/qrcode.js": "QR Code Generator"} {
+	for path, want := range map[string]string{"/": "RS232-Leitstelle", "/ui/app.js": "use strict", "/ui/style.css": "--accent", "/ui/qrcode.js": "QR Code Generator", "/ui/xterm.js": "Terminal", "/ui/xterm.css": ".xterm", "/ui/xterm-csp.js": "csp-style", "/ui/addon-fit.js": "FitAddon"} {
 		resp, err := http.Get(e.ts.URL + path)
 		if err != nil {
 			t.Fatal(err)
@@ -456,7 +456,7 @@ func TestWebInterface(t *testing.T) {
 		Fingerprint string
 		Commands    []string
 	}
-	if code := e.admin("GET", "/admin/v1/server", nil, &info); code != 200 || len(info.Fingerprint) != 64 || len(info.Commands) != 6 {
+	if code := e.admin("GET", "/admin/v1/server", nil, &info); code != 200 || len(info.Fingerprint) != 64 || len(info.Commands) != 7 {
 		t.Fatalf("server info: HTTP %d %+v", code, info)
 	}
 }

@@ -38,6 +38,12 @@ const (
 	// something twice can be worse than not running it.
 	QueueTTL  = 24 * time.Hour
 	AnswerTTL = 2 * time.Hour
+	// A request for the remote console is only worth something while the
+	// administrator is waiting for it: somebody at the device has to agree.
+	ConsoleQueueTTL  = 2 * time.Minute
+	ConsoleAnswerTTL = 3 * time.Minute
+	CmdConsole       = "console"
+	maxConsoleLogs   = 50
 
 	// Wrong codes typed for one pending device before its enrollment is thrown
 	// away: six digits must not be guessable by trying.
@@ -51,6 +57,7 @@ var (
 	ErrSAS      = errors.New("code does not match")
 	ErrToken    = errors.New("enrollment token unknown, used or expired")
 	ErrFull     = errors.New("command queue is full")
+	ErrBusy     = errors.New("a remote console is already open or asked for")
 )
 
 type Token struct {
@@ -71,6 +78,18 @@ type Command struct {
 	Result  json.RawMessage `json:"result,omitempty"`
 }
 
+// ConsoleLog records one remote console session: who could reach which serial
+// port, when, and how much went through. What was typed and shown is not kept.
+type ConsoleLog struct {
+	ID     uint64     `json:"id"` // the "console" command that asked for it
+	Port   int        `json:"port"`
+	Start  time.Time  `json:"start"`
+	End    *time.Time `json:"end,omitempty"`
+	Reason string     `json:"reason,omitempty"`
+	In     int64      `json:"bytes_in"`  // typed by the administrator
+	Out    int64      `json:"bytes_out"` // sent by the serial port
+}
+
 type Device struct {
 	ID          string          `json:"id"` // hex of proto.DeviceID
 	Pub         []byte          `json:"pub"`
@@ -83,6 +102,7 @@ type Device struct {
 	LastSeen    *time.Time      `json:"last_seen,omitempty"`
 	Status      json.RawMessage `json:"status,omitempty"` // last status the device reported
 	Commands    []*Command      `json:"commands,omitempty"`
+	Consoles    []*ConsoleLog   `json:"consoles,omitempty"`
 }
 
 type data struct {
@@ -135,6 +155,23 @@ func Open(dir string) (*Store, error) {
 	}
 	if s.key, err = proto.ParseStatic(s.d.ServerKey); err != nil {
 		return nil, err
+	}
+	// Console sessions live in memory: one that was open when the server
+	// stopped ended there, whatever the file says.
+	dangling := false
+	for _, d := range s.d.Devices {
+		for _, c := range d.Consoles {
+			if c.End == nil {
+				now := s.now()
+				c.End, c.Reason = &now, "Server neu gestartet"
+				dangling = true
+			}
+		}
+	}
+	if dangling {
+		if err := s.save(); err != nil {
+			return nil, err
+		}
 	}
 	return s, nil
 }
@@ -200,6 +237,11 @@ func clone(d *Device) *Device {
 		cc := *cmd
 		c.Commands = append(c.Commands, &cc)
 	}
+	c.Consoles = nil
+	for _, l := range d.Consoles {
+		ll := *l
+		c.Consoles = append(c.Consoles, &ll)
+	}
 	return &c
 }
 
@@ -207,8 +249,12 @@ func clone(d *Device) *Device {
 func (s *Store) expire(d *Device) {
 	now := s.now()
 	for _, c := range d.Commands {
-		if (c.State == CmdQueued && now.Sub(c.Created) > QueueTTL) ||
-			(c.State == CmdSent && c.Sent != nil && now.Sub(*c.Sent) > AnswerTTL) {
+		queue, answer := QueueTTL, AnswerTTL
+		if c.Type == CmdConsole {
+			queue, answer = ConsoleQueueTTL, ConsoleAnswerTTL
+		}
+		if (c.State == CmdQueued && now.Sub(c.Created) > queue) ||
+			(c.State == CmdSent && c.Sent != nil && now.Sub(*c.Sent) > answer) {
 			c.State, c.Done = CmdExpired, &now
 		}
 	}
@@ -313,6 +359,16 @@ func (s *Store) Enqueue(id, typ string, args json.RawMessage) (*Command, error) 
 	for _, c := range d.Commands {
 		if c.State == CmdQueued || c.State == CmdSent {
 			open++
+			if typ == CmdConsole && c.Type == CmdConsole {
+				return nil, ErrBusy
+			}
+		}
+	}
+	if typ == CmdConsole {
+		for _, l := range d.Consoles {
+			if l.End == nil {
+				return nil, ErrBusy
+			}
 		}
 	}
 	if open >= MaxQueued {
@@ -374,4 +430,63 @@ func (s *Store) Poll(id string, status json.RawMessage, results []Result) (state
 		err = s.save()
 	}
 	return d.State, cmds, err
+}
+
+// ---------------------------------------------------------------- remote console
+
+// ConsoleOpen starts the log entry of a remote console. The device may only
+// open the one it has just agreed to: cmdID must be a "console" command that it
+// answered with yes less than maxAge ago, and that has not been used before.
+func (s *Store) ConsoleOpen(id string, cmdID uint64, maxAge time.Duration) (port int, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d := s.d.Devices[id]
+	if d == nil {
+		return 0, ErrNotFound
+	}
+	if d.State != StateActive {
+		return 0, ErrState
+	}
+	for _, l := range d.Consoles {
+		if l.ID == cmdID || l.End == nil {
+			return 0, ErrState
+		}
+	}
+	now := s.now()
+	for _, c := range d.Commands {
+		if c.ID != cmdID {
+			continue
+		}
+		if c.Type != CmdConsole || c.State != CmdDone || c.Done == nil || now.Sub(*c.Done) > maxAge {
+			return 0, ErrState
+		}
+		var a struct {
+			Port int `json:"port"`
+		}
+		json.Unmarshal(c.Args, &a)
+		d.Consoles = append(d.Consoles, &ConsoleLog{ID: cmdID, Port: a.Port, Start: now})
+		if len(d.Consoles) > maxConsoleLogs {
+			d.Consoles = d.Consoles[len(d.Consoles)-maxConsoleLogs:]
+		}
+		return a.Port, s.save()
+	}
+	return 0, ErrNotFound
+}
+
+// ConsoleClose completes the log entry.
+func (s *Store) ConsoleClose(id string, cmdID uint64, reason string, in, out int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d := s.d.Devices[id]
+	if d == nil {
+		return ErrNotFound
+	}
+	for _, l := range d.Consoles {
+		if l.ID == cmdID && l.End == nil {
+			now := s.now()
+			l.End, l.Reason, l.In, l.Out = &now, reason, in, out
+			return s.save()
+		}
+	}
+	return ErrNotFound
 }

@@ -71,9 +71,12 @@ func main() {
 		n := fs.Int("n", 0, "stop after this many polls (0 = never)")
 		interval := fs.Duration("interval", 0, "time between polls (0 = what the server asks for)")
 		control := fs.Bool("control", false, "allow commands that change something (play, reboot), as the switch at a real device does")
+		console := fs.Bool("console", false, "say yes to every request for the remote console, as a tap on a real device's display does")
 		fs.Parse(flag.Args()[1:])
 		start := time.Now()
 		var results []device.Result
+		var conID uint64 // remote console agreed to, opened once the server has the answer
+		var conMinutes int
 		for i := 0; ; i++ {
 			status := map[string]any{"uptime_s": int(time.Since(start).Seconds()), "polls": i}
 			r, err := c.Poll(status, results)
@@ -86,6 +89,11 @@ func main() {
 			} else {
 				results = nil
 				fmt.Printf("STATE %s\n", r.State)
+				if conID != 0 {
+					fmt.Printf("CONSOLE %d open\n", conID)
+					fmt.Printf("CONSOLE %d closed: %s\n", conID, runConsole(c, conID, time.Duration(conMinutes)*time.Minute))
+					conID = 0
+				}
 				for _, cmd := range r.Cmds {
 					res := device.Result{ID: cmd.ID, OK: true}
 					// what the firmware answers, in miniature
@@ -119,6 +127,15 @@ func main() {
 						} else {
 							res.OK, res.Out = false, denied
 						}
+					case "console":
+						var a struct{ Port, Minutes int }
+						json.Unmarshal(cmd.Args, &a)
+						if *console {
+							conID, conMinutes = cmd.ID, a.Minutes
+							res.Out = map[string]any{"port": a.Port, "minutes": a.Minutes}
+						} else {
+							res.OK, res.Out = false, "am Gerät abgelehnt"
+						}
 					default:
 						res.OK, res.Out = false, "unbekannter Auftrag"
 					}
@@ -139,5 +156,62 @@ func main() {
 
 	default:
 		log.Fatalf("unknown command %q", flag.Arg(0))
+	}
+}
+
+// runConsole plays a serial port with something like a switch behind it: a
+// prompt, an echo, an answer to "show" and to BREAK. It returns why the session
+// ended.
+func runConsole(c *device.Client, id uint64, limit time.Duration) string {
+	const prompt = "\r\nSwitch>"
+	out := []byte("\r\nSimulierter Switch an Port 1" + prompt)
+	var off, iack int64
+	var line []byte
+	brk := 0
+	deadline := time.Now().Add(limit)
+	for failures := 0; ; {
+		m := device.ConMsg{ID: id, Off: off, D: out[:min(len(out), 1024)], IAck: iack, LeftS: int(time.Until(deadline).Seconds())}
+		if m.LeftS <= 0 {
+			m.End = "Zeit abgelaufen"
+		}
+		r, err := c.Console(m)
+		if errors.Is(err, device.ErrRefused) {
+			return "vom Server abgewiesen"
+		}
+		if err != nil {
+			if failures++; failures > 10 {
+				return "Server nicht erreichbar"
+			}
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+		failures = 0
+		off += int64(len(m.D))
+		out = out[len(m.D):]
+		if r.End != "" {
+			return r.End
+		}
+		if skip := iack - r.IOff; skip >= 0 && skip < int64(len(r.D)) {
+			for _, b := range r.D[skip:] {
+				iack++
+				switch {
+				case b == '\r':
+					if string(line) == "show" {
+						for i := 1; i <= 40; i++ {
+							out = append(out, fmt.Sprintf("\r\nGigabitEthernet0/%d is up, line protocol is up", i)...)
+						}
+					}
+					line = line[:0]
+					out = append(out, prompt...)
+				case b >= 0x20 && b < 0x7f:
+					line = append(line, b)
+					out = append(out, b)
+				}
+			}
+		}
+		if r.Brk > brk {
+			brk = r.Brk
+			out = append(out, "\r\n[BREAK]"+prompt...)
+		}
 	}
 }

@@ -281,10 +281,12 @@
         <tr id="c2CodeRow" hidden><th>Code</th><td><b id="c2Code" style="font-size:1.6em;letter-spacing:.15em"></b><br><span class="hint">Diesen Code am Server eingeben. Er steht auch auf dem Display (Seite Info).</span></td></tr>
         <tr><th>Server</th><td id="c2Url">–</td></tr>
         <tr><th>Geräte-ID</th><td id="c2Id">–</td></tr>
+        <tr id="c2ConRow" hidden><th>Fernkonsole</th><td><span id="c2Con"></span> <button id="c2ConEnd" class="btn danger" type="button" hidden>Beenden</button></td></tr>
       </table>
       <label>Einladungs-Token <input id="c2Token" maxlength="1024" placeholder="c2e1:…" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
       <label class="check"><input id="c2Control" type="checkbox"> Die Leitstelle darf Konfigurationen abspielen und das Gerät neu starten</label>
       <p class="hint">Ohne Haken kann der Server nur lesen: Zustand, Einstellungen (ohne Passwörter) und die Liste der Konfigurationen. Der Haken lässt sich nur hier setzen, nie vom Server aus.</p>
+      <p class="hint">Die <b>Fernkonsole</b> – der Administrator bedient einen seriellen Port über den Server – hängt nicht an diesem Haken: Jede Sitzung muss am Touch-Display des Geräts erlaubt werden, läuft höchstens die angefragte Zeit und lässt sich dort und hier jederzeit beenden.</p>
       <div class="row">
         <button id="c2Enroll" class="btn" type="button">Anmelden</button>
         <button id="c2Forget" class="btn danger" type="button" hidden>Abmelden</button>

@@ -8,7 +8,7 @@
   const HOTSPOT = 'http://192.168.4.1/';     // a device's own web interface, where the QR code leads
   const STATES = { pending: 'wartet auf Bestätigung', active: 'verbunden', revoked: 'gesperrt' };
   const CMD_STATES = { queued: 'wartet', sent: 'abgeholt', done: 'erledigt', failed: 'abgelehnt', expired: 'verfallen' };
-  const CMD_NAMES = { ping: 'Ping', status: 'Zustand', settings: 'Einstellungen', configs: 'Konfigurationen', play: 'Abspielen', reboot: 'Neustart' };
+  const CMD_NAMES = { ping: 'Ping', status: 'Zustand', settings: 'Einstellungen', configs: 'Konfigurationen', play: 'Abspielen', reboot: 'Neustart', console: 'Fernkonsole' };
 
   let token = sessionStorage.getItem('c2admin') || '';
   let devices = [], selected = '', timer = 0, expTimer = 0;
@@ -56,6 +56,7 @@
     token = '';
     sessionStorage.removeItem('c2admin');
     clearTimeout(timer);
+    conDetach();
     $('#app').hidden = true;
     $('#logout').hidden = true;
     $('#srvInfo').textContent = '';
@@ -115,7 +116,7 @@
     }
     $('#devices').hidden = !devices.length;
     $('#noDevices').hidden = !!devices.length;
-    if (selected && !devices.some((d) => d.id === selected)) { selected = ''; $('#detail').hidden = true; }
+    if (selected && !devices.some((d) => d.id === selected)) { selected = ''; $('#detail').hidden = true; conDetach(); }
   }
 
   // ---- one device
@@ -139,6 +140,9 @@
     $('#approveForm').hidden = d.state !== 'pending';
     $('#commands').hidden = d.state !== 'active';
     $('#revoke').hidden = d.state === 'revoked';
+
+    $('#console').hidden = d.state !== 'active' && !con;
+    renderConsole(d);
 
     let cmds = [];
     try { cmds = await api('GET', `/devices/${d.id}/commands`); } catch (e) { return; }
@@ -193,6 +197,138 @@
     if (!confirm(`„${name}“ auf Port ${port} abspielen?\nDie Zeilen gehen an die Konsole des dort angeschlossenen Geräts.`)) return;
     send('play', { name, port });
   });
+  // ---- remote console
+  // One terminal at a time, bound to a device and a session. Output comes by
+  // long poll from an offset, so a lost answer costs nothing; input is sent in
+  // order, one request after the other.
+  let con = null;                                   // { dev, id, term, fit, next, abort, ended, queue, sending }
+  const b64 = (bytes) => btoa(String.fromCharCode(...bytes));
+  const unb64 = (text) => Uint8Array.from(atob(text || ''), (c) => c.charCodeAt(0));
+  const mmss = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+
+  function conDetach() {
+    if (!con) return;
+    con.abort.abort();
+    con.term.dispose();
+    con = null;
+    $('#conBox').hidden = true;
+  }
+  async function conSend() {
+    const c = con;
+    if (!c || c.sending || c.ended || !c.queue.length) return;
+    c.sending = true;
+    while (con === c && !c.ended && c.queue.length) {
+      const item = c.queue[0];
+      try {
+        await api('POST', `/devices/${c.dev}/console/${c.id}/input`, item);
+        c.queue.shift();
+      } catch (e) {
+        if (e.status === 429) { await new Promise((r) => setTimeout(r, 300)); continue; }   // the device is slower than the typing
+        if (e.status !== 409 && e.status !== 404) toast(e.message);
+        c.queue.length = 0;
+      }
+    }
+    c.sending = false;
+  }
+  function conInput(item) {
+    if (!con || con.ended) return;
+    const last = con.queue[con.queue.length - 1];
+    // bytes typed while a request is on its way travel together (but not past 1 kB)
+    if (item.d && last && last.d && last !== con.queue[0] && last.d.length + item.d.length < 1400) last.d = b64([...unb64(last.d), ...unb64(item.d)]);
+    else con.queue.push(item);
+    conSend();
+  }
+  async function conRead(c) {
+    while (con === c && !c.ended) {
+      let o;
+      try {
+        const r = await fetch(`/admin/v1/devices/${c.dev}/console/${c.id}/output?from=${c.next}`, {
+          cache: 'no-store', headers: { Authorization: 'Bearer ' + token }, signal: c.abort.signal,
+        });
+        if (r.status === 404) { o = { state: 'ended', reason: 'dem Server nicht mehr bekannt', d: '', next: c.next }; } else if (!r.ok) throw new Error('HTTP ' + r.status);
+        else o = await r.json();
+      } catch (e) {
+        if (con !== c) return;
+        await new Promise((r) => setTimeout(r, 1000));
+        continue;
+      }
+      if (con !== c) return;
+      if (o.lost) c.term.write(`\r\n\x1b[90m[${o.lost} Zeichen fehlen]\x1b[0m\r\n`);
+      if (o.d) c.term.write(unb64(o.d));
+      c.next = o.next;
+      c.left = o.left_s;
+      c.leftAt = Date.now();
+      if (o.state === 'ended') {
+        c.ended = true;
+        c.term.write(`\r\n\x1b[90m[Sitzung beendet: ${o.reason}]\x1b[0m\r\n`);
+        c.term.options.disableStdin = true;
+        refresh();
+      }
+    }
+  }
+  function conAttach(dev, id, left) {
+    conDetach();
+    $('#conBox').hidden = false;
+    const term = new Terminal({ cursorBlink: true, scrollback: 5000, fontSize: 14, convertEol: false });
+    const fit = new FitAddon.FitAddon();
+    term.loadAddon(fit);
+    term.open($('#term'));
+    fit.fit();
+    const c = con = { dev, id, term, fit, next: 0, abort: new AbortController(), ended: false, queue: [], sending: false, left: left || 0, leftAt: Date.now() };
+    term.onData((data) => {                         // a pasted text arrives in one piece: hand it on in small ones
+      const bytes = new TextEncoder().encode(data);
+      for (let i = 0; i < bytes.length; i += 512) conInput({ d: b64(bytes.subarray(i, i + 512)) });
+    });
+    term.focus();
+    conRead(c);
+  }
+  function renderConsole(d) {
+    if (con && con.dev !== d.id) conDetach();
+    api('GET', `/devices/${d.id}/console`).then((v) => {
+      if (selected !== d.id) return;
+      const cur = v.console, st = $('#conState');
+      let text = '', cls = '';
+      if (cur && cur.state === 'requested') { text = `Angefragt (Port ${cur.port}) – am Gerät muss jetzt jemand auf dem Display „Erlauben“ tippen.`; cls = 'wait'; }
+      else if (cur && cur.state === 'granted') { text = 'Am Gerät erlaubt – die Verbindung kommt.'; cls = 'wait'; }
+      else if (cur && cur.state === 'open') { text = `Offen auf Port ${cur.port}.`; cls = 'open'; }
+      else if (cur && cur.state === 'refused') text = `Nicht zustande gekommen: ${cur.reason}`;
+      else if (cur && cur.state === 'ended') text = `Letzte Sitzung beendet: ${cur.reason}`;
+      st.textContent = text;
+      st.className = 'dim ' + cls;
+      const busy = cur && ['requested', 'granted', 'open'].includes(cur.state);
+      $('#conForm').hidden = !!busy || d.state !== 'active';
+      if (cur && cur.state === 'open' && !(con && con.id === cur.id)) conAttach(d.id, cur.id, cur.left_s);
+      if (con) {
+        const left = Math.max(0, con.left - Math.round((Date.now() - con.leftAt) / 1000));
+        $('#conInfo').textContent = con.ended ? 'beendet' : `Port ${cur ? cur.port : ''} · noch ${mmss(left)} min`;
+        $('#conBreak').hidden = $('#conClose').hidden = con.ended;
+      }
+      const body = $('#conLog tbody');
+      body.textContent = '';
+      for (const l of v.sessions.slice().reverse()) {
+        const dur = l.end ? Math.round((new Date(l.end) - new Date(l.start)) / 1000) : null;
+        body.append(el('tr', null,
+          el('td', { textContent: l.id }),
+          el('td', { textContent: l.port }),
+          el('td', { textContent: when(l.start) }),
+          el('td', { textContent: dur == null ? 'läuft' : mmss(dur) + ' min' }),
+          el('td', { textContent: l.reason || '' }),
+          el('td', { textContent: l.end ? `${l.bytes_in} / ${l.bytes_out}` : '' })));
+      }
+      $('#conLog').hidden = !v.sessions.length;
+    }).catch(() => {});
+  }
+  $('#conForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    send('console', { port: +$('#conPort').value, minutes: +$('#conMinutes').value });
+  });
+  $('#conBreak').addEventListener('click', () => { conInput({ brk: true }); if (con) con.term.focus(); });
+  $('#conClose').addEventListener('click', async () => {
+    if (!con) return;
+    try { await api('POST', `/devices/${con.dev}/console/${con.id}/close`); } catch (err) { toast(err.message); }
+  });
+  window.addEventListener('resize', () => { if (con) con.fit.fit(); });
+
   $('#revoke').addEventListener('click', async () => {
     const d = devices.find((x) => x.id === selected);
     if (!d || !confirm(`„${d.name || d.id}“ sperren?\nDas gilt sofort und endgültig: Das Gerät kommt auch mit einer neuen Einladung nicht zurück.`)) return;

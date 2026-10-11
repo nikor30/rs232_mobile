@@ -599,6 +599,14 @@ static void handleC2Get() {
   d["taskStackFree"] = i.taskStackFree;
   d["sta"] = staConnected();
   d["control"] = settings.c2Control;
+  C2::Console rc = C2::console();
+  static const char *const CON[] = {"none", "asked", "open"};
+  d["console"]["state"] = CON[rc.state];
+  if (rc.state) {
+    d["console"]["port"] = rc.port + 1;
+    d["console"]["minutes"] = rc.minutes;
+    d["console"]["leftS"] = rc.leftS;
+  }
   String out;
   serializeJson(d, out);
   sendJson(200, out);
@@ -825,6 +833,12 @@ static void setupHttp() {
     if (deserializeJson(d, http.arg("plain")) || !d["allow"].is<bool>()) return sendJson(400, "{\"ok\":false,\"error\":\"JSON ungültig\"}");
     settings.c2Control = d["allow"];
     Store::save();
+    sendJson(200, "{\"ok\":true}");
+  });
+  // The remote console can be closed from here; opening one takes a tap on the display.
+  http.on("/api/c2/console/end", HTTP_POST, []() {
+    if (!guard()) return;
+    C2::consoleEnd();
     sendJson(200, "{\"ok\":true}");
   });
   http.on("/api/c2/forget", HTTP_POST, []() {

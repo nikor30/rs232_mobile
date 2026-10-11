@@ -1295,6 +1295,11 @@
       $('#c2Forget').hidden = c.state === 'off' || c.state === 'failed';
       if (document.activeElement !== $('#c2Control')) $('#c2Control').checked = !!c.control;
       $('#c2Enroll').disabled = c.state === 'failed' || c.state === 'enrolling';
+      const rc = c.console || { state: 'none' };
+      $('#c2ConRow').hidden = rc.state === 'none';
+      $('#c2ConEnd').hidden = rc.state !== 'open';
+      $('#c2Con').textContent = rc.state === 'asked' ? `angefragt für Port ${rc.port}, ${rc.minutes} min – am Display des Geräts erlauben oder ablehnen`
+        : rc.state === 'open' ? `offen auf Port ${rc.port}, noch ${Math.floor(rc.leftS / 60)}:${String(rc.leftS % 60).padStart(2, '0')} min` : '';
     } catch (e) { /* the next round tries again */ }
     c2Timer = setTimeout(loadC2, 3000);
   }
@@ -1331,6 +1336,9 @@
       toast('Einladungs-Token übernommen – mit „Anmelden“ bestätigen', 5000);
     }, 300);
   }
+  $('#c2ConEnd').addEventListener('click', async () => {
+    try { await fetch('/api/c2/console/end', { method: 'POST' }); toast('Fernkonsole beendet'); loadC2(); } catch (e) { toast('Gerät nicht erreichbar'); }
+  });
   $('#c2Forget').addEventListener('click', async () => {
     if (!confirm('Von der Leitstelle abmelden?\nDer Geräteschlüssel wird gelöscht; für eine neue Anmeldung braucht es ein neues Token.')) return;
     try { await fetch('/api/c2/forget', { method: 'POST' }); toast('Abgemeldet'); loadC2(); } catch (e) { toast('Gerät nicht erreichbar'); }

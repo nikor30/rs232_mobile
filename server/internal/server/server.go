@@ -60,6 +60,26 @@ var commandArgs = map[string]func(args json.RawMessage) error{
 	"settings": noArgs, // settings without passwords or keys
 	"configs":  noArgs, // stored configurations
 	"reboot":   noArgs,
+	// Remote console on a serial port. Somebody at the device has to agree on
+	// its touch display, each time; minutes is the most they are asked for.
+	"console": func(args json.RawMessage) error {
+		var a struct {
+			Port    int `json:"port"`
+			Minutes int `json:"minutes"`
+		}
+		dec := json.NewDecoder(bytes.NewReader(args))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&a); err != nil {
+			return errors.New(`console needs {"port": 1, "minutes": 15}`)
+		}
+		if a.Port < 1 || a.Port > 4 {
+			return errors.New("port: 1 to 4")
+		}
+		if a.Minutes < 1 || a.Minutes > 60 {
+			return errors.New("minutes: 1 to 60")
+		}
+		return nil
+	},
 	"play": func(args json.RawMessage) error { // play a stored configuration to a serial port
 		var a struct {
 			Name string `json:"name"`
@@ -103,6 +123,7 @@ type Server struct {
 	now   func() time.Time
 	mu    sync.Mutex
 	sess  map[[proto.IDSize]byte]*session
+	cons  map[string]*console // remote consoles by device ID, open or just ended
 	sweep time.Time
 }
 
@@ -113,7 +134,7 @@ func New(cfg Config, st *store.Store) *Server {
 	if cfg.Commands == nil {
 		cfg.Commands = AllCommands()
 	}
-	return &Server{cfg: cfg, st: st, now: time.Now, sess: map[[proto.IDSize]byte]*session{}}
+	return &Server{cfg: cfg, st: st, now: time.Now, sess: map[[proto.IDSize]byte]*session{}, cons: map[string]*console{}}
 }
 
 // SetClock replaces the time source (tests).
@@ -134,6 +155,10 @@ func (sv *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /admin/v1/devices/{id}/revoke", sv.admin(sv.revoke))
 	mux.HandleFunc("POST /admin/v1/devices/{id}/commands", sv.admin(sv.enqueue))
 	mux.HandleFunc("GET /admin/v1/devices/{id}/commands", sv.admin(sv.listCommands))
+	mux.HandleFunc("GET /admin/v1/devices/{id}/console", sv.admin(sv.conStatus))
+	mux.HandleFunc("GET /admin/v1/devices/{id}/console/{sess}/output", sv.admin(sv.conOutput))
+	mux.HandleFunc("POST /admin/v1/devices/{id}/console/{sess}/input", sv.admin(sv.conInput))
+	mux.HandleFunc("POST /admin/v1/devices/{id}/console/{sess}/close", sv.admin(sv.conClose))
 	return mux
 }
 
@@ -223,11 +248,12 @@ func (sv *Server) handshake(w http.ResponseWriter, r *http.Request) {
 }
 
 type deviceMsg struct {
-	T       string          `json:"t"` // "enroll" or "poll"
+	T       string          `json:"t"` // "enroll", "poll" or "con"
 	Name    string          `json:"name,omitempty"`
 	Info    json.RawMessage `json:"info,omitempty"`
 	Status  json.RawMessage `json:"status,omitempty"`
 	Results []store.Result  `json:"results,omitempty"`
+	conMsg                  // "con": the remote console
 }
 
 type serverCmd struct {
@@ -287,6 +313,7 @@ func (sv *Server) msg(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := serverMsg{PollS: sv.cfg.PollS}
+	var reply any = &out
 	switch {
 	case e.enroll && m.T == "enroll":
 		if len(m.Name) > 64 || len(m.Info) > 2048 {
@@ -313,11 +340,23 @@ func (sv *Server) msg(w http.ResponseWriter, r *http.Request) {
 		for _, c := range cmds {
 			out.Cmds = append(out.Cmds, serverCmd{c.ID, c.Type, c.Args})
 		}
+	case !e.enroll && m.T == "con":
+		if d, err := sv.st.Device(e.deviceID); err != nil || d.State != store.StateActive {
+			sv.drop(sid)
+			http.Error(w, "", http.StatusForbidden)
+			return
+		}
+		r, err := sv.conDevice(e.deviceID, &m.conMsg)
+		if err != nil {
+			http.Error(w, "", http.StatusBadRequest)
+			return
+		}
+		reply = r
 	default:
 		http.Error(w, "", http.StatusBadRequest)
 		return
 	}
-	b, _ := json.Marshal(out)
+	b, _ := json.Marshal(reply)
 	rec, err := e.s.Seal(b)
 	if err != nil {
 		http.Error(w, "", http.StatusInternalServerError)
@@ -352,7 +391,7 @@ func fail(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		code = http.StatusNotFound
-	case errors.Is(err, store.ErrState), errors.Is(err, store.ErrFull):
+	case errors.Is(err, store.ErrState), errors.Is(err, store.ErrFull), errors.Is(err, store.ErrBusy):
 		code = http.StatusConflict
 	case errors.Is(err, store.ErrSAS):
 		code = http.StatusForbidden
@@ -473,6 +512,9 @@ func (sv *Server) revoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sv.mu.Lock()
+	if c := sv.cons[id]; c != nil {
+		sv.conEnd(c, "Gerät gesperrt")
+	}
 	for sid, e := range sv.sess { // its open sessions end now, not at the next handshake
 		if e.deviceID == id {
 			delete(sv.sess, sid)

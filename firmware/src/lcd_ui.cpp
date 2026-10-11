@@ -149,6 +149,9 @@ struct Snapshot {
   uint8_t ports;
   char    apSsid[33], apPass[65], apIp[16], staIp[16], hostname[33];
   char    c2[32];              // command-and-control server: state, or the code to confirm
+  uint8_t conState;            // remote console: 0 none, 1 the server asks, 2 open
+  uint16_t conMinutes;
+  char    conPort[20], conLeft[12];
   bool    staConfigured, staConnected, tcpEnabled, tcpConnected;
   uint8_t webClients, apStations;
   uint8_t bleState;
@@ -242,11 +245,12 @@ enum Cmd : uint8_t {
   B_NONE = 0,
   // handled in the UI task
   B_PREV, B_NEXT, B_PORT, B_BACK, B_LIST_PREV, B_LIST_NEXT, B_CFG_ROW, B_CFG_CANCEL, B_PLAY_ACK, B_NET_OPEN, B_NET_ROW,
-  B_ASK_FORGET, B_ASK_OFF, B_ASK_CAL_FULL, B_ASK_CAL_EMPTY, B_ASK_CAL_RESET, B_CONFIRM,
+  B_ASK_FORGET, B_ASK_OFF, B_ASK_CAL_FULL, B_ASK_CAL_EMPTY, B_ASK_CAL_RESET, B_CONFIRM, B_CON_MENU, B_CON_BACK,
   K_CHAR, K_SHIFT, K_SYM, K_BKSP, K_OK,
   // carried out by the main loop
   B_BAUD, B_AUTO, B_BREAK, B_ENTER, B_CTRLC, B_REC, B_BT, B_SD, B_PLAY, B_STOP, B_SCAN, B_JOIN, B_FORGET,
-  B_BRIGHT_DOWN, B_BRIGHT_UP, B_TIMEOUT, B_POWEROFF, B_CAL_FULL, B_CAL_EMPTY, B_CAL_RESET
+  B_BRIGHT_DOWN, B_BRIGHT_UP, B_TIMEOUT, B_POWEROFF, B_CAL_FULL, B_CAL_EMPTY, B_CAL_RESET,
+  B_CON_ALLOW, B_CON_DENY, B_CON_END
 };
 static const uint8_t FIRST_LOOP_CMD = B_BAUD;
 
@@ -386,6 +390,14 @@ static void buildSnapshot() {
   copyStr(s.apIp, sizeof(s.apIp), Net::apIp());
   copyStr(s.hostname, sizeof(s.hostname), settings.hostname);
   copyStr(s.c2, sizeof(s.c2), C2::line());
+  C2::Console rc = C2::console();
+  s.conState = rc.state;
+  if (rc.state) {
+    s.conMinutes = rc.minutes;
+    copyStr(s.conPort, sizeof(s.conPort), Store::portName(rc.port));
+    if (rc.leftS >= 120) snprintf(s.conLeft, sizeof(s.conLeft), "%lu min", (unsigned long)((rc.leftS + 59) / 60));
+    else snprintf(s.conLeft, sizeof(s.conLeft), "%lu s", (unsigned long)rc.leftS);
+  }
   s.staConfigured = settings.staSsid.length() > 0;
   s.staConnected = Net::staConnected();
   if (s.staConnected) copyStr(s.staIp, sizeof(s.staIp), Net::staIp());
@@ -528,6 +540,9 @@ static void runCommand(uint8_t id, uint8_t arg, uint8_t port) {
       if (arg < cfgCount && !Player::start(cfgNames[arg], port)) message("Konfiguration", Player::result(), 2500);
       break;
     case B_STOP: Player::stop(); break;
+    case B_CON_ALLOW: C2::consoleAnswer(true); break;
+    case B_CON_DENY: C2::consoleAnswer(false); break;
+    case B_CON_END: C2::consoleEnd(); break;
     case B_SCAN: startScan(); break;
     case B_JOIN: {
       Lock l(stateMux);
@@ -719,6 +734,9 @@ static char kbText[64];                  // what has been typed
 static uint8_t kbLayer = 0;              // 0 lower, 1 upper, 2 symbols
 
 static bool modal() { return screen == S_SETUP && setupMode != SETUP_MAIN; }
+static bool conMenu = false;             // "close the remote console?" is on the screen
+// A question about the remote console lies over the page: nothing else reacts.
+static bool overlay() { return S.conState == 1 || (S.conState == 2 && conMenu); }
 
 static String fmtBytes(uint32_t b) {
   char buf[12];
@@ -1021,6 +1039,9 @@ static void pressed(uint8_t id, uint8_t arg) {
     case B_CFG_ROW: cfgSel = arg; return;
     case B_CFG_CANCEL: cfgSel = -1; return;
     case B_PLAY_ACK: playAcked = true; return;
+    case B_CON_MENU: conMenu = true; return;
+    case B_CON_BACK: conMenu = false; return;
+    case B_CON_END: conMenu = false; break;
     case B_PLAY: playAcked = false; cfgSel = -1; break;
     case B_NET_OPEN: setupMode = SETUP_NETS; listPage = 0; sendCmd(B_SCAN); return;
     case B_BACK:
@@ -1147,7 +1168,7 @@ static void touchPoll(uint32_t now) {
   if (touchSwallow) return;
   if (scrolling) { scrolling = false; return; }
   int dx = touchX - touchX0, dy = touchY - touchY0;
-  if (abs(dx) > 50 && abs(dx) > abs(dy) && !modal()) press(dx < 0 ? B_NEXT : B_PREV);   // swipe left = next screen
+  if (abs(dx) > 50 && abs(dx) > abs(dy) && !modal() && !overlay()) press(dx < 0 ? B_NEXT : B_PREV);   // swipe left = next screen
   else if (abs(dx) < 16 && abs(dy) < 16) tapAt(touchX0, touchY0);
 }
 
@@ -1227,11 +1248,15 @@ static void drawHeader() {
     return;
   }
   g->drawString(">", W - 16, HEAD_H / 2);
-  g->setTextColor(C_TEXT);
-  g->drawString(TITLES[screen], W / 2, HEAD_H / 2);
-  int titleLeft = W / 2 - g->textWidth(TITLES[screen]) / 2;
+  // While the server has a console open, every page says so in place of its
+  // title; a tap there leads to "Beenden".
+  const char *title = S.conState == 2 ? "Fernkonsole" : TITLES[screen];
+  g->setTextColor(S.conState == 2 ? C_RED : C_TEXT);
+  g->drawString(title, W / 2, HEAD_H / 2);
+  int titleLeft = W / 2 - g->textWidth(title) / 2;
   addHotspot(0, 0, 64, HEAD_H + 6, B_PREV);
   addHotspot(W - 64, 0, 64, HEAD_H + 6, B_NEXT);
+  if (S.conState == 2) addHotspot(64, 0, W - 128, HEAD_H + 6, B_CON_MENU);
 
   // link lamps: web/TCP client, Bluetooth, recording
   int x = W - 44;
@@ -1793,6 +1818,32 @@ static void drawMessage() {
   for (int i = 0; i < nb; i++, y += LINE_H) g->drawString(b[i].c_str(), W / 2, y);
 }
 
+// The question the server's request for a console puts to whoever stands at the
+// device, and the way to end a console that is open.
+static void drawConsoleDialog() {
+  bool ask = S.conState == 1;
+  btnCount = 0;                          // nothing underneath can be touched
+  cTop = cBot = 0;
+  int w = W - 16, h = 156, x = 8, y = (H - h) / 2;
+  g->fillRoundRect(x, y, w, h, 8, C_PANEL);
+  g->drawRoundRect(x, y, w, h, 8, ask ? C_AMBER : C_RED);
+  g->setTextDatum(lgfx::top_center);
+  g->setFont(&fonts::DejaVu18);
+  g->setTextColor(C_TEXT);
+  g->drawString("Fernkonsole", W / 2, y + 8);
+  char text[112];
+  if (ask) snprintf(text, sizeof(text), "Die Leitstelle moechte %s fuer %u min bedienen. Erlauben?", S.conPort, S.conMinutes);
+  else snprintf(text, sizeof(text), "Die Leitstelle bedient %s, noch %s.", S.conPort, S.conLeft);
+  g->setFont(&fonts::DejaVu12);
+  g->setTextColor(C_DIM);
+  String lines[3];
+  int n = wrap(text, w - 20, lines, 3);
+  for (int i = 0; i < n; i++) g->drawString(lines[i].c_str(), W / 2, y + 38 + i * LINE_H);
+  int bw = (w - 3 * BTN_GAP) / 2, by = y + h - BTN_H - 8;
+  button(x + BTN_GAP, by, bw, BTN_H, ask ? "Ablehnen" : "Zurueck", ask ? B_CON_DENY : B_CON_BACK);
+  button(x + 2 * BTN_GAP + bw, by, bw, BTN_H, ask ? "Erlauben" : "Beenden", ask ? B_CON_ALLOW : B_CON_END, ask ? C_GREEN : C_RED);
+}
+
 static void draw(uint32_t now) {
   if (!S.portOn[selPort]) nextPort();
   btnCount = 0;
@@ -1820,7 +1871,9 @@ static void draw(uint32_t now) {
   }
   if (!contentH) { cTop = cBot = 0; scrollY = 0; }
   drawNav();
-  if ((int32_t)(msgUntil - now) > 0) drawMessage();
+  if (S.conState == 2) g->fillRect(0, HEAD_H - 2, W, 2, C_RED);
+  if (overlay()) drawConsoleDialog();
+  else if ((int32_t)(msgUntil - now) > 0) drawMessage();
   if (g == &lcd) busUnlock();
   flush();
   statFrames = statFrames + 1;
@@ -1962,6 +2015,8 @@ static void uiTask(void *) {
     }
 
     static bool msgWasShown = false;
+    if (S.conState != 2) conMenu = false;
+    if (S.conState == 1) msgShown = true;  // the question stays lit until it is answered
     if (msgShown && !on) uiWake();
     if (msgShown != msgWasShown) { msgWasShown = msgShown; changed = true; }
 
@@ -2027,6 +2082,7 @@ bool begin() {
 }
 
 bool isOn() { return ready && uiOn; }
+bool usable() { return ready; }
 uint8_t page() { return uiScreen == S_STATUS ? PAGE_STATUS : PAGE_INFO; }
 
 void applyBrightness() { reqBrightness = true; }
