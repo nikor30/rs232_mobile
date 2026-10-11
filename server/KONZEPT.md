@@ -105,6 +105,7 @@ Aufträge, die es gibt (die Liste steht zweimal: am Server in `commandArgs`, am 
 | `configs` | Liste der gespeicherten Konfigurationen | nein |
 | `play` `{"name":"…","port":1}` | spielt eine gespeicherte Konfiguration auf einen seriellen Port ab; die Antwort kommt, wenn sie durch ist | **ja** |
 | `reboot` | startet das Gerät neu, nachdem die Antwort beim Server ist | **ja** |
+| `console` `{"port":1,"minutes":15}` | fragt nach einer Fernkonsole (§4.5); die Antwort ist das Ja oder Nein vom Display | **am Display, jedes Mal** |
 
 **Freigabe am Gerät:** Lesen darf der Server immer. Was etwas verändert, führt das Gerät nur aus, wenn in seiner eigenen Weboberfläche der Haken „Die Leitstelle darf Konfigurationen abspielen und das Gerät neu starten" gesetzt ist. Der Haken ist aus, lässt sich nur am Gerät setzen und gehört zu keinem Auftrag — ein übernommener Server kann ihn nicht einschalten.
 
@@ -124,11 +125,35 @@ Damit weiß das Gerät: richtiger Server (Fingerabdruck aus dem Token, im Handsh
 
 **Sperren:** Ein gesperrtes Gerät wird sofort getrennt und kommt auch mit neuem Token nicht zurück (sein Schlüssel ist bekannt und gesperrt).
 
+### 4.5 Fernkonsole
+
+Der Administrator bedient einen seriellen Port des Geräts aus seinem Browser. Das ist die heikelste Funktion der Leitstelle, deshalb gilt der Haken aus §4.3 hier nicht: **Jede Sitzung braucht einen Tipp auf dem Touch-Display des Geräts.**
+
+1. **Anfragen.** Der Auftrag `console` nennt Port (1–4) und Dauer (1–60 Minuten). Er verfällt schneller als andere Aufträge: nicht abgeholt nach zwei, unbeantwortet nach drei Minuten. Je Gerät gibt es höchstens eine angefragte oder offene Fernkonsole.
+2. **Zustimmen.** Das Display zeigt „Die Leitstelle möchte … für … min bedienen. Erlauben?". Ohne Antwort binnen 60 s gilt die Anfrage als abgelehnt; nach einem Nein oder ohne Antwort weist das Gerät weitere Anfragen 60 s lang ab. Ein Gerät ohne brauchbares Display lehnt immer ab.
+3. **Öffnen.** Erst nach dem Ja schickt das Gerät Konsolennachrichten. Der Server nimmt sie nur für einen `console`-Auftrag an, den das Gerät vor weniger als zwei Minuten mit Ja beantwortet hat und der noch nicht benutzt wurde.
+4. **Beenden** kann jede Seite: der Administrator, wer am Gerät steht (Tipp auf die rote Titelzeile oder Knopf in der Weboberfläche des Geräts), die abgelaufene Zeit, das Sperren des Geräts. Hört der Server 45 s nichts vom Gerät oder das Gerät 30 s nichts vom Server, ist die Sitzung zu.
+
+Die Nachrichten laufen im selben verschlüsselten Kanal wie alles andere (`POST /v1/msg`):
+
+```
+Gerät → Server   {"t":"con","id":5,"off":1200,"d":"<base64>","iack":17,"left_s":280,"end":""}
+Server → Gerät   {"ioff":17,"d":"<base64>","brk":1,"end":""}
+```
+
+Beide Richtungen sind Byteströme mit Offsets: `off` ist die Stelle von `d` in der Ausgabe des Ports seit Beginn der Sitzung, `iack` sagt, wie viel Eingabe das Gerät übernommen hat, `ioff` ist die Stelle der mitgeschickten Eingabe. Eine Nachricht, die nach einer verlorenen Antwort wiederholt wird, bringt so nichts doppelt. `brk` zählt die verlangten BREAKs, `end` nennt den Grund für das Ende.
+
+Das Gerät fragt weiterhin von sich aus — es gibt keinen Weg vom Server zum Gerät. Solange eine Konsole offen ist, fragt es ohne Pause und hält dafür die Verbindung offen (HTTP/1.1 mit keep-alive statt einer Verbindung je Anfrage; eine zweite TLS-Verbindung hätte keinen Platz im Speicher). Der Server hält eine leere Frage bis zu 200 ms fest, falls gerade etwas getippt wird. Der Browser holt die Ausgabe per Long-Polling ab einem Offset (bis 20 s) und schickt Eingaben der Reihe nach.
+
+**Was der Server sieht und behält:** Die Zeichen laufen im Klartext durch den Server — er könnte mitlesen. Die Fernkonsole ist also **nicht** Ende-zu-Ende bis zum Browser, anders als in Phase 0 gedacht. Aufgezeichnet wird je Sitzung nur: Port, Beginn, Ende, Grund, Zahl der Zeichen in jede Richtung (die letzten 50 je Gerät). Die Ausgabe liegt bis zu 256 kB im Speicher, damit ein Browser nach einer Unterbrechung weiterlesen kann, und noch zehn Minuten nach dem Ende. Sitzungen überleben keinen Neustart des Servers; im Protokoll steht dann „Server neu gestartet".
+
+**Am Gerät:** Solange die Konsole offen ist, steht auf jeder Seite des Displays rot „Fernkonsole" statt des Titels. Was der Administrator tippt, geht an den Port wie eine Eingabe im Web-Terminal; was der Port gerade nicht annimmt (Dateiübertragung, Auto-Baud), fällt weg. Die Ausgabe beginnt mit dem Ja — was vorher auf dem Schirm stand, bleibt am Gerät.
+
 ## 5. Server
 
 - **Go, nur Standardbibliothek** (`crypto/mlkem` nach FIPS 203, `crypto/ecdh`, `crypto/hkdf`, AES-GCM). Keine fremden Pakete, ein statisches Programm, Container ohne Shell und ohne Root.
-- **Admin-Schnittstelle** `/admin/v1/…`, JSON, geschützt durch ein Bearer-Token aus der Umgebung: Token erzeugen, Geräte auflisten, bestätigen, sperren, Auftrag einreihen, Aufträge und Ergebnisse lesen. Auftragsarten und ihre Argumente stehen auf einer festen Liste; alles andere weist der Server ab, bevor es ein Gerät erreicht.
-- **Weboberfläche** unter `/`: dieselbe Schnittstelle zum Anklicken — Geräteliste mit Zustand, Akku und WLAN-Pegel, Einladung mit QR-Code, Bestätigen mit Code, Aufträge, Verlauf mit Antworten, Sperren. Eine Seite ohne fremde Quellen (strenge Content-Security-Policy), in den Server eingebettet. Das Admin-Token wird beim Öffnen eingetippt und bleibt im Browser-Tab. Namen und Antworten von Geräten kommen nur als Text auf die Seite, nie als HTML.
+- **Admin-Schnittstelle** `/admin/v1/…`, JSON, geschützt durch ein Bearer-Token aus der Umgebung: Token erzeugen, Geräte auflisten, bestätigen, sperren, Auftrag einreihen, Aufträge und Ergebnisse lesen, Fernkonsole (Zustand, Ausgabe, Eingabe, Beenden). Auftragsarten und ihre Argumente stehen auf einer festen Liste; alles andere weist der Server ab, bevor es ein Gerät erreicht.
+- **Weboberfläche** unter `/`: dieselbe Schnittstelle zum Anklicken — Geräteliste mit Zustand, Akku und WLAN-Pegel, Einladung mit QR-Code, Bestätigen mit Code, Aufträge, Verlauf mit Antworten, Fernkonsole mit Terminal (xterm.js), Sperren. Eine Seite ohne fremde Quellen (strenge Content-Security-Policy), in den Server eingebettet. xterm.js gestaltet sich mit `<style>`-Elementen und `style`-Attributen, die `style-src 'self'` nicht zulässt; `web/xterm-csp.js` leitet beides auf konstruierte Stylesheets und direkt gesetzte Stileigenschaften um, statt die Richtlinie aufzuweichen. Das braucht `adoptedStyleSheets` im Browser. Das Admin-Token wird beim Öffnen eingetippt und bleibt im Browser-Tab. Namen und Antworten von Geräten kommen nur als Text auf die Seite, nie als HTML.
 - **QR-Code:** Er trägt die Adresse der Weboberfläche des Geräts im eigenen Hotspot samt Token (`http://192.168.4.1/#c2=…`). Ein Handy im Hotspot des Geräts scannt ihn, die Geräteseite öffnet sich mit eingetragenem Token; „Anmelden" tippt der Mensch selbst.
 - **Zustand** in einer JSON-Datei im Datenverzeichnis (Serverschlüssel, Geräte, Tokens, Aufträge), atomar geschrieben, Rechte 0600. Reicht für wenige Geräte und einen Prozess. „Zuletzt gesehen" und der gemeldete Status werden nicht bei jeder Meldung geschrieben, sondern mit der nächsten echten Änderung oder nach einer Minute; nach einem Absturz kann diese Angabe also bis zu einer Minute alt sein.
 - **TLS:** lokal selbstsigniert (wird beim ersten Start erzeugt), mit eigenen Zertifikatsdateien, oder aus (hinter einem Proxy, der TLS beendet).
@@ -141,7 +166,7 @@ Damit weiß das Gerät: richtiger Server (Fingerabdruck aus dem Token, im Handsh
 | **1 Server-Kern** | Protokoll, Registrierung mit Code, Sitzungen, Auftragswarteschlange, Admin-API, Gerätesimulator, Docker, Tests | **fertig, lokal getestet** (§7) |
 | **2 Firmware-Client** | ML-KEM-768 auf dem ESP32-S3 (mlkem-native), X25519/HMAC/AES-GCM aus mbedTLS 2; Geräteschlüssel im NVS; Token-Eingabe in der Weboberfläche; Code auf dem Touch-Display; Poll-Schleife; Aufträge `ping` und `status` | **fertig, am Gerät im lokalen Netz getestet** (§7); offen: Weboberfläche im Browser ansehen, QR-Code fürs Token |
 | **3 Aufträge und Oberfläche** | Status und Telemetrie (Akku, WLAN, Ports), Einstellungen lesen, Konfigurationen auflisten und auf einen Port abspielen, Neustart; Freigabe am Gerät für alles, was verändert; Aufträge verfallen; Weboberfläche für den Administrator; QR-Code fürs Token | **fertig, im Browser und am Gerät getestet** (§7). Das Firmware-Update ist herausgenommen: Es gehört mit Signaturprüfung im Gerät zusammen (Zeile „später") |
-| **4 Fernkonsole** | serielle Konsole über die Leitstelle, Ende-zu-Ende bis zum Browser des Administrators; nur nach Freigabe am Gerät (Touch), zeitlich begrenzt, mit Protokoll. Braucht einen schnelleren Rückkanal (Long-Polling oder WebSocket) | offen |
+| **4 Fernkonsole** | serielle Konsole über die Leitstelle, Ende-zu-Ende bis zum Browser des Administrators; nur nach Freigabe am Gerät (Touch), zeitlich begrenzt, mit Protokoll. Braucht einen schnelleren Rückkanal (Long-Polling oder WebSocket) | **gebaut; Server und Admin-Weboberfläche mit simuliertem Gerät getestet, Firmware-Seite ohne festgehaltene Prüfung** (§7). Abweichung: nicht Ende-zu-Ende, der Server leitet die Zeichen im Klartext durch (§4.5) |
 | **5 Cloud-Betrieb** | Datenbank statt JSON-Datei; echtes TLS-Zertifikat (Proxy oder ACME); Begrenzung der Anfragerate; Sicherung des Datenverzeichnisses; Benutzerkonten mit zweitem Faktor statt eines Tokens; Wechsel des Serverschlüssels; Überwachung | offen |
 | **später** | Firmware-Update über die Leitstelle, signiert (ML-DSA oder SLH-DSA) und im Gerät geprüft — ohne Signatur könnte ein übernommener Server beliebige Firmware einspielen; Flash-Verschlüsselung für den Geräteschlüssel | offen |
 
@@ -176,6 +201,15 @@ Die Geräteseite des Protokolls ist `firmware/src/c2_proto.cpp` (ohne Arduino, l
 - **Nicht geprüft:** das Scannen des QR-Codes mit einem echten Handy im Hotspot des Geräts; die Weboberfläche auf einem Handy; `play` mit einem angeschlossenen Gerät an der seriellen Leitung (ohne Gegenstelle wartet jede Zeile zwei Sekunden); Verfallen von Aufträgen am echten Gerät.
 - **Aufgefallen:** `test/ui.sh` schlug zweimal von sieben Läufen fehl, beide Male, als auf dem Raspberry Pi gleichzeitig anderes lief (ein Auftrag blieb 20 s auf „wartet"). Die Ursache ist nicht gefunden und der Fehler ließ sich nicht gezielt hervorrufen. Vermutet wird, dass der Server bei jeder Gerätemeldung seine Zustandsdatei schrieb und dabei alle anderen Aufrufe warten ließ; das ist geändert (§5), zwei Läufe danach waren in Ordnung — das belegt die Vermutung nicht. Im Geräte-Browsertest wartete Playwright beim normalen Klick auf den Haken vergeblich auf ein „ruhiges" Element; mit erzwungenem Klick ging es. Auch das ist nicht geklärt.
 
+### Phase 4: Fernkonsole
+
+Stand 11. Oktober 2026.
+
+- **Server** (4 weitere Tests in `console_test.go`, zusammen 27): Sitzung hin und zurück samt Beenden durch den Administrator; ohne das Ja des Geräts öffnet sich nichts — nicht ohne Anfrage, nicht mit einem Auftrag anderer Art, nicht nach einem Nein und nicht mit einem zu alten Ja; eine nicht abgeholte Anfrage verfällt nach zwei Minuten; falsche Argumente erreichen kein Gerät; Ende vom Gerät aus, nach Funkstille und beim Sperren; das Warten auf beiden Seiten (gehaltene Frage des Geräts, Long-Polling des Browsers); Überlauf des Ausgabepuffers.
+- **Admin-Weboberfläche im Browser** (`test/ui.sh`, Chromium über Playwright, gegen den Simulator mit `-console`, der einen Switch spielt): Konsole anfragen, „Offen auf Port 1", Prompt erscheint, `show` tippen und 40 Zeilen Antwort lesen, BREAK, Restzeit, „Beenden" mit Grund im Terminal und im Sitzungsprotokoll; keine JavaScript-Fehler und keine Verstöße gegen die Content-Security-Policy.
+- **Nicht geprüft:** die Firmware-Seite. `c2_console.*`, die Änderungen in `c2.cpp`, der Dialog auf dem Display und der Block in der Weboberfläche des Geräts wurden am 11. Oktober weder gebaut noch am Board ausgeführt, und ein früherer Prüfstand ist nirgends festgehalten. `tests/c2/run.sh` läuft durch, übersetzt `c2_console.cpp` aber nicht mit — der Kommentar in `c2_console.h`, der das behauptet, eilt voraus. Ebenso offen: eine Fernkonsole über das schwache WLAN am Testplatz, über TLS mit offen gehaltener Verbindung am echten Gerät, mit einem angeschlossenen Switch; die Admin-Oberfläche in Firefox und Safari.
+- **Aufgefallen:** Mit `style-src 'self'` blieb das Terminal ohne Gestaltung (Text kaum lesbar, Zeilen liefen aus dem Kasten), der Browser meldete je Stil einen Verstoß; behoben mit `xterm-csp.js` (§5). Der Kasten des Terminals zählte seinen Innenabstand zur Höhe, die letzte Zeile ragte heraus (`box-sizing: content-box`). Und im Browsertest verfehlte der Klick auf „Beenden" seinen Knopf: Ein Bild der ganzen Seite (`full_page`) bei Fokus im Terminal ließ die Seite an anderer Stelle stehen, als der Browser annahm. Das war der Test, nicht die Seite; das Bild zeigt jetzt nur den sichtbaren Ausschnitt.
+
 Was die Arbeit am Gerät gezeigt hat:
 
 - **TLS und ML-KEM passen nicht gleichzeitig in den Speicher.** Eine TLS-Verbindung kostet rund 45 kB Heap, der Stack für ML-KEM 28 kB. Der Schlüsseltausch wird deshalb gerechnet, bevor die Anfrage hinausgeht und nachdem die Antwort da ist — in einem kurzlebigen Task mit großem Stack, dessen Speicher sofort wieder frei ist (`big()` in `c2.cpp`).
@@ -191,6 +225,7 @@ Was die Arbeit am Gerät gezeigt hat:
 - **Keine Begrenzung der Anfragerate.** Ein Handshake kostet den Server Rechenzeit; ohne Token oder bekannte Geräte-ID wird er zwar vor der Kryptografie abgewiesen, aber eine bekannte Geräte-ID genügt, um ihn auszulösen. Gehört in Phase 5.
 - **Ein Admin-Token für alles**, keine Benutzer, kein Protokoll der Admin-Aktionen; die Weboberfläche hält das Token im Browser-Tab (`sessionStorage`). Phase 5.
 - **Aufträge** werden einmal zugestellt und verfallen (§4.3). Startet das Gerät neu, bevor es das Ergebnis meldet, erfährt der Server nicht, ob der Auftrag ausgeführt wurde — bei `play` muss man dann am Gerät nachsehen.
-- **Die Freigabe am Gerät ist ein einziger Haken** für `play` und `reboot` zusammen, und sie gilt, bis jemand sie wieder entfernt. Eine Freigabe je Vorgang, am Touch-Display, mit Ablaufzeit, ist für die Fernkonsole (Phase 4) vorgesehen.
+- **Die Freigabe am Gerät ist ein einziger Haken** für `play` und `reboot` zusammen, und sie gilt, bis jemand sie wieder entfernt. Die Fernkonsole hängt nicht an ihm: Sie braucht je Sitzung einen Tipp am Touch-Display und läuft ab (§4.5).
+- **Die Fernkonsole ist nicht Ende-zu-Ende.** Der Server leitet die Zeichen im Klartext durch; wer den Server hat, liest eine offene Sitzung mit und kann in ihr tippen. Öffnen kann er keine — das entscheidet der Mensch am Display. Was getippt und gezeigt wurde, wird nicht aufgezeichnet; damit lässt sich nachträglich auch nicht belegen, was ein Administrator in einer Sitzung getan hat.
 - **`play` kann der Server nur starten, nicht anhalten** und spielt nur, was am Gerät schon gespeichert ist; hochladen kann er nichts. Konfigurationen mit `{{Platzhaltern}}` gehen nicht (wie am Touch-Display).
 - **TLS am Gerät prüft das Zertifikat nicht** (`setInsecure()`): Der innere Kanal beweist den Server ohnehin, und nur so geht ein selbstsignierter Testserver. Ob das Gerät im Betrieb zusätzlich gegen eine CA prüft, ist zu entscheiden; es wäre die sauberere Wahl, kostet aber ein CA-Bündel im Flash. Ohne Prüfung sieht ein Mann in der Mitte, **dass** ein Gerät mit der Leitstelle spricht, und kann stören — mitlesen oder sich als Server ausgeben kann er nicht.

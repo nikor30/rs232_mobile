@@ -141,6 +141,7 @@ Was das Gerät für den Server tut, steht auf einer festen Liste in `src/c2.cpp`
 
 - **Lesen, immer erlaubt:** `ping`, `status` (was auch die eigene Weboberfläche zeigt: Ports, Zähler, Netz, Akku), `settings` (Einstellungen ohne Passwörter), `configs` (Liste der gespeicherten Konfigurationen).
 - **Verändern, nur mit Freigabe:** `play` (eine gespeicherte Konfiguration auf einen Port abspielen, wie „Skripte" am Display) und `reboot`. Dafür muss unter Menü → Netz → Leitstelle der Haken **„Die Leitstelle darf Konfigurationen abspielen und das Gerät neu starten"** gesetzt sein. Er ist ab Werk aus und lässt sich nur hier setzen, nie vom Server aus.
+- **Fernkonsole, nur mit Tipp am Display:** Mit `console` fragt der Administrator, ob er einen seriellen Port für eine bestimmte Zeit (höchstens 60 Minuten) aus seinem Browser bedienen darf. Das hängt nicht am Haken: Das Display fragt jedes Mal „Erlauben?", und ohne Antwort binnen 60 s ist es ein Nein. Solange die Konsole offen ist, steht auf jeder Seite rot „Fernkonsole"; ein Tipp darauf oder **Beenden** unter Menü → Netz → Leitstelle (`POST /api/c2/console/end`) schließt sie. Die Zeichen laufen über den Server, der sie mitlesen könnte. **Stand:** am Board noch nicht geprüft ([`../server/KONZEPT.md`](../server/KONZEPT.md) §7).
 
 Zu wissen:
 
@@ -244,6 +245,7 @@ src/legacy_ciphers.*      DES/3DES/RC2 zum Lesen alter PKCS#12-Dateien
 src/display.h, lcd_ui.cpp Touch-Oberfläche auf dem 2″-LCD
 src/ble.*                 serielle Konsole über Bluetooth LE
 src/c2.*, c2_proto.*      Client der Leitstelle: Task, Speicher, HTTP / Protokoll und Kryptografie
+src/c2_console.*          Fernkonsole: die beiden Zeichenströme mit Offsets (ohne Arduino, wie c2_proto)
 lib/mlkem_native/         ML-KEM (FIPS 203), übernommen aus mlkem-native v1.0.0
 src/sdcard.*              SD-Karte: Mitschnitte
 src/power.*, bat_curve.h  Akku-Messung, Ladeerkennung, Sparmodus, Kennlinie

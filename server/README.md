@@ -1,6 +1,6 @@
 # Leitstelle (Command-and-Control-Server)
 
-Server, bei dem sich die RS232-Konsolen anmelden und Aufträge abholen. Idee, Protokoll, Phasen und Grenzen: **[KONZEPT.md](KONZEPT.md)**. Stand: Phasen 1 bis 3 — Server mit Weboberfläche, Gerätesimulator, Client in der Firmware —, geprüft im Container und mit dem Waveshare-Board im lokalen Netz.
+Server, bei dem sich die RS232-Konsolen anmelden und Aufträge abholen. Idee, Protokoll, Phasen und Grenzen: **[KONZEPT.md](KONZEPT.md)**. Stand: Phasen 1 bis 3 — Server mit Weboberfläche, Gerätesimulator, Client in der Firmware —, geprüft im Container und mit dem Waveshare-Board im lokalen Netz. Phase 4, die Fernkonsole, ist gebaut und am Server mit dem Simulator getestet; die Firmware-Seite ist ungeprüft (KONZEPT.md §7).
 
 **Nicht ins Internet stellen.** Dafür fehlt Phase 5 (KONZEPT.md §6); die Compose-Datei bindet den Port deshalb nur an `127.0.0.1`, solange `C2_BIND` nichts anderes sagt.
 
@@ -59,6 +59,11 @@ Alle Aufrufe mit `Authorization: Bearer <C2_ADMIN_TOKEN>`.
 | `POST /admin/v1/devices/{id}/approve` `{"sas":"123456"}` | bestätigen mit dem Code vom Gerätedisplay; fünf falsche Eingaben verwerfen die Anmeldung |
 | `POST /admin/v1/devices/{id}/revoke` | sperren, sofort und endgültig |
 | `POST /admin/v1/devices/{id}/commands` `{"type":"play","args":{"name":"Demo","port":1}}` | Auftrag einreihen. Arten: `ping`, `status`, `settings`, `configs` (lesen), `play`, `reboot` (nur mit Freigabe am Gerät) — KONZEPT.md §4.3 |
+| `POST /admin/v1/devices/{id}/commands` `{"type":"console","args":{"port":1,"minutes":15}}` | Fernkonsole anfragen; am Gerät muss jemand auf dem Display zustimmen — KONZEPT.md §4.5 |
+| `GET /admin/v1/devices/{id}/console` | Zustand der Fernkonsole (`requested`, `granted`, `open`, `ended`, `refused`) und das Sitzungsprotokoll |
+| `GET /admin/v1/devices/{id}/console/{sitzung}/output?from=0` | Ausgabe des Ports ab einem Offset, base64; wartet bis zu 20 s auf Neues (`wait=` in Sekunden verkürzt das) |
+| `POST /admin/v1/devices/{id}/console/{sitzung}/input` `{"d":"<base64>","brk":false}` | Eingabe für den Port, `brk` schickt ein BREAK; 429, wenn das Gerät nicht nachkommt |
+| `POST /admin/v1/devices/{id}/console/{sitzung}/close` | Sitzung beenden |
 | `GET /admin/v1/server` | Fingerabdruck des Serverschlüssels, öffentliche Adresse, Auftragsarten |
 | `GET /admin/v1/devices/{id}/commands` | Aufträge mit Zustand (`queued`, `sent`, `done`, `failed`, `expired`) und Ergebnis |
 
@@ -86,7 +91,7 @@ Wer das Datenverzeichnis verliert, verliert den Serverschlüssel — alle Gerät
 docker build --target test .        # nur Formatierung, go vet und Unit-Tests
 ```
 
-Go muss nicht installiert sein; gebaut und getestet wird im Container.
+Go muss nicht installiert sein; gebaut und getestet wird im Container. Der Simulator sagt mit `run -console` zu jeder Anfrage nach einer Fernkonsole Ja und spielt dann einen Switch (Prompt, Echo, Antwort auf `show` und BREAK); `e2e.sh` prüft die Fernkonsole nicht, das tun die Unit-Tests und `ui.sh`.
 
 ## Aufbau
 
@@ -96,7 +101,10 @@ cmd/devsim/          Gerätesimulator
 internal/proto/      Protokoll: Handshake, Nachrichten, Einladungs-Token  ← Vorlage für die Firmware
 internal/device/     Geräteseite über HTTP (Simulator, Tests)
 internal/server/     HTTP: Geräte-Endpunkte und Admin-Schnittstelle
-internal/server/web/ Weboberfläche (eingebettet); qrcode.js ist qrcode-generator von Kazuhiko Arase, MIT, Commit 83b7e8f
+internal/server/console.go   Fernkonsole: Zeichenströme zwischen Gerät und Browser
+internal/server/web/ Weboberfläche (eingebettet); qrcode.js ist qrcode-generator von Kazuhiko Arase, MIT, Commit 83b7e8f;
+                     xterm.js, xterm.css und addon-fit.js sind unverändert übernommen (LICENSE-xterm.txt),
+                     xterm-csp.js lässt xterm unter der strengen Content-Security-Policy laufen und muss vor xterm.js geladen werden
 internal/store/      Zustand (JSON-Datei)
 test/e2e.sh          Ende-zu-Ende-Test gegen den Container
 test/ui.sh, ui_test.py   Browsertest der Weboberfläche
