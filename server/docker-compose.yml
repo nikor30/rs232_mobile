@@ -4,7 +4,15 @@ services:
     build: .
     image: rs232-c2
     environment:
-      C2_ADMIN_TOKEN: ${C2_ADMIN_TOKEN:?set C2_ADMIN_TOKEN (at least 16 characters), e.g. in .env}
+      # Needed for the first account and for scripts (at least 16 characters, e.g.
+      # in .env). Once accounts exist it can be left empty: accounts only.
+      C2_ADMIN_TOKEN: ${C2_ADMIN_TOKEN:-}
+      # Sign-in with Microsoft Entra ID, if all three are set (README.md)
+      C2_ENTRA_TENANT: ${C2_ENTRA_TENANT:-}
+      C2_ENTRA_CLIENT_ID: ${C2_ENTRA_CLIENT_ID:-}
+      C2_ENTRA_CLIENT_SECRET: ${C2_ENTRA_CLIENT_SECRET:-}
+      # 1 only behind a reverse proxy that sets X-Forwarded-For
+      C2_TRUST_PROXY: ${C2_TRUST_PROXY:-}
       # How devices reach the server. Inside the compose network that is the
       # service name; in the cloud, the public https:// address.
       C2_PUBLIC_URL: ${C2_PUBLIC_URL:-https://c2server:8443}

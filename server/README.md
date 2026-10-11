@@ -13,7 +13,9 @@ docker compose up -d --build        # erster Bau auf dem Raspberry Pi: rund 10 M
 curl -k https://127.0.0.1:8443/healthz
 ```
 
-Die **Weboberfläche** liegt unter <https://127.0.0.1:8443/> (selbstsigniertes Zertifikat, der Browser warnt): Admin-Token eintippen, dann Geräte einladen, bestätigen, Aufträge schicken, sperren. Alles Folgende geht dort auch per Klick.
+Die **Weboberfläche** liegt unter <https://127.0.0.1:8443/> (selbstsigniertes Zertifikat, der Browser warnt): Geräte einladen, bestätigen, Aufträge schicken, sperren. Alles Folgende geht dort auch per Klick.
+
+**Das erste Konto:** auf der Anmeldeseite „Mit dem Admin-Token“ aufklappen und das Token eintippen, unter „Benutzer“ ein Konto anlegen — es erscheint ein Einrichtungscode, einmal. Abmelden, „Konto einrichten“: Name, Einrichtungscode, Passwort, dann den QR-Code mit einer Authenticator-App scannen und deren Code eintippen. Danach meldet man sich mit Name, Passwort und Code an. Wer will, nimmt anschließend `C2_ADMIN_TOKEN` aus der `.env` — dann kommen nur noch Konten herein. Wie das gedacht ist: KONZEPT.md §5.1.
 
 Der Container enthält nur die beiden Programme (`/c2server`, `/devsim`), läuft ohne Root und mit schreibgeschütztem Dateisystem; der Zustand liegt im Volume `c2data`.
 
@@ -50,7 +52,7 @@ Dann wie oben einladen. Das Token kommt in die Weboberfläche des Geräts (Menü
 
 ## Admin-Schnittstelle
 
-Alle Aufrufe mit `Authorization: Bearer <C2_ADMIN_TOKEN>`.
+Alle Aufrufe mit `Authorization: Bearer <C2_ADMIN_TOKEN>` oder mit dem Cookie eines angemeldeten Kontos; mit Cookie brauchen verändernde Aufrufe zusätzlich den Kopf `X-C2: 1`. Alles Verändernde steht danach im Protokoll.
 
 | Aufruf | Wirkung |
 |---|---|
@@ -64,14 +66,31 @@ Alle Aufrufe mit `Authorization: Bearer <C2_ADMIN_TOKEN>`.
 | `GET /admin/v1/devices/{id}/console/{sitzung}/output?from=0` | Ausgabe des Ports ab einem Offset, base64; wartet bis zu 20 s auf Neues (`wait=` in Sekunden verkürzt das) |
 | `POST /admin/v1/devices/{id}/console/{sitzung}/input` `{"d":"<base64>","brk":false}` | Eingabe für den Port, `brk` schickt ein BREAK; 429, wenn das Gerät nicht nachkommt |
 | `POST /admin/v1/devices/{id}/console/{sitzung}/close` | Sitzung beenden |
+| `GET /admin/v1/users` | Konten: Art, Zustand, letzte Anmeldung — keine Geheimnisse |
+| `POST /admin/v1/users` `{"name":"anna","kind":"local"}` oder `{"name":"ben","kind":"entra","entra":"ben@firma.de"}` | Konto anlegen; für `local` kommt der Einrichtungscode zurück, einmal |
+| `POST /admin/v1/users/{name}/reset` | Passwort und Authenticator-App verwerfen, neuer Einrichtungscode |
+| `POST /admin/v1/users/{name}/disable` `{"disabled":true}` | sperren oder freigeben; Sperren beendet die Sitzungen |
+| `DELETE /admin/v1/users/{name}` | Konto löschen (nicht das eigene) |
+| `GET /admin/v1/audit?n=200` | Protokoll, neueste zuerst |
 | `GET /admin/v1/server` | Fingerabdruck des Serverschlüssels, öffentliche Adresse, Auftragsarten |
 | `GET /admin/v1/devices/{id}/commands` | Aufträge mit Zustand (`queued`, `sent`, `done`, `failed`, `expired`) und Ergebnis |
+
+## Anmeldung über Microsoft Entra ID
+
+1. Im Entra Admin Center eine **App-Registrierung** anlegen, „Nur Konten in diesem Organisationsverzeichnis“. Als Umleitungs-URI (Plattform „Web“) `<C2_PUBLIC_URL>/auth/entra/callback` eintragen.
+2. Unter „Zertifikate & Geheimnisse“ einen **geheimen Clientschlüssel** erzeugen.
+3. Dem Server mitgeben: `C2_ENTRA_TENANT` (Verzeichnis-ID, die GUID — nicht der Domainname), `C2_ENTRA_CLIENT_ID` (Anwendungs-ID), `C2_ENTRA_CLIENT_SECRET`.
+4. In der Weboberfläche unter „Benutzer“ für jede Person ein Konto der Art „Microsoft Entra ID“ anlegen, mit ihrem Anmeldenamen (`name@firma.de`) oder ihrer Objekt-ID. Ohne ein solches Konto kommt niemand herein, auch nicht aus dem eigenen Mandanten.
+
+Auf der Anmeldeseite erscheint dann „Mit Microsoft anmelden“. Den zweiten Faktor verlangt Entra (Conditional Access), nicht dieser Server. **Stand:** nur gegen einen nachgebauten Identitätsanbieter getestet, nicht gegen ein echtes Entra (KONZEPT.md §7).
 
 ## Einstellungen (Umgebung)
 
 | Variable | Vorgabe | Bedeutung |
 |---|---|---|
-| `C2_ADMIN_TOKEN` | — (Pflicht, mindestens 16 Zeichen) | Token der Admin-Schnittstelle |
+| `C2_ADMIN_TOKEN` | leer | Token der Admin-Schnittstelle, mindestens 16 Zeichen. Nötig, bis es ein Konto gibt; leer heißt: nur Konten |
+| `C2_ENTRA_TENANT`, `C2_ENTRA_CLIENT_ID`, `C2_ENTRA_CLIENT_SECRET` | leer | Anmeldung über Microsoft Entra ID (siehe oben); alle drei oder keine |
+| `C2_TRUST_PROXY` | leer | `1`: Absenderadresse aus `X-Forwarded-For` nehmen (für Anfragerate und Protokoll). Nur hinter einem Proxy, der diesen Kopf setzt |
 | `C2_PUBLIC_URL` | `https://c2server:8443` (Compose) | Adresse, unter der Geräte den Server erreichen; steht im Einladungs-Token |
 | `C2_TLS` | `selfsigned` | `selfsigned`, `files` (`C2_TLS_CERT`, `C2_TLS_KEY`) oder `off` (hinter einem Proxy, der TLS beendet) |
 | `C2_TLS_HOSTS` | `localhost,127.0.0.1,c2server` | Namen im selbstsignierten Zertifikat |
@@ -102,6 +121,8 @@ internal/proto/      Protokoll: Handshake, Nachrichten, Einladungs-Token  ← Vo
 internal/device/     Geräteseite über HTTP (Simulator, Tests)
 internal/server/     HTTP: Geräte-Endpunkte und Admin-Schnittstelle
 internal/server/console.go   Fernkonsole: Zeichenströme zwischen Gerät und Browser
+internal/server/auth.go      Konten, Sitzungen, TOTP, Protokoll;  entra.go: Anmeldung über Microsoft Entra ID;
+                             ratelimit.go: Anfragerate je Absenderadresse
 internal/server/web/ Weboberfläche (eingebettet); qrcode.js ist qrcode-generator von Kazuhiko Arase, MIT, Commit 83b7e8f;
                      xterm.js, xterm.css und addon-fit.js sind unverändert übernommen (LICENSE-xterm.txt),
                      xterm-csp.js lässt xterm unter der strengen Content-Security-Policy laufen und muss vor xterm.js geladen werden

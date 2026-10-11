@@ -347,6 +347,7 @@ func (sv *Server) conInput(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad JSON"})
 		return
 	}
+	note(r).skip = true // keystrokes: the session is on record, not every one of them
 	c := sv.conFor(w, r, true)
 	if c == nil {
 		return

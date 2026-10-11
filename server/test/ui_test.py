@@ -1,11 +1,12 @@
 """Drives the administrator's web interface in a real browser (Playwright).
 
-Run by ui.sh in three stages, because a simulated device has to act in between:
-  invite   log in, create an invitation, print the token
-  approve  type a wrong and then the right code for the pending device
-  command  send commands and read their answers from the page
+Run by ui.sh in stages, because a simulated device has to act in between:
+  invite    log in, create an invitation, print the token
+  approve   type a wrong and then the right code for the pending device
+  command   send commands and read their answers from the page
+  accounts  create an account, set it up as its owner, sign in with password and code
 """
-import sys
+import base64, hashlib, hmac, struct, sys, time
 from playwright.sync_api import sync_playwright, expect
 
 stage, base, admin = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -20,17 +21,25 @@ with sync_playwright() as p:
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.on("dialog", lambda d: d.accept())          # the confirm() questions
 
+    def totp(secret, step_offset=0):
+        key = base64.b32decode(secret.replace(" ", ""))
+        mac = hmac.new(key, struct.pack(">Q", int(time.time()) // 30 + step_offset), hashlib.sha1).digest()
+        return "%06d" % ((struct.unpack(">I", mac[mac[-1] & 15:][:4])[0] & 0x7fffffff) % 1000000)
+
     page.goto(base + "/")
+    expect(page.locator("#entraLogin")).to_be_hidden()   # not configured here
+    page.click("#tokenBox summary")
     if stage == "invite":
         # a wrong token is refused and nothing is shown
         page.fill("#adminToken", "not-the-token-0123456789")
-        page.click("#loginForm button")
+        page.click("#tokenForm button")
         expect(page.locator("#loginErr")).to_be_visible()
         expect(page.locator("#app")).to_be_hidden()
         errors.clear()                               # the 401 is the point of that step
     page.fill("#adminToken", admin)
-    page.click("#loginForm button")
+    page.click("#tokenForm button")
     expect(page.locator("#app")).to_be_visible()
+    expect(page.locator("#whoami")).to_have_text("Admin-Token")
     expect(page.locator("#srvInfo")).to_contain_text("Serverschlüssel")
 
     if stage == "invite":
@@ -111,6 +120,89 @@ with sync_playwright() as p:
         page.click("#revoke")
         expect(page.locator("#dState")).to_have_text("gesperrt")
         expect(page.locator("#commands")).to_be_hidden()
+
+    elif stage == "accounts":
+        # the administrator creates the account and gets a setup code, shown once
+        expect(page.locator("#noUsers")).to_be_visible()
+        page.click("#addUser")
+        page.fill("#userName", "Anna")
+        page.click("#userForm button[type=submit]")
+        expect(page.locator("#codeDlg")).to_be_visible()
+        setup = page.locator("#codeText").inner_text()
+        assert len(setup) == 19 and setup.count("-") == 3, setup
+        page.click("#codeClose")
+        row = page.locator("#users tbody tr", has_text="anna")
+        expect(row).to_contain_text("wartet auf Einrichtung")
+        assert setup not in page.content(), "the setup code stays on the page"
+        page.click("#logout")
+        expect(page.locator("#login")).to_be_visible()
+
+        # the owner: setup code, password, authenticator
+        page.click("#setupBox summary")
+        page.fill("#setupName", "anna")
+        page.fill("#setupCode", "AAAA-BBBB-CCCC-DDDD")
+        page.fill("#setupPass", "ein langes Passwort 1")
+        page.fill("#setupPass2", "ein langes Passwort 1")
+        page.click("#setupForm button")
+        expect(page.locator("#setupErr")).to_contain_text("stimmt nicht")
+        page.fill("#setupCode", setup.lower())           # typed as somebody would
+        page.fill("#setupPass2", "ein anderes Passwort")
+        page.click("#setupForm button")
+        expect(page.locator("#setupErr")).to_contain_text("nicht gleich")
+        page.fill("#setupPass2", "ein langes Passwort 1")
+        page.click("#setupForm button")
+        expect(page.locator("#totpForm")).to_be_visible()
+        secret = page.locator("#totpSecret").inner_text()
+        assert page.evaluate("document.querySelector('#totpQr').width") > 100
+        page.fill("#totpCode", "000000" if totp(secret) != "000000" else "111111")
+        page.click("#totpForm button")
+        expect(page.locator("#setupErr")).to_contain_text("Code stimmt nicht")
+        page.fill("#totpCode", totp(secret))
+        page.click("#totpForm button")
+        expect(page.locator("#app")).to_be_visible()
+        expect(page.locator("#whoami")).to_have_text("anna")
+        errors.clear()                               # the refusals above were the point
+        expect(page.locator("#users tbody tr", has_text="anna")).to_contain_text("aktiv")
+        audit = page.locator("#audit tbody")
+        expect(audit).to_contain_text("Konto einrichten")
+        expect(audit).to_contain_text("Benutzer angelegt")
+        expect(audit.locator("tr.failed").first).to_contain_text("abgelehnt")
+        page.screenshot(path="/out/ui-accounts.png", full_page=True)
+
+        # the session is a cookie: it survives a reload, and changing things works with it
+        page.reload()
+        expect(page.locator("#app")).to_be_visible()
+        expect(page.locator("#whoami")).to_have_text("anna")
+        page.click("#invite")
+        expect(page.locator("#inviteDlg")).to_be_visible()
+        assert page.input_value("#tokenText").startswith("c2e1:")
+        page.click("#closeInvite")
+        cookies = ctx.cookies()
+        assert len(cookies) == 1 and cookies[0]["httpOnly"] and cookies[0]["secure"] and cookies[0]["sameSite"] == "Strict" \
+            and cookies[0]["name"].startswith("__Host-"), cookies
+        assert page.evaluate("sessionStorage.length") == 0, "something is kept in the tab"
+        page.click("#logout")
+        expect(page.locator("#login")).to_be_visible()
+        page.reload()
+        expect(page.locator("#login")).to_be_visible()   # signed out at the server, not only on the page
+
+        # signing in: wrong password, then right, with the next code (the one from the setup is spent)
+        page.fill("#loginName", "anna")
+        page.fill("#loginPass", "das falsche Passwort!")
+        page.fill("#loginCode", totp(secret, 1))
+        page.click("#loginForm button")
+        expect(page.locator("#loginErr")).to_have_text("Anmeldung fehlgeschlagen")
+        errors.clear()
+        page.fill("#loginPass", "ein langes Passwort 1")
+        page.fill("#loginCode", totp(secret, 1))
+        page.click("#loginForm button")
+        expect(page.locator("#app")).to_be_visible()
+        expect(page.locator("#audit tbody tr").first).to_contain_text("Anmeldung")
+        # she cannot lock herself out
+        page.locator("#users tbody tr", has_text="anna").get_by_text("Löschen").click()
+        expect(page.locator("#toast")).to_contain_text("eigene Konto")
+        errors.clear()
+        page.click("#logout")
 
     assert not errors, errors
     browser.close()

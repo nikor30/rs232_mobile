@@ -1,7 +1,8 @@
 // Administrator's interface of the command-and-control server. Everything shown
-// here comes from the admin API (/admin/v1/...), called with the token typed in
-// at login. Device names and answers are data from devices: they only ever go
-// into the page as text, never as HTML.
+// here comes from the admin API (/admin/v1/...), called with the session cookie
+// of a signed-in account or with the admin token typed in at login. Names and
+// answers of devices and the names of accounts are data: they only ever go into
+// the page as text, never as HTML.
 (() => {
   'use strict';
   const $ = (s) => document.querySelector(s);
@@ -10,8 +11,12 @@
   const CMD_STATES = { queued: 'wartet', sent: 'abgeholt', done: 'erledigt', failed: 'abgelehnt', expired: 'verfallen' };
   const CMD_NAMES = { ping: 'Ping', status: 'Zustand', settings: 'Einstellungen', configs: 'Konfigurationen', play: 'Abspielen', reboot: 'Neustart', console: 'Fernkonsole' };
 
-  let token = sessionStorage.getItem('c2admin') || '';
+  let token = sessionStorage.getItem('c2admin') || '';   // admin token, if that is how this tab got in
+  let signedIn = false, me = '', methods = { token: false, entra: false };
   let devices = [], selected = '', timer = 0, expTimer = 0;
+  // The cookie of a signed-in account travels by itself. The X-C2 header shows
+  // the server that the call comes from this page and not from another site.
+  const authHeaders = () => (token ? { Authorization: 'Bearer ' + token } : { 'X-C2': '1' });
 
   function el(tag, props, ...kids) {
     const e = Object.assign(document.createElement(tag), props || {});
@@ -29,10 +34,10 @@
   async function api(method, path, body) {
     const r = await fetch('/admin/v1' + path, {
       method, cache: 'no-store',
-      headers: Object.assign({ Authorization: 'Bearer ' + token }, body ? { 'Content-Type': 'application/json' } : {}),
+      headers: Object.assign(authHeaders(), body ? { 'Content-Type': 'application/json' } : {}),
       body: body ? JSON.stringify(body) : undefined,
     });
-    if (r.status === 401) { logout(); throw new Error('Token nicht angenommen'); }
+    if (r.status === 401) { showLogin(); throw new Error(token ? 'Token nicht angenommen' : 'Nicht mehr angemeldet'); }
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw Object.assign(new Error(j.error || 'HTTP ' + r.status), { status: r.status });
     return j;
@@ -52,41 +57,115 @@
   }
 
   // ---- login
-  function logout() {
+  async function auth(path, body) {             // the calls around signing in: no token, no session yet
+    const r = await fetch('/auth/' + path, {
+      method: body ? 'POST' : 'GET', cache: 'no-store',
+      headers: body ? { 'Content-Type': 'application/json', 'X-C2': '1' } : {},
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw Object.assign(new Error(r.status === 429 ? 'Zu viele Versuche – einen Moment warten' : j.error || 'HTTP ' + r.status), { status: r.status });
+    return j;
+  }
+  function showLogin() {
     token = '';
+    signedIn = false;
+    me = '';
     sessionStorage.removeItem('c2admin');
     clearTimeout(timer);
     conDetach();
     $('#app').hidden = true;
     $('#logout').hidden = true;
-    $('#srvInfo').textContent = '';
+    $('#srvInfo').textContent = $('#whoami').textContent = '';
+    $('#entraLogin').hidden = !methods.entra;
+    $('#tokenBox').hidden = !methods.token;
     $('#login').hidden = false;
-    $('#adminToken').focus();
+    $('#loginName').focus();
+  }
+  function loginError(text) {
+    $('#loginErr').textContent = text;
+    $('#loginErr').hidden = false;
   }
   async function start() {
     try {
       const s = await api('GET', '/server');
-      sessionStorage.setItem('c2admin', token);
+      if (token) sessionStorage.setItem('c2admin', token);
+      signedIn = true;
       $('#srvInfo').textContent = `${s.public_url} · Serverschlüssel ${s.fingerprint.slice(0, 16)}…`;
       $('#srvInfo').title = 'Fingerabdruck des Serverschlüssels: ' + s.fingerprint;
+      $('#whoami').textContent = token ? 'Admin-Token' : me;
       $('#login').hidden = true;
       $('#app').hidden = false;
       $('#logout').hidden = false;
       refresh();
+      loadAdmin();
     } catch (e) {
-      $('#loginErr').textContent = e.message;
-      $('#loginErr').hidden = false;
-      logout();
+      showLogin();
+      loginError(e.message);
     }
   }
-  $('#loginForm').addEventListener('submit', (e) => {
+  $('#loginForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    $('#loginErr').hidden = true;
+    try {
+      const r = await auth('login', { name: $('#loginName').value, password: $('#loginPass').value, code: $('#loginCode').value });
+      me = r.user;
+      $('#loginForm').reset();
+      start();
+    } catch (err) {
+      $('#loginPass').value = $('#loginCode').value = '';
+      loginError(err.message);
+    }
+  });
+  $('#tokenForm').addEventListener('submit', (e) => {
     e.preventDefault();
     token = $('#adminToken').value.trim();
     $('#adminToken').value = '';
     $('#loginErr').hidden = true;
     start();
   });
-  $('#logout').addEventListener('click', logout);
+  $('#logout').addEventListener('click', async () => {
+    if (!token) try { await auth('logout', {}); } catch (e) { /* signed out here in any case */ }
+    showLogin();
+  });
+
+  // ---- setting up an account: setup code and password, then the authenticator app
+  let pendingSetup = null;
+  function setupError(text) {
+    $('#setupErr').textContent = text;
+    $('#setupErr').hidden = !text;
+  }
+  $('#setupForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    setupError('');
+    if ($('#setupPass').value !== $('#setupPass2').value) return setupError('Die beiden Passwörter sind nicht gleich');
+    const name = $('#setupName').value, setup = $('#setupCode').value;
+    try {
+      const r = await auth('setup', { name, setup, password: $('#setupPass').value });
+      pendingSetup = { name, setup };
+      $('#totpSecret').textContent = r.secret.replace(/(.{4})/g, '$1 ').trim();
+      drawQr($('#totpQr'), r.uri);
+      $('#setupForm').reset();
+      $('#setupForm').hidden = true;
+      $('#totpForm').hidden = false;
+      $('#totpCode').focus();
+    } catch (err) { setupError(err.message); }
+  });
+  $('#totpForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    setupError('');
+    try {
+      const r = await auth('setup/confirm', Object.assign({ code: $('#totpCode').value }, pendingSetup));
+      me = r.user;
+      pendingSetup = null;
+      $('#totpForm').reset();
+      $('#totpSecret').textContent = '';
+      $('#totpForm').hidden = true;
+      $('#setupForm').hidden = false;
+      $('#setupBox').open = false;
+      start();
+    } catch (err) { $('#totpCode').value = ''; setupError(err.message); }
+  });
 
   // ---- device list
   async function refresh() {
@@ -95,8 +174,8 @@
       devices = await api('GET', '/devices');
       renderDevices();
       if (selected) await renderDetail();
-    } catch (e) { if (token) toast(e.message); }
-    if (token) timer = setTimeout(refresh, 3000);
+    } catch (e) { if (signedIn) toast(e.message); }
+    if (signedIn) timer = setTimeout(refresh, 3000);
   }
   function renderDevices() {
     const body = $('#devices tbody');
@@ -243,7 +322,7 @@
       let o;
       try {
         const r = await fetch(`/admin/v1/devices/${c.dev}/console/${c.id}/output?from=${c.next}`, {
-          cache: 'no-store', headers: { Authorization: 'Bearer ' + token }, signal: c.abort.signal,
+          cache: 'no-store', headers: authHeaders(), signal: c.abort.signal,
         });
         if (r.status === 404) { o = { state: 'ended', reason: 'dem Server nicht mehr bekannt', d: '', next: c.next }; } else if (!r.ok) throw new Error('HTTP ' + r.status);
         else o = await r.json();
@@ -337,11 +416,11 @@
   });
 
   // ---- invitation
-  function drawQr(text) {
+  function drawQr(c, text) {
     const qr = qrcode(0, 'L');                       // smallest version that fits
     qr.addData(text, 'Byte');
     qr.make();
-    const n = qr.getModuleCount(), scale = 4, margin = 4, c = $('#qr');
+    const n = qr.getModuleCount(), scale = 4, margin = 4;
     c.width = c.height = (n + 2 * margin) * scale;
     const g = c.getContext('2d');
     g.fillStyle = '#fff';
@@ -355,7 +434,7 @@
     let t;
     try { t = await api('POST', '/enroll-tokens', { ttl_s: 600 }); } catch (err) { toast(err.message); return; }
     $('#tokenText').value = t.token;
-    drawQr(HOTSPOT + '#c2=' + encodeURIComponent(t.token));
+    drawQr($('#qr'), HOTSPOT + '#c2=' + encodeURIComponent(t.token));
     const until = new Date(t.expires);
     clearInterval(expTimer);
     const tick = () => {
@@ -372,5 +451,93 @@
   $('#closeInvite').addEventListener('click', () => $('#inviteDlg').close());
   $('#inviteDlg').addEventListener('close', () => { clearInterval(expTimer); $('#tokenText').value = ''; refresh(); });
 
-  if (token) start(); else logout();
+  // ---- accounts and the audit record
+  const KINDS = { local: 'Passwort + App', entra: 'Microsoft Entra ID' };
+  const ACTIONS = {
+    login: 'Anmeldung', 'login entra': 'Anmeldung über Microsoft', logout: 'Abmeldung', setup: 'Konto einrichten',
+    'POST /users': 'Benutzer angelegt', 'POST /users/{name}/reset': 'Konto zurückgesetzt', 'POST /users/{name}/disable': 'Konto gesperrt oder freigegeben',
+    'DELETE /users/{name}': 'Benutzer gelöscht', 'POST /enroll-tokens': 'Einladung erzeugt', 'POST /devices/{id}/approve': 'Gerät bestätigt',
+    'POST /devices/{id}/revoke': 'Gerät gesperrt', 'POST /devices/{id}/commands': 'Auftrag', 'POST /devices/{id}/console/{sess}/close': 'Fernkonsole beendet',
+  };
+  function showCode(name, code) {
+    $('#codeFor').textContent = name;
+    $('#codeText').textContent = code;
+    $('#codeDlg').showModal();
+  }
+  async function userAction(text, method, path, body) {
+    if (!confirm(text)) return;
+    try {
+      const r = await api(method, path, body);
+      if (r.setup) showCode(r.name, r.setup);
+    } catch (err) { toast(err.message, 5000); }
+    loadAdmin();
+  }
+  async function loadAdmin() {
+    let users, log;
+    try { [users, log] = await Promise.all([api('GET', '/users'), api('GET', '/audit?n=200')]); } catch (e) { return; }
+    const ub = $('#users tbody');
+    ub.textContent = '';
+    for (const u of users) {
+      const state = u.disabled ? 'gesperrt' : u.ready ? 'aktiv' : u.setup_expires ? `wartet auf Einrichtung (Code gilt bis ${when(u.setup_expires)})` : 'nicht eingerichtet, Code abgelaufen';
+      const how = KINDS[u.kind] + (u.kind === 'entra' ? ` (${u.entra_name || u.entra_oid}${u.entra_name && !u.entra_oid ? ', noch nie angemeldet' : ''})` : '');
+      const acts = el('td', { className: 'acts' });
+      const name = encodeURIComponent(u.name);
+      if (u.kind === 'local') acts.append(el('button', { className: 'btn small', textContent: 'Zurücksetzen',
+        onclick: () => userAction(`Konto „${u.name}“ zurücksetzen?\nPasswort und Authenticator-App gelten dann nicht mehr; es gibt einen neuen Einrichtungscode.`, 'POST', `/users/${name}/reset`) }));
+      acts.append(el('button', { className: 'btn small', textContent: u.disabled ? 'Freigeben' : 'Sperren',
+        onclick: () => userAction(`Konto „${u.name}“ ${u.disabled ? 'freigeben' : 'sperren'}?`, 'POST', `/users/${name}/disable`, { disabled: !u.disabled }) }));
+      acts.append(el('button', { className: 'btn small danger', textContent: 'Löschen',
+        onclick: () => userAction(`Konto „${u.name}“ löschen?`, 'DELETE', `/users/${name}`) }));
+      ub.append(el('tr', null, el('td', { textContent: u.name }), el('td', { textContent: how }), el('td', { textContent: state }),
+        el('td', { textContent: when(u.last_login) }), acts));
+    }
+    $('#users').hidden = !users.length;
+    $('#noUsers').hidden = !!users.length;
+    const ab = $('#audit tbody');
+    ab.textContent = '';
+    for (const a of log) {
+      const dev = devices.find((d) => d.id === a.target);
+      ab.append(el('tr', { className: a.ok ? '' : 'failed' },
+        el('td', { textContent: when(a.time) }), el('td', { textContent: a.who }), el('td', { textContent: a.ip }),
+        el('td', { textContent: (ACTIONS[a.action] || a.action) + (a.detail ? ': ' + a.detail : '') }),
+        el('td', { textContent: dev ? dev.name || a.target.slice(0, 8) : a.target || '' }),
+        el('td', { textContent: a.ok ? '' : 'abgelehnt' })));
+    }
+  }
+  $('#auditReload').addEventListener('click', loadAdmin);
+  $('#addUser').addEventListener('click', () => {
+    $('#userForm').reset();
+    $('#userErr').hidden = true;
+    $('#userEntraRow').hidden = true;
+    $('#userDlg').showModal();
+  });
+  $('#userKind').addEventListener('change', () => { $('#userEntraRow').hidden = $('#userKind').value !== 'entra'; });
+  $('#userCancel').addEventListener('click', () => $('#userDlg').close());
+  $('#codeClose').addEventListener('click', () => { $('#codeText').textContent = ''; $('#codeDlg').close(); });
+  $('#userForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      const r = await api('POST', '/users', { name: $('#userName').value, kind: $('#userKind').value, entra: $('#userEntra').value });
+      $('#userDlg').close();
+      if (r.setup) showCode(r.name, r.setup); else toast('Angelegt');
+      loadAdmin();
+    } catch (err) {
+      $('#userErr').textContent = err.message;
+      $('#userErr').hidden = false;
+    }
+  });
+
+  // ---- start: who is signed in, and what the login page may offer
+  (async () => {
+    try {
+      methods = await auth('methods');
+      if (methods.user && methods.kind !== 'token') { token = ''; me = methods.user; return start(); }
+    } catch (e) { /* the login page says what is wrong once somebody tries */ }
+    if (token) return start();
+    showLogin();
+    if (location.hash === '#entra=refused') {
+      history.replaceState(null, '', '/');
+      loginError('Die Anmeldung über Microsoft wurde nicht angenommen: Für dieses Microsoft-Konto gibt es hier kein freigegebenes Konto, oder die Antwort war ungültig.');
+    }
+  })();
 })();

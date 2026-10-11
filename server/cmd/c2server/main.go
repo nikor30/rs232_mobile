@@ -84,8 +84,8 @@ func main() {
 	tlsMode := env("C2_TLS", "selfsigned") // selfsigned | files | off
 	publicURL := env("C2_PUBLIC_URL", "https://localhost:8443")
 	admin := os.Getenv("C2_ADMIN_TOKEN")
-	if len(admin) < 16 {
-		log.Fatal("C2_ADMIN_TOKEN must be set to at least 16 characters")
+	if admin != "" && len(admin) < 16 {
+		log.Fatal("C2_ADMIN_TOKEN needs at least 16 characters")
 	}
 	pollS, _ := strconv.Atoi(env("C2_POLL_S", "30"))
 
@@ -99,7 +99,23 @@ func main() {
 	fp := proto.Fingerprint(st.ServerKey().Public())
 	log.Printf("server key fingerprint %s", hex.EncodeToString(fp[:]))
 
-	sv := server.New(server.Config{AdminToken: admin, PublicURL: publicURL, PollS: pollS}, st)
+	// Without the admin token somebody has to be able to sign in already.
+	if admin == "" && len(st.Users()) == 0 {
+		log.Fatal("no account exists yet: start once with C2_ADMIN_TOKEN set and create one (README.md)")
+	}
+	cfg := server.Config{AdminToken: admin, PublicURL: publicURL, PollS: pollS,
+		SecureCookies: strings.HasPrefix(publicURL, "https://"), TrustProxy: os.Getenv("C2_TRUST_PROXY") == "1"}
+	if tenant := os.Getenv("C2_ENTRA_TENANT"); tenant != "" {
+		cfg.Entra = &server.EntraConfig{Tenant: strings.ToLower(tenant), ClientID: os.Getenv("C2_ENTRA_CLIENT_ID"), ClientSecret: os.Getenv("C2_ENTRA_CLIENT_SECRET")}
+		if cfg.Entra.ClientID == "" || cfg.Entra.ClientSecret == "" {
+			log.Fatal("C2_ENTRA_TENANT is set: C2_ENTRA_CLIENT_ID and C2_ENTRA_CLIENT_SECRET are needed too")
+		}
+		log.Printf("sign-in with Microsoft Entra ID is on (tenant %s); redirect URI %s/auth/entra/callback", cfg.Entra.Tenant, strings.TrimRight(publicURL, "/"))
+	}
+	if admin == "" {
+		log.Print("no admin token: accounts only")
+	}
+	sv := server.New(cfg, st)
 	hs := &http.Server{
 		Addr:              listen,
 		Handler:           sv.Handler(),

@@ -11,19 +11,69 @@
 <header>
   <h1>RS232-Leitstelle</h1>
   <span id="srvInfo" class="dim"></span>
+  <span id="whoami" class="dim"></span>
   <button id="logout" class="btn small" hidden>Abmelden</button>
 </header>
 
 <main id="login" hidden>
   <form id="loginForm" class="card narrow">
     <h2>Anmelden</h2>
-    <label>Admin-Token
-      <input id="adminToken" type="password" autocomplete="current-password" required>
+    <label>Benutzer
+      <input id="loginName" autocomplete="username" autocapitalize="none" required>
+    </label>
+    <label>Passwort
+      <input id="loginPass" type="password" autocomplete="current-password" required>
+    </label>
+    <label>Code aus der Authenticator-App
+      <input id="loginCode" inputmode="numeric" autocomplete="one-time-code" maxlength="7" required>
     </label>
     <p id="loginErr" class="err" hidden></p>
-    <button class="btn primary" type="submit">Anmelden</button>
-    <p class="dim">Das Token bleibt nur in diesem Browser-Tab und wird mit jedem Aufruf an diesen Server geschickt.</p>
+    <div class="row left wrap">
+      <button class="btn primary" type="submit">Anmelden</button>
+      <a id="entraLogin" class="btn" href="/auth/entra/login" hidden>Mit Microsoft anmelden</a>
+    </div>
   </form>
+
+  <details id="setupBox" class="card narrow">
+    <summary>Konto einrichten</summary>
+    <form id="setupForm">
+      <p class="dim">Für ein neues oder zurückgesetztes Konto. Den Einrichtungscode gibt es von einem Administrator; er gilt einen Tag.</p>
+      <label>Benutzer
+        <input id="setupName" autocomplete="username" autocapitalize="none" required>
+      </label>
+      <label>Einrichtungscode
+        <input id="setupCode" autocomplete="off" autocapitalize="characters" required>
+      </label>
+      <label>Neues Passwort (mindestens 12 Zeichen)
+        <input id="setupPass" type="password" autocomplete="new-password" minlength="12" required>
+      </label>
+      <label>Passwort wiederholen
+        <input id="setupPass2" type="password" autocomplete="new-password" minlength="12" required>
+      </label>
+      <button class="btn primary" type="submit">Weiter</button>
+    </form>
+    <form id="totpForm" hidden>
+      <p>Diesen Code mit einer Authenticator-App scannen (oder den Schlüssel von Hand eintragen), dann den sechsstelligen Code aus der App eintippen.</p>
+      <canvas id="totpQr" width="10" height="10"></canvas>
+      <p>Schlüssel: <code id="totpSecret"></code></p>
+      <label>Code aus der App
+        <input id="totpCode" inputmode="numeric" autocomplete="one-time-code" maxlength="7" required>
+      </label>
+      <button class="btn primary" type="submit">Konto aktivieren</button>
+    </form>
+    <p id="setupErr" class="err" hidden></p>
+  </details>
+
+  <details id="tokenBox" class="card narrow" hidden>
+    <summary>Mit dem Admin-Token</summary>
+    <form id="tokenForm">
+      <label>Admin-Token
+        <input id="adminToken" type="password" autocomplete="off" required>
+      </label>
+      <button class="btn" type="submit">Anmelden</button>
+      <p class="dim">Für das erste Konto und für Notfälle. Das Token bleibt nur in diesem Browser-Tab und wird mit jedem Aufruf an diesen Server geschickt.</p>
+    </form>
+  </details>
 </main>
 
 <main id="app" hidden>
@@ -125,7 +175,68 @@
       <button id="revoke" class="btn danger">Gerät sperren</button>
     </div>
   </section>
+
+  <section class="card">
+    <div class="row">
+      <h2>Benutzer</h2>
+      <button id="addUser" class="btn">Benutzer anlegen</button>
+    </div>
+    <table id="users">
+      <thead><tr><th>Name</th><th>Anmeldung</th><th>Zustand</th><th>Zuletzt angemeldet</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <p id="noUsers" class="dim" hidden>Noch kein Konto. Solange es keins gibt, kommt man nur mit dem Admin-Token herein.</p>
+  </section>
+
+  <section class="card">
+    <div class="row">
+      <h2>Protokoll</h2>
+      <button id="auditReload" class="btn small">Aktualisieren</button>
+    </div>
+    <p class="dim">Wer was wann getan oder versucht hat – Anmeldungen und alles, was etwas verändert. Die letzten 200 Einträge.</p>
+    <table id="audit">
+      <thead><tr><th>Wann</th><th>Wer</th><th>Von</th><th>Was</th><th>Ziel</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
 </main>
+
+<dialog id="userDlg">
+  <form id="userForm">
+    <h2>Benutzer anlegen</h2>
+    <label>Name
+      <input id="userName" autocomplete="off" autocapitalize="none" required>
+    </label>
+    <label>Anmeldung
+      <select id="userKind">
+        <option value="local">Passwort und Authenticator-App</option>
+        <option value="entra">Microsoft Entra ID</option>
+      </select>
+    </label>
+    <label id="userEntraRow" hidden>Anmeldename bei Microsoft (name@firma.de) oder Objekt-ID
+      <input id="userEntra" autocomplete="off" autocapitalize="none">
+    </label>
+    <p id="userErr" class="err" hidden></p>
+    <div class="row">
+      <span></span>
+      <span>
+        <button id="userCancel" class="btn" type="button">Abbrechen</button>
+        <button class="btn primary" type="submit">Anlegen</button>
+      </span>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="codeDlg">
+  <h2>Einrichtungscode</h2>
+  <p>Für <b id="codeFor"></b>. Diesen Code auf sicherem Weg weitergeben; er gilt einen Tag und wird nur jetzt gezeigt.</p>
+  <p><code id="codeText" class="big"></code></p>
+  <p class="dim">Auf der Anmeldeseite unter „Konto einrichten“ wählt die Person damit ihr Passwort und verbindet ihre Authenticator-App.</p>
+  <div class="row">
+    <span></span>
+    <button id="codeClose" class="btn primary">Schließen</button>
+  </div>
+</dialog>
 
 <dialog id="inviteDlg">
   <h2>Gerät einladen</h2>

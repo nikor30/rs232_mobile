@@ -110,6 +110,8 @@ type data struct {
 	Tokens    map[string]*Token  `json:"tokens"`
 	Devices   map[string]*Device `json:"devices"`
 	NextCmd   uint64             `json:"next_cmd"`
+	Users     map[string]*User   `json:"users,omitempty"`
+	Audit     []*AuditEntry      `json:"audit,omitempty"`
 }
 
 type Store struct {
@@ -142,6 +144,9 @@ func Open(dir string) (*Store, error) {
 	}
 	if s.d.Devices == nil {
 		s.d.Devices = map[string]*Device{}
+	}
+	if s.d.Users == nil {
+		s.d.Users = map[string]*User{}
 	}
 	if s.d.ServerKey == nil {
 		k, err := proto.GenerateStatic()

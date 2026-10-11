@@ -5,7 +5,7 @@ package server
 
 import (
 	"bytes"
-	"crypto/subtle"
+	"crypto/rand"
 	"embed"
 	"encoding/hex"
 	"encoding/json"
@@ -26,10 +26,17 @@ import (
 )
 
 type Config struct {
-	AdminToken string   // bearer token of the admin API
+	AdminToken string   // bearer token of the admin API; empty: accounts only
 	PublicURL  string   // how devices reach this server; goes into enrollment tokens
 	Commands   []string // command types an administrator may queue
 	PollS      int      // seconds a device should wait between polls
+	// SecureCookies marks the session cookie as HTTPS-only. Off only where the
+	// browser really talks plain HTTP to this server (tests).
+	SecureCookies bool
+	// TrustProxy takes the client's address from X-Forwarded-For. Only behind
+	// a reverse proxy that sets it; otherwise anybody could choose an address.
+	TrustProxy bool
+	Entra      *EntraConfig // sign-in with Microsoft Entra ID, if set
 }
 
 const (
@@ -125,6 +132,15 @@ type Server struct {
 	sess  map[[proto.IDSize]byte]*session
 	cons  map[string]*console // remote consoles by device ID, open or just ended
 	sweep time.Time
+
+	authMu    sync.Mutex
+	web       map[[32]byte]*webSession // signed-in browsers, by the hash of their cookie
+	fails     map[string]*failCount    // wrong sign-ins, by account name
+	dummySalt []byte
+	entra     *entra
+	// Requests per client address. A handshake costs the server a key
+	// exchange, a sign-in a password hash; neither is free for the asking.
+	limHandshake, limAuth, limFail *limiter
 }
 
 func New(cfg Config, st *store.Store) *Server {
@@ -134,7 +150,14 @@ func New(cfg Config, st *store.Store) *Server {
 	if cfg.Commands == nil {
 		cfg.Commands = AllCommands()
 	}
-	return &Server{cfg: cfg, st: st, now: time.Now, sess: map[[proto.IDSize]byte]*session{}, cons: map[string]*console{}}
+	sv := &Server{cfg: cfg, st: st, now: time.Now, sess: map[[proto.IDSize]byte]*session{}, cons: map[string]*console{},
+		web: map[[32]byte]*webSession{}, fails: map[string]*failCount{}, dummySalt: make([]byte, 16),
+		limHandshake: newLimiter(30, time.Second), limAuth: newLimiter(10, 6*time.Second), limFail: newLimiter(30, 2*time.Second)}
+	rand.Read(sv.dummySalt)
+	if cfg.Entra != nil {
+		sv.entra = newEntra(*cfg.Entra, cfg.PublicURL)
+	}
+	return sv
 }
 
 // SetClock replaces the time source (tests).
@@ -148,6 +171,19 @@ func (sv *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/msg", sv.msg)
 	mux.HandleFunc("GET /{$}", sv.ui("index.html"))
 	mux.HandleFunc("GET /ui/{file}", func(w http.ResponseWriter, r *http.Request) { sv.ui(r.PathValue("file"))(w, r) })
+	mux.HandleFunc("GET /auth/methods", sv.methods)
+	mux.HandleFunc("POST /auth/login", sv.login)
+	mux.HandleFunc("POST /auth/logout", sv.logout)
+	mux.HandleFunc("POST /auth/setup", sv.setup)
+	mux.HandleFunc("POST /auth/setup/confirm", sv.setupConfirm)
+	mux.HandleFunc("GET /auth/entra/login", sv.entraLogin)
+	mux.HandleFunc("GET /auth/entra/callback", sv.entraCallback)
+	mux.HandleFunc("GET /admin/v1/users", sv.admin(sv.listUsers))
+	mux.HandleFunc("POST /admin/v1/users", sv.admin(sv.addUser))
+	mux.HandleFunc("POST /admin/v1/users/{name}/reset", sv.admin(sv.resetUser))
+	mux.HandleFunc("POST /admin/v1/users/{name}/disable", sv.admin(sv.disableUser))
+	mux.HandleFunc("DELETE /admin/v1/users/{name}", sv.admin(sv.deleteUser))
+	mux.HandleFunc("GET /admin/v1/audit", sv.admin(sv.auditLog))
 	mux.HandleFunc("GET /admin/v1/server", sv.admin(sv.serverInfo))
 	mux.HandleFunc("POST /admin/v1/enroll-tokens", sv.admin(sv.newToken))
 	mux.HandleFunc("GET /admin/v1/devices", sv.admin(sv.listDevices))
@@ -189,6 +225,9 @@ func (sv *Server) serverKey(w http.ResponseWriter, _ *http.Request) {
 
 // Devices get no explanation for a refusal: 400 malformed, 403 not welcome.
 func (sv *Server) handshake(w http.ResponseWriter, r *http.Request) {
+	if sv.limited(sv.limHandshake, w, r) {
+		return
+	}
 	req, ok := readBody(w, r, proto.ReqEnroll)
 	if !ok {
 		return
@@ -367,18 +406,7 @@ func (sv *Server) msg(w http.ResponseWriter, r *http.Request) {
 
 // ---------------------------------------------------------------- admin API
 
-func (sv *Server) admin(h http.HandlerFunc) http.HandlerFunc {
-	want := []byte("Bearer " + sv.cfg.AdminToken)
-	return func(w http.ResponseWriter, r *http.Request) {
-		if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), want) != 1 {
-			w.Header().Set("WWW-Authenticate", "Bearer")
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
-		h(w, r)
-	}
-}
+// The guard in front of these handlers is admin() in auth.go.
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -391,7 +419,7 @@ func fail(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		code = http.StatusNotFound
-	case errors.Is(err, store.ErrState), errors.Is(err, store.ErrFull), errors.Is(err, store.ErrBusy):
+	case errors.Is(err, store.ErrState), errors.Is(err, store.ErrFull), errors.Is(err, store.ErrBusy), errors.Is(err, store.ErrExists):
 		code = http.StatusConflict
 	case errors.Is(err, store.ErrSAS):
 		code = http.StatusForbidden
@@ -534,6 +562,7 @@ func (sv *Server) enqueue(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad JSON"})
 		return
 	}
+	note(r).detail = in.Type
 	check := commandArgs[in.Type]
 	if check == nil || !slices.Contains(sv.cfg.Commands, in.Type) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown command type"})

@@ -46,6 +46,13 @@ dialog ol { padding-left: 1.2rem; margin: .8rem 0; }
 #qr { display: block; margin: .6rem auto 1rem; background: #fff; border-radius: 6px; image-rendering: pixelated; max-width: 100%; height: auto; }
 #toast { position: fixed; left: 50%; bottom: 1.5rem; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: .55rem 1rem; border-radius: 8px; max-width: 90%; }
 /* content-box: the fit addon takes the height as the room for the rows */
+details.card > summary { cursor: pointer; font-weight: 600; }
+details.card[open] > summary { margin-bottom: .6rem; }
+code.big { font-size: 1.3rem; letter-spacing: .08em; user-select: all; }
+a.btn { text-decoration: none; display: inline-block; }
+tr.failed td { color: #b42318; }
+td.acts { text-align: right; white-space: nowrap; }
+td.acts .btn { margin-left: .3rem; }
 #term { background: #000; border-radius: 6px; padding: 6px; height: 26rem; margin-top: .6rem; box-sizing: content-box; }
 #conState.open { color: var(--ok); }
 #conState.wait { color: var(--warn); }
