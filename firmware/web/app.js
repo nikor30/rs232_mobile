@@ -6,6 +6,15 @@
  */
 (() => {
   'use strict';
+  // The page is written in English. A firmware built for another language brings
+  // that language's texts along (tools/embed_web.py puts them into the page as
+  // window.I18N); tr() looks them up and fills in the values: tr('Port {0}', [2]).
+  const DICT = (window.I18N && window.I18N.dict) || {};
+  function tr(text, values) {
+    let out = Object.prototype.hasOwnProperty.call(DICT, text) ? DICT[text] : text;
+    if (values) values.forEach((v, i) => { out = out.split('{' + i + '}').join(v); });
+    return out;
+  }
 
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
@@ -52,7 +61,7 @@
     term.loadAddon(fit);
     term.open(el);
     term.options.cursorBlink = state.connected;   // a port opened while already connected starts live
-    const p = { id, name: 'Port ' + (id + 1), info: null, term, fit, el, seq: 0, log: [], logBytes: 0, welcomed: false, unread: false, tail: '', outCount: 0 };
+    const p = { id, name: tr('Port ') + (id + 1), info: null, term, fit, el, seq: 0, log: [], logBytes: 0, welcomed: false, unread: false, tail: '', outCount: 0 };
     term.onData((data) => {
       if (state.ctrl) { data = applyCtrl(data); setCtrl(false); }
       sendRaw(data, id);
@@ -77,7 +86,7 @@
     renderPortbar();
     refit();
     updateHeader();
-    $('#cfgPlay').textContent = 'Auf ' + ports[id].name + ' abspielen';
+    $('#cfgPlay').textContent = tr('Play on {0}', [ports[id].name]);
   }
 
   function renderPortbar() {
@@ -92,7 +101,7 @@
       b.type = 'button';
       b.className = 'ptab' + (info.id === state.active ? ' active' : '') + (p.unread ? ' unread' : '');
       b.textContent = (info.id + 1) + ' · ' + info.name;
-      b.title = info.serial.label + (info.hw ? '' : ' (Software-UART)');
+      b.title = info.serial.label + (info.hw ? '' : tr(' (software UART)'));
       b.addEventListener('mousedown', (e) => e.preventDefault());
       b.addEventListener('click', () => {
         showPort(info.id);
@@ -145,7 +154,7 @@
   function wsOpen() { return state.ws && state.ws.readyState === WebSocket.OPEN; }
 
   function sendBytes(bytes, id = state.active) {
-    if (!state.connected || !wsOpen()) { toast('Nicht verbunden'); return false; }
+    if (!state.connected || !wsOpen()) { toast(tr('Not connected')); return false; }
     const f = new Uint8Array(bytes.length + 1);
     f[0] = id;
     f.set(bytes, 1);
@@ -155,7 +164,7 @@
   function sendRaw(str, id = state.active) { return sendBytes(enc.encode(str), id); }
 
   function sendCmd(obj) {
-    if (!wsOpen()) { toast('Nicht verbunden'); return false; }
+    if (!wsOpen()) { toast(tr('Not connected')); return false; }
     state.ws.send(JSON.stringify(obj));
     return true;
   }
@@ -188,10 +197,10 @@
     { label: 'q', seq: 'q' },
     { label: '^C', seq: '\x03' },
     { label: '^Z', seq: '\x1a' },
-    { label: '^⇧6', seq: '\x1e', title: 'Ctrl-Shift-6 (Cisco: Abbruch)' },
+    { label: '^⇧6', seq: '\x1e', title: tr('Ctrl-Shift-6 (Cisco: abort)') },
     { label: 'Esc', seq: '\x1b' },
     { label: '⏎', seq: '\r', title: 'Enter' },
-    { label: '⌨', kbd: true, title: 'Tastatur ein/aus' },
+    { label: '⌨', kbd: true, title: tr('Keyboard on/off') },
   ];
   const keysEl = $('#keys');
   const cmdEl = $('#cmd');
@@ -305,7 +314,7 @@
 
   function saveLog() {
     const p = act();
-    if (!p.logBytes) { toast('Noch nichts aufgezeichnet'); return; }
+    if (!p.logBytes) { toast(tr('Nothing recorded yet')); return; }
     const all = new Uint8Array(p.logBytes);
     let off = 0;
     for (const c of p.log) { all.set(c, off); off += c.length; }
@@ -317,14 +326,14 @@
     const pname = p.name.replace(/[^A-Za-z0-9_-]+/g, '-');
     const name = `${host}_${pname}_${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}-${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}.log`;
     download(name, new Blob([text], { type: 'text/plain' }));
-    toast('Gespeichert: ' + name);
+    toast(tr('Saved: ') + name);
   }
 
   // ------------------------------------------------------------------ connection
   function setDot(mode) {
     const d = $('#dot');
     d.className = 'dot ' + mode;
-    d.title = mode === 'on' ? 'Verbunden' : mode === 'wait' ? 'Verbinde …' : 'Getrennt';
+    d.title = mode === 'on' ? tr('Connected') : mode === 'wait' ? tr('Connecting …') : tr('Disconnected');
   }
 
   // Blinking cursor = "you can type now". There's no DCD/DSR wiring on the MAX3232
@@ -392,7 +401,7 @@
       state.connected = false;
       setDot('off');
       setCursorBlink(false);
-      if (was) toast('Verbindung getrennt – verbinde neu …');
+      if (was) toast(tr('Connection lost – connecting again …'));
       scheduleReconnect();
     };
     ws.onerror = () => { try { ws.close(); } catch (e) { /* ignore */ } };
@@ -420,10 +429,10 @@
       updateStatus(m);
     } else if (m.type === 'sync') {
       const p = portObj(m.port);
-      if (m.lost > 0) termNote(fmtBytes(m.lost) + ' verpasst (Puffer übergelaufen)', m.port);
+      if (m.lost > 0) termNote(fmtBytes(m.lost) + tr(' missed (buffer overrun)'), m.port);
       p.seq = m.seq;
     } else if (m.type === 'synced') {
-      if (state.boot && m.reboot) ports.forEach((p) => { if (p) termNote('Gerät wurde neu gestartet', p.id); });
+      if (state.boot && m.reboot) ports.forEach((p) => { if (p) termNote(tr('The device was restarted'), p.id); });
       state.boot = m.boot;
       state.connected = true;
       state.retryMs = 500;
@@ -449,7 +458,7 @@
     const s = state.status;
     if (!s) return;
     const info = (s.ports || []).find((x) => x.id === state.active);
-    if (info) $('#serChip').textContent = info.autobaud ? 'Auto-Baud …' : info.serial.label;
+    if (info) $('#serChip').textContent = info.autobaud ? tr('Auto-baud …') : info.serial.label;
   }
 
   function updateStatus(s) {
@@ -463,50 +472,50 @@
       p.name = info.name;
       if (!p.welcomed) {                                  // first status comes before the replay:
         p.welcomed = true;                                // the device prompt stays the last line
-        termNote(`verbunden · ${list.length > 1 ? info.name + ' · ' : ''}${info.serial.label} · Befehl unten eingeben`, info.id);
+        termNote(tr('connected · {0}{1} · type a command below', [list.length > 1 ? info.name + ' · ' : '', info.serial.label]), info.id);
       }
     }
     if (!list.some((x) => x.id === state.active)) state.active = list.length ? list[0].id : 0;
     if (ports[state.active] && ports[state.active].el.hidden) showPort(state.active);
     else { renderPortbar(); updateHeader(); }
-    $('#cfgPlay').textContent = 'Auf ' + act().name + ' abspielen';
+    $('#cfgPlay').textContent = tr('Play on {0}', [act().name]);
 
     const bc = $('#batChip');
     bc.hidden = !s.bat.measured;
     if (s.bat.present) {
       bc.textContent = (s.bat.charge ? '⚡ ' : '🔋 ') + s.bat.pct + '%';
-      bc.title = `Akku ${s.bat.mv} mV (${s.bat.type})` + (s.bat.charge === 1 ? ', lädt' : s.bat.charge === 2 ? ', voll' : '');
+      bc.title = tr('Battery {0} mV ({1})', [s.bat.mv, s.bat.type]) + (s.bat.charge === 1 ? tr(', charging') : s.bat.charge === 2 ? tr(', full') : '');
     } else {
       bc.textContent = 'USB';
-      bc.title = 'Keine Akkuspannung gemessen';
+      bc.title = tr('No battery voltage measured');
     }
     bc.classList.toggle('low', !!s.bat.low);
     $('#batCalBox').hidden = !s.bat.measured;
-    $('#batCalNow').textContent = s.bat.present ? `${s.bat.mv} mV = ${s.bat.pct} %` : 'kein Akku';
+    $('#batCalNow').textContent = s.bat.present ? `${s.bat.mv} mV = ${s.bat.pct} %` : tr('no battery');
     $('#batCalSetFull').disabled = $('#batCalSetEmpty').disabled = !s.bat.present;
     showBatCal(s.bat);
 
-    $('#dBat').textContent = !s.bat.measured ? 'keine Messung (Ports → Akku-Messung)'
-      : s.bat.present ? `${s.bat.pct} % (${(s.bat.mv / 1000).toFixed(2)} V, ${s.bat.type})${s.bat.charge === 1 ? ' – lädt' : s.bat.charge === 2 ? ' – voll' : s.bat.low ? ' – schwach!' : ''}` : 'kein Akku (USB-Betrieb)';
-    $('#dAp').textContent = `${s.ap.ssid} · ${s.ap.ip} · Kanal ${s.ap.channel || '?'} · ${s.ap.stations} Client(s)`;
+    $('#dBat').textContent = !s.bat.measured ? tr('not measured (Ports → Battery measurement)')
+      : s.bat.present ? `${s.bat.pct} % (${(s.bat.mv / 1000).toFixed(2)} V, ${s.bat.type})${s.bat.charge === 1 ? tr(' – charging') : s.bat.charge === 2 ? tr(' – full') : s.bat.low ? tr(' – low!') : ''}` : tr('no battery (running on USB)');
+    $('#dAp').textContent = tr('{0} · {1} · channel {2} · {3} client(s)', [s.ap.ssid, s.ap.ip, s.ap.channel || '?', s.ap.stations]);
     const h = s.https || {};
-    $('#dHttps').textContent = !h.on ? 'aus'
-      : h.running ? `an · Port ${h.port} · ${h.sessions} Sitzung(en) · ${h.cert || '–'}${h.lanOnly ? ' · im LAN erzwungen' : ''}`
-        : (h.busy ? 'Zertifikat wird erzeugt …' : 'startet …' + (h.err ? ' – ' + h.err : ''));
+    $('#dHttps').textContent = !h.on ? tr('off')
+      : h.running ? tr('on · port {0} · {1} session(s) · {2}{3}', [h.port, h.sessions, h.cert || '–', h.lanOnly ? tr(' · enforced in the LAN') : ''])
+        : (h.busy ? tr('Creating the certificate …') : tr('starting …') + (h.err ? ' – ' + h.err : ''));
     $('#dSta').textContent = s.sta.ssid
       ? (s.sta.connected ? `${s.sta.ssid} · ${s.sta.ip} · ${s.sta.rssi} dBm · ${s.sta.auth}`
-        : `${s.sta.ssid} · ${s.sta.auth} · verbinde …${s.sta.reason ? ' (' + s.sta.reason + ')' : ''}`)
-      : 'aus';
+        : tr('{0} · {1} · connecting …{2}', [s.sta.ssid, s.sta.auth, s.sta.reason ? ' (' + s.sta.reason + ')' : '']))
+      : tr('off');
     $('#dClients').textContent = `${s.clients} Web${s.tcp ? ' + TCP' : ''}`;
     $('#dPorts').innerHTML = list.map((x) => `${x.id + 1} · ${esc(x.name)}: ${x.serial.label}, GPIO ${x.rxPin}/${x.txPin} (${x.hw ? 'HW' : 'SW'}), `
-      + `RX ${fmtBytes(x.rx)} / TX ${fmtBytes(x.tx)}${s.tcpEnabled ? `, TCP ${x.tcpPort}${x.tcp ? ' verbunden' : ''}` : ''}`).join('<br>');
+      + `RX ${fmtBytes(x.rx)} / TX ${fmtBytes(x.tx)}${s.tcpEnabled ? `, TCP ${x.tcpPort}${x.tcp ? tr(' connected') : ''}` : ''}`).join('<br>');
     $('#dUp').textContent = fmtUptime(s.uptime);
     $('#dFw').textContent = 'v' + s.fw;
     $('#dBoard').textContent = s.board || '–';
     $('#dHeap').textContent = fmtBytes(s.heap);
 
     if ($('#panel').hidden || currentTab !== 'serial') fillSerialForm();
-    $('#logInfo').textContent = fmtBytes(act().logBytes) + ' aufgezeichnet (' + act().name + ')';
+    $('#logInfo').textContent = tr('{0} recorded ({1})', [fmtBytes(act().logBytes), act().name]);
   }
 
   // ------------------------------------------------------------------ panel
@@ -551,7 +560,7 @@
     if (tab === 'configs') loadConfigs();
     if (tab === 'net') { loadNet(); loadTls(); loadC2(); }
     if (tab === 'session') {
-      $('#logInfo').textContent = fmtBytes(act().logBytes) + ' aufgezeichnet (' + act().name + ')';
+      $('#logInfo').textContent = tr('{0} recorded ({1})', [fmtBytes(act().logBytes), act().name]);
       $('#fontSize').textContent = TERM_OPTS.fontSize + ' px';
     }
     if (tab === 'serial') fillSerialForm();
@@ -567,7 +576,7 @@
     const p = act();
     if (!p.info) return;
     const s = p.info.serial;
-    $('#sPortInfo').textContent = `${p.id + 1} · ${p.name} · ${p.info.hw ? 'Hardware-UART' : `Software-UART (max. ${p.info.maxBaud} Baud)`} · GPIO ${p.info.rxPin} RX / ${p.info.txPin} TX`;
+    $('#sPortInfo').textContent = `${p.id + 1} · ${p.name} · ${p.info.hw ? tr('Hardware UART') : tr('Software UART (max. {0} baud)', [p.info.maxBaud])} · GPIO ${p.info.rxPin} RX / ${p.info.txPin} TX`;
     const sel = $('#sBaud');
     const std = Array.from(sel.options).some((o) => o.value === String(s.baud));
     sel.value = std ? String(s.baud) : 'custom';
@@ -578,15 +587,15 @@
     $('#sStop').value = String(s.stop);
     $('#sSwap').checked = !!s.swap;
     $('#sSwap').disabled = p.info.swapOk === false && !s.swap;
-    $('#sSwap').parentElement.title = p.info.swapOk === false ? 'Der RX-Pin dieses Ports kann nicht senden (nur Eingang)' : '';
+    $('#sSwap').parentElement.title = p.info.swapOk === false ? tr('This port\'s RX pin cannot send (input only)') : '';
     $('#sEol').value = store.get('eol', 'cr');
   }
   $('#sBaud').addEventListener('change', () => { $('#sBaudCustomWrap').hidden = $('#sBaud').value !== 'custom'; });
   $('#sApply').addEventListener('click', () => {
     const baud = $('#sBaud').value === 'custom' ? parseInt($('#sBaudCustom').value, 10) : parseInt($('#sBaud').value, 10);
-    if (!(baud >= 300 && baud <= 1000000)) { toast('Ungültige Baudrate'); return; }
+    if (!(baud >= 300 && baud <= 1000000)) { toast(tr('Invalid baud rate')); return; }
     const p = act();
-    if (p.info && p.info.maxBaud && baud > p.info.maxBaud) { toast(`Software-UART: höchstens ${p.info.maxBaud} Baud`); return; }
+    if (p.info && p.info.maxBaud && baud > p.info.maxBaud) { toast(tr('Software UART: {0} baud at most', [p.info.maxBaud])); return; }
     if (sendCmd({ cmd: 'serial', port: p.id, baud, bits: +$('#sBits').value, parity: $('#sParity').value, stop: +$('#sStop').value, swap: $('#sSwap').checked })) closePanel();
   });
   $('#sEol').addEventListener('change', () => store.set('eol', $('#sEol').value));
@@ -605,7 +614,7 @@
     } else {
       b.classList.add('armed');
       b.textContent = 'Break?';
-      toast('Nochmal tippen, um BREAK zu senden');
+      toast(tr('Tap again to send BREAK'));
       state.breakArmed = setTimeout(() => {
         state.breakArmed = null;
         b.classList.remove('armed');
@@ -621,8 +630,8 @@
     p.log = [];
     p.logBytes = 0;
     p.term.clear();
-    $('#logInfo').textContent = '0 B aufgezeichnet';
-    toast('Geleert');
+    $('#logInfo').textContent = tr('0 B recorded');
+    toast(tr('Cleared'));
   });
   function setFont(sz) {
     sz = Math.max(9, Math.min(28, sz));
@@ -679,16 +688,16 @@
 
   $('#xfStart').addEventListener('click', () => {
     const file = $('#xfFile').files[0];
-    if (!file) { toast('Bitte eine Datei auswählen'); return; }
-    if (!file.size) { toast('Die Datei ist leer'); return; }
-    if (state.play) { toast('Es wird gerade eine Konfiguration abgespielt'); return; }
-    if (state.xsrv && (state.xsrv.state === 'wait' || state.xsrv.state === 'run')) { toast('Es läuft schon eine Übertragung'); return; }
+    if (!file) { toast(tr('Please choose a file')); return; }
+    if (!file.size) { toast(tr('The file is empty')); return; }
+    if (state.play) { toast(tr('A configuration is being played right now')); return; }
+    if (state.xsrv && (state.xsrv.state === 'wait' || state.xsrv.state === 'run')) { toast(tr('A transfer is running already')); return; }
     const proto = $('#xfProto').value;
     state.xfer = { file, size: file.size, pushed: 0, id: 0, srv: null, cache: null, cacheOff: 0, pumping: false, t0: Date.now() };
     if (!sendCmd({ cmd: 'xfer', port: state.active, proto, name: file.name, size: file.size })) { state.xfer = null; return; }
     closePanel();
     keepAwake(true);
-    showRun(`${file.name}: warte auf Gerät …`, null);
+    showRun(tr('{0}: waiting for the device …', [file.name]), null);
   });
 
   async function readSlice(x, off, n) {
@@ -716,7 +725,7 @@
         x.pushed += n;
       }
     } catch (e) {
-      toast('Datei kann nicht gelesen werden');
+      toast(tr('The file cannot be read'));
       sendCmd({ cmd: 'xferAbort' });
     } finally {
       x.pumping = false;
@@ -736,20 +745,20 @@
       x.srv = m;
       if (x.resumed && m.recv !== undefined) { x.pushed = m.recv; x.resumed = false; }
     }
-    const pname = (ports[m.port] && ports[m.port].name) || 'Port ' + (m.port + 1);
+    const pname = (ports[m.port] && ports[m.port].name) || tr('Port ') + (m.port + 1);
     if (m.state === 'wait') {
-      showRun(`${m.proto} → ${pname}: warte auf Empfänger (C/NAK) …`, null);
+      showRun(tr('{0} → {1}: waiting for the receiver (C/NAK) …', [m.proto, pname]), null);
     } else if (m.state === 'run') {
       const pct = m.size ? Math.floor((m.sent / m.size) * 100) : 0;
       const kbs = m.ms > 500 ? (m.sent / m.ms).toFixed(1) + ' kB/s' : '';
-      showRun(`${m.proto} → ${pname}: ${pct} % · ${fmtBytes(m.sent)} von ${fmtBytes(m.size)}${kbs ? ' · ' + kbs : ''}${m.retries ? ' · ' + m.retries + ' Wdh.' : ''}`, pct);
+      showRun(tr('{0} → {1}: {2} % · {3} of {4}{5}{6}', [m.proto, pname, pct, fmtBytes(m.sent), fmtBytes(m.size), kbs ? ' · ' + kbs : '', m.retries ? ' · ' + m.retries + tr(' retries') : '']), pct);
     } else if (m.state === 'done' || m.state === 'error') {
       if (m.state === 'done') {
-        showRun(`${m.proto} → ${pname}: fertig, ${m.msg}`, 100);
+        showRun(tr('{0} → {1}: done, {2}', [m.proto, pname, m.msg]), 100);
         toast(`${m.name}: ${m.msg}`, 5000);
       } else {
-        showRun(`${m.proto} → ${pname}: ${m.msg || 'Fehler'}`, 0);
-        toast(`Übertragung: ${m.msg || 'Fehler'}`, 6000);
+        showRun(`${m.proto} → ${pname}: ${m.msg || tr('Error')}`, 0);
+        toast(tr('Transfer: {0}', [m.msg || tr('Error')]), 6000);
       }
       if (own || !m.id) { state.xfer = null; keepAwake(false); }
       hideRun(5000);
@@ -768,7 +777,7 @@
       const list = $('#cfgList');
       list.textContent = '';
       j.configs.sort((a, b) => a.name.localeCompare(b.name, 'de'));
-      if (!j.configs.length) list.innerHTML = '<p class="hint">Noch keine Konfiguration gespeichert.</p>';
+      if (!j.configs.length) list.innerHTML = tr('<p class="hint">No configuration stored yet.</p>');
       for (const c of j.configs) {
         const row = document.createElement('div');
         row.className = 'item';
@@ -777,28 +786,28 @@
         play.type = 'button';
         play.className = 'btn primary small';
         play.textContent = '▶';
-        play.title = 'Abspielen auf ' + act().name;
+        play.title = tr('Play on ') + act().name;
         play.addEventListener('click', async () => { const t = await fetchConfig(c.name); if (t !== null) startPlay(c.name, t); });
         const edit = document.createElement('button');
         edit.type = 'button';
         edit.className = 'btn small';
-        edit.textContent = 'Bearbeiten';
+        edit.textContent = tr('Edit');
         edit.addEventListener('click', async () => {
           const t = await fetchConfig(c.name);
           if (t === null) return;
           cfgEditing = c.name;
           $('#cfgName').value = c.name;
           $('#cfgText').value = t;
-          $('#cfgEditTitle').textContent = 'Bearbeiten: ' + c.name;
+          $('#cfgEditTitle').textContent = tr('Edit: ') + c.name;
           $('#cfgDelete').hidden = false;
           $('#cfgName').scrollIntoView({ block: 'center' });
         });
         row.append(play, edit);
         list.appendChild(row);
       }
-      $('#cfgInfo').textContent = j.ok ? `Speicher: ${fmtBytes(j.used)} von ${fmtBytes(j.total)} belegt` : 'Speicher nicht verfügbar';
+      $('#cfgInfo').textContent = j.ok ? tr('Storage: {0} of {1} used', [fmtBytes(j.used), fmtBytes(j.total)]) : tr('Storage not available');
     } catch (e) {
-      toast('Konfigurationen konnten nicht geladen werden');
+      toast(tr('The configurations could not be loaded'));
     }
   }
 
@@ -808,7 +817,7 @@
       if (!r.ok) throw new Error(r.status);
       return await r.text();
     } catch (e) {
-      toast('Laden fehlgeschlagen');
+      toast(tr('Loading failed'));
       return null;
     }
   }
@@ -817,7 +826,7 @@
     cfgEditing = null;
     $('#cfgName').value = '';
     $('#cfgText').value = '';
-    $('#cfgEditTitle').textContent = 'Neue Konfiguration';
+    $('#cfgEditTitle').textContent = tr('New configuration');
     $('#cfgDelete').hidden = true;
   }
   $('#cfgNew').addEventListener('click', cfgReset);
@@ -825,47 +834,47 @@
   $('#cfgSave').addEventListener('click', async () => {
     const name = $('#cfgName').value.trim();
     const text = $('#cfgText').value;
-    if (!name) { toast('Bitte einen Namen eingeben'); return; }
+    if (!name) { toast(tr('Please enter a name')); return; }
     try {
       const q = '?name=' + encodeURIComponent(name) + '&old=' + encodeURIComponent(cfgEditing || '');
       const r = await fetch('/api/config' + q, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: text });
       const j = await r.json();
-      if (!j.ok) { toast('Fehler: ' + j.error, 4000); return; }
+      if (!j.ok) { toast(tr('Error: ') + j.error, 4000); return; }
       cfgEditing = name;
-      $('#cfgEditTitle').textContent = 'Bearbeiten: ' + name;
+      $('#cfgEditTitle').textContent = tr('Edit: ') + name;
       $('#cfgDelete').hidden = false;
-      toast('Gespeichert: ' + name);
+      toast(tr('Saved: ') + name);
       loadConfigs();
     } catch (e) {
-      toast('Speichern fehlgeschlagen');
+      toast(tr('Saving failed'));
     }
   });
 
   $('#cfgDelete').addEventListener('click', async () => {
-    if (!cfgEditing || !confirm(`„${cfgEditing}“ löschen?`)) return;
+    if (!cfgEditing || !confirm(tr('Delete “{0}”?', [cfgEditing]))) return;
     try {
       await fetch('/api/config/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: cfgEditing }) });
-      toast('Gelöscht');
+      toast(tr('Deleted'));
       cfgReset();
       loadConfigs();
     } catch (e) {
-      toast('Löschen fehlgeschlagen');
+      toast(tr('Deleting failed'));
     }
   });
 
   $('#cfgFile').addEventListener('change', async () => {
     const f = $('#cfgFile').files[0];
     if (!f) return;
-    if (f.size > 32768) { toast('Datei zu groß (max. 32 kB)'); return; }
+    if (f.size > 32768) { toast(tr('File too large (max. 32 kB)')); return; }
     $('#cfgText').value = (await f.text()).replace(/\r\n?/g, '\n');
     if (!$('#cfgName').value.trim()) $('#cfgName').value = f.name.replace(/\.[^.]+$/, '').slice(0, 48);
     $('#cfgFile').value = '';
-    toast('Geladen – zum Behalten „Speichern“');
+    toast(tr('Loaded – “Save” to keep it'));
   });
 
   $('#cfgPlay').addEventListener('click', () => {
     const text = $('#cfgText').value;
-    if (!text.trim()) { toast('Kein Text im Editor'); return; }
+    if (!text.trim()) { toast(tr('No text in the editor')); return; }
     startPlay($('#cfgName').value.trim() || 'Editor', text);
   });
 
@@ -931,18 +940,18 @@
   }
 
   async function startPlay(name, text) {
-    if (state.play) { toast('Es läuft schon eine Wiedergabe'); return; }
-    if (state.xsrv && (state.xsrv.state === 'wait' || state.xsrv.state === 'run')) { toast('Es läuft gerade eine Datei-Übertragung'); return; }
-    if (!state.connected) { toast('Nicht verbunden'); return; }
+    if (state.play) { toast(tr('A playback is running already')); return; }
+    if (state.xsrv && (state.xsrv.state === 'wait' || state.xsrv.state === 'run')) { toast(tr('A file transfer is running right now')); return; }
+    if (!state.connected) { toast(tr('Not connected')); return; }
     const names = [...new Set([...text.matchAll(VAR_RE)].map((m) => m[1]))];
     if (names.length) {
-      const vals = await askVars(names, `„${name}“: Werte eintragen`);
+      const vals = await askVars(names, tr('“{0}”: fill in the values', [name]));
       if (!vals) return;
       text = text.replace(VAR_RE, (_, n) => vals[n]);
     }
     const lines = text.replace(/\r\n?/g, '\n').split('\n');
     while (lines.length && lines[lines.length - 1] === '') lines.pop();
-    if (!lines.length) { toast('Kein Text'); return; }
+    if (!lines.length) { toast(tr('No text')); return; }
 
     const p = act();
     const mode = $('#playMode').value;
@@ -954,14 +963,14 @@
     let timeout = 30000;
     let errors = 0, i = 0, result = '';
     let mark = p.outCount - p.tail.length;      // @expect may match text that is already on screen
-    const label = (k) => `„${name}“ → ${p.name}: Zeile ${k} von ${lines.length}`;
+    const label = (k) => tr('“{0}” → {1}: line {2} of {3}', [name, p.name, k, lines.length]);
     try {
       for (; i < lines.length; i++) {
-        if (run.cancel) { result = 'abgebrochen'; break; }
+        if (run.cancel) { result = tr('stopped'); break; }
         if (!state.connected) {                                    // WLAN hiccup: wait for the reconnect
-          showRun(`${label(i + 1)} · warte auf Verbindung …`, null);
+          showRun(tr('{0} · waiting for the connection …', [label(i + 1)]), null);
           await waitOutput(run, () => state.connected, 60000);
-          if (!state.connected) { result = 'Verbindung verloren'; break; }
+          if (!state.connected) { result = tr('Connection lost'); break; }
         }
         const pct = Math.floor((i / lines.length) * 100);
         showRun(label(i + 1), pct);
@@ -974,9 +983,9 @@
             while (!run.cancel && Date.now() - t0 < ms) await sleep(100);
           } else if (cmd === 'expect') {
             const want = arg.toLowerCase();
-            showRun(`${label(i + 1)} · warte auf „${arg}“`, pct);
+            showRun(tr('{0} · waiting for “{1}”', [label(i + 1), arg]), pct);
             const ok = await waitOutput(run, () => tailSince(p, mark).toLowerCase().includes(want), timeout);
-            if (!ok) { if (!run.cancel) result = `„${arg}“ kam nicht (Zeile ${i + 1})`; break; }
+            if (!ok) { if (!run.cancel) result = tr('“{0}” did not come (line {1})', [arg, i + 1]); break; }
             mark = p.outCount;
           } else if (cmd === 'break') {
             const ms = parseInt(arg, 10) || 500;
@@ -985,14 +994,14 @@
           } else if (cmd === 'timeout') {
             timeout = Math.max(1, parseFloat(arg) || 30) * 1000;
           } else {
-            result = `unbekannte Steuerzeile @${cmd} (Zeile ${i + 1})`;
+            result = tr('unknown control line @{0} (line {1})', [cmd, i + 1]);
             break;
           }
           continue;
         }
         const base = p.outCount;
         mark = base;
-        if (!sendRaw(line + eol(), p.id)) { result = 'Verbindung verloren'; break; }
+        if (!sendRaw(line + eol(), p.id)) { result = tr('Connection lost'); break; }
         if (mode === 'delay') {
           await sleep(delay);
         } else {
@@ -1013,14 +1022,14 @@
         }
         if (ERROR_RE.test(tailSince(p, base))) {
           errors++;
-          if (stopOnError) { result = `Fehler bei Zeile ${i + 1}: ${line.trim()}`; i++; break; }
+          if (stopOnError) { result = tr('Error at line {0}: {1}', [i + 1, line.trim()]); i++; break; }
         }
       }
     } finally {
       state.play = null;
     }
     const done = i >= lines.length && !result;
-    const msg = done ? `„${name}“: ${lines.length} Zeilen gesendet${errors ? `, ${errors} Fehlermeldung(en)` : ''}` : `„${name}“: ${result}`;
+    const msg = done ? tr('“{0}”: {1} lines sent{2}', [name, lines.length, errors ? tr(', {0} error message(s)', [errors]) : '']) : tr('“{0}”: {1}', [name, result]);
     showRun(msg, done ? 100 : Math.floor((i / lines.length) * 100));
     toast(msg, 5000);
     hideRun(done && !errors ? 4000 : 8000);
@@ -1067,10 +1076,10 @@
         const card = document.createElement('div');
         card.className = 'pcard';
         card.dataset.port = i;
-        card.innerHTML = `<div class="pcard-head"><label class="check"><input type="checkbox" data-k="enabled"> Port ${i + 1}</label>`
-          + `<span class="tag ${pt.hw ? '' : 'sw'}">${pt.hw ? 'Hardware-UART' : 'Software-UART'}</span></div>`
-          + `<div class="grid3"><label class="wide">Name <input data-k="name" maxlength="24" placeholder="Port ${i + 1}"></label>`
-          + `<label>RX-Pin <span class="slot" data-slot="rx"></span></label><label>TX-Pin <span class="slot" data-slot="tx"></span></label></div>`
+        card.innerHTML = tr('<div class="pcard-head"><label class="check"><input type="checkbox" data-k="enabled"> Port {0}</label>', [i + 1])
+          + `<span class="tag ${pt.hw ? '' : 'sw'}">${pt.hw ? tr('Hardware UART') : tr('Software UART')}</span></div>`
+          + tr('<div class="grid3"><label class="wide">Name <input data-k="name" maxlength="24" placeholder="Port {0}"></label>', [i + 1])
+          + tr('<label>RX pin <span class="slot" data-slot="rx"></span></label><label>TX pin <span class="slot" data-slot="tx"></span></label></div>')
           + `<p class="hint wiring"></p>`;
         const en = card.querySelector('[data-k="enabled"]');
         en.checked = pt.enabled;
@@ -1086,16 +1095,16 @@
       });
       const bp = $('#batPin');
       bp.textContent = '';
-      bp.appendChild(new Option('aus', '-1'));
+      bp.appendChild(new Option(tr('off'), '-1'));
       for (const pin of s.pinsAdc) bp.appendChild(new Option(pinLabel(pin), String(pin)));
       bp.value = String(s.batPin);
       $('#batType').value = String(s.batType);
       $('#batDiv').value = String(s.batDiv);
-      $('#portsIntro').textContent = `Bis zu 4 MAX3232-Module. Ports 1–${s.hwPorts} laufen über Hardware-UARTs, `
-        + `Ports ${s.hwPorts + 1}–4 über Software-UARTs (bis ${s.swMaxBaud} Baud, für Konsolen reicht das). Jedes Modul: VCC an 3V3, GND an GND.`;
+      $('#portsIntro').textContent = tr('Up to 4 MAX3232 modules. Ports 1–{0} run on hardware UARTs, ', [s.hwPorts])
+        + tr('ports {0}–4 on software UARTs (up to {1} baud, enough for consoles). Each module: VCC to 3V3, GND to GND.', [s.hwPorts + 1, s.swMaxBaud]);
       checkPorts();
     } catch (e) {
-      toast('Port-Einstellungen konnten nicht geladen werden');
+      toast(tr('The port settings could not be loaded'));
     }
   }
 
@@ -1114,8 +1123,8 @@
     const bat = +$('#batPin').value;
     const use = {};
     const mark = (pin, what) => { (use[pin] = use[pin] || []).push(what); };
-    list.forEach((p, i) => { if (p.enabled) { mark(p.rx, `Port ${i + 1} RX`); mark(p.tx, `Port ${i + 1} TX`); } });
-    if (bat >= 0) mark(bat, 'Akku');
+    list.forEach((p, i) => { if (p.enabled) { mark(p.rx, tr('Port {0} RX', [i + 1])); mark(p.tx, tr('Port {0} TX', [i + 1])); } });
+    if (bat >= 0) mark(bat, tr('Battery'));
     let err = '';
     $$('#portCards .pcard').forEach((c, i) => {
       const p = list[i];
@@ -1124,10 +1133,10 @@
       const rxDup = p.enabled && use[p.rx].length > 1, txDup = p.enabled && use[p.tx].length > 1;
       c.querySelector('[data-k="rx"]').classList.toggle('bad', rxDup);
       c.querySelector('[data-k="tx"]').classList.toggle('bad', txDup);
-      if (p.enabled && p.rx === p.tx) err = err || `Port ${i + 1}: RX und TX gleich`;
-      if (rxDup || txDup) err = err || `GPIO${rxDup ? p.rx : p.tx} ist doppelt belegt (${use[rxDup ? p.rx : p.tx].join(', ')})`;
+      if (p.enabled && p.rx === p.tx) err = err || tr('Port {0}: RX and TX are the same', [i + 1]);
+      if (rxDup || txDup) err = err || tr('GPIO{0} is used twice ({1})', [rxDup ? p.rx : p.tx, use[rxDup ? p.rx : p.tx].join(', ')]);
       c.querySelector('.wiring').textContent = p.enabled
-        ? `MAX3232-Modul: TXD an ${pinLabel(p.tx)}, RXD an ${pinLabel(p.rx)}, VCC an 3V3, GND an GND` : 'aus';
+        ? tr('MAX3232 module: TXD to {0}, RXD to {1}, VCC to 3V3, GND to GND', [pinLabel(p.tx), pinLabel(p.rx)]) : tr('off');
     });
     $('#batPin').classList.toggle('bad', bat >= 0 && use[bat].length > 1);
     $('#portsSave').disabled = !!err;
@@ -1140,16 +1149,16 @@
   $('#portsSave').addEventListener('click', async () => {
     const err = checkPorts();
     if (err) { toast(err, 4000); return; }
-    if (!confirm('Ports speichern und neu starten?')) return;
+    if (!confirm(tr('Save the ports and restart?'))) return;
     const body = { ports: readPorts(), batPin: +$('#batPin').value,
                    batType: +$('#batType').value, batDiv: +$('#batDiv').value };
     try {
       const r = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const j = await r.json();
-      if (j.ok) { toast('Gespeichert – Neustart …', 4000); closePanel(); }
-      else toast('Fehler: ' + (j.error || r.status), 5000);
+      if (j.ok) { toast(tr('Saved – restarting …'), 4000); closePanel(); }
+      else toast(tr('Error: ') + (j.error || r.status), 5000);
     } catch (e) {
-      toast('Fehler beim Speichern');
+      toast(tr('Error while saving'));
     }
   });
 
@@ -1166,29 +1175,29 @@
     try {
       const r = await fetch('/api/batcal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const j = await r.json();
-      if (!j.ok) { toast('Fehler: ' + (j.error || r.status), 5000); return; }
+      if (!j.ok) { toast(tr('Error: ') + (j.error || r.status), 5000); return; }
       showBatCal(j, true);
       $('#batCalNow').textContent = `${j.mv} mV = ${j.pct} %`;
-      toast(`${done} – ${j.mv} mV sind jetzt ${j.pct} %`, 4000);
+      toast(tr('{0} – {1} mV are now {2} %', [done, j.mv, j.pct]), 4000);
     } catch (e) {
-      toast('Fehler beim Speichern');
+      toast(tr('Error while saving'));
     }
   }
   $('#batCalSetFull').addEventListener('click', () => {
-    if (confirm('Die jetzt gemessene Spannung als 100 % übernehmen?')) batCal({ point: 'full' }, 'Voll gesetzt');
+    if (confirm(tr('Take the voltage measured right now as 100 %?'))) batCal({ point: 'full' }, tr('Full set'));
   });
   $('#batCalSetEmpty').addEventListener('click', () => {
-    if (confirm('Die jetzt gemessene Spannung als 0 % übernehmen?')) batCal({ point: 'empty' }, 'Leer gesetzt');
+    if (confirm(tr('Take the voltage measured right now as 0 %?'))) batCal({ point: 'empty' }, tr('Empty set'));
   });
-  $('#batCalSave').addEventListener('click', () => batCal({ empty: +$('#batCalEmpty').value || 0, full: +$('#batCalFull').value || 0 }, 'Gespeichert'));
+  $('#batCalSave').addEventListener('click', () => batCal({ empty: +$('#batCalEmpty').value || 0, full: +$('#batCalFull').value || 0 }, tr('Saved')));
   $('#batCalReset').addEventListener('click', () => {
-    if (confirm('Kalibrierung löschen und wieder die Kennlinie verwenden?')) batCal({ empty: 0, full: 0 }, 'Zurückgesetzt');
+    if (confirm(tr('Clear the calibration and use the built-in curve again?'))) batCal({ empty: 0, full: 0 }, tr('Reset'));
   });
 
   // ------------------------------------------------------------------ device tab
   $('#devReboot').addEventListener('click', async () => {
-    if (!confirm('Gerät neu starten?')) return;
-    try { await fetch('/api/reboot', { method: 'POST' }); toast('Neustart …'); } catch (e) { toast('Fehler'); }
+    if (!confirm(tr('Restart the device?'))) return;
+    try { await fetch('/api/reboot', { method: 'POST' }); toast(tr('Restarting …')); } catch (e) { toast(tr('Error')); }
   });
 
   // ------------------------------------------------------------------ setup tab
@@ -1201,7 +1210,7 @@
       f.apPass.value = '';
       f.hostname.value = s.hostname;
       f.webPass.value = '';
-      f.webPass.placeholder = s.webPassSet ? 'unverändert (gesetzt)' : 'keins';
+      f.webPass.placeholder = s.webPassSet ? tr('unchanged (set)') : 'keins';
       f.webPassClear.checked = false;
       f.webPassClear.parentElement.hidden = !s.webPassSet;
       f.tcpEnabled.checked = s.tcpEnabled;
@@ -1213,7 +1222,7 @@
       f.apChannel.value = String(s.apChannel || 0);
       f.txPower.value = String(s.txPower || 44);
     } catch (e) {
-      toast('Einstellungen konnten nicht geladen werden');
+      toast(tr('The settings could not be loaded'));
     }
   }
 
@@ -1243,24 +1252,24 @@
     };
     if (f.apPass.value) body.apPass = f.apPass.value;
     if (f.webPass.value) body.webPass = f.webPass.value;
-    if (body.apPass && body.apPass.length < 8) { toast('Hotspot-Passwort: mindestens 8 Zeichen'); return; }
+    if (body.apPass && body.apPass.length < 8) { toast(tr('Hotspot password: at least 8 characters')); return; }
     const apChanged = body.apSsid !== (state.status && state.status.ap.ssid) || !!body.apPass;
-    if (!confirm('Speichern und neu starten?' + (apChanged ? '\n\nHotspot-Name/Passwort ändern sich – danach neu verbinden.' : ''))) return;
+    if (!confirm(tr('Save and restart?') + (apChanged ? tr('\n\nThe hotspot name/password change – connect again afterwards.') : ''))) return;
     try {
       const r = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const j = await r.json();
-      if (j.ok) { toast('Gespeichert – Neustart …', 4000); closePanel(); }
-      else toast('Fehler: ' + (j.error || r.status), 4000);
+      if (j.ok) { toast(tr('Saved – restarting …'), 4000); closePanel(); }
+      else toast(tr('Error: ') + (j.error || r.status), 4000);
     } catch (err) {
-      toast('Fehler beim Speichern');
+      toast(tr('Error while saving'));
     }
   });
 
   $('#fwUpload').addEventListener('click', () => {
     const file = $('#fwFile').files[0];
-    if (!file) { toast('Bitte firmware.bin auswählen'); return; }
-    if (!/\.bin$/i.test(file.name)) { toast('Nur .bin-Dateien'); return; }
-    if (!confirm(`Firmware „${file.name}“ (${fmtBytes(file.size)}) flashen?`)) return;
+    if (!file) { toast(tr('Please choose firmware.bin')); return; }
+    if (!/\.bin$/i.test(file.name)) { toast(tr('.bin files only')); return; }
+    if (!confirm(tr('Flash the firmware “{0}” ({1})?', [file.name, fmtBytes(file.size)]))) return;
     const prog = $('#fwProg');
     const btn = $('#fwUpload');
     prog.hidden = false;
@@ -1273,18 +1282,18 @@
       btn.disabled = false;
       let j = {};
       try { j = JSON.parse(xhr.responseText); } catch (e) { /* ignore */ }
-      if (xhr.status === 200 && j.ok) { toast('Firmware übernommen – Neustart …', 5000); }
-      else { toast('Update fehlgeschlagen: ' + (j.error || xhr.status), 6000); prog.hidden = true; }
+      if (xhr.status === 200 && j.ok) { toast(tr('Firmware accepted – restarting …'), 5000); }
+      else { toast(tr('Update failed: ') + (j.error || xhr.status), 6000); prog.hidden = true; }
     };
-    xhr.onerror = () => { btn.disabled = false; prog.hidden = true; toast('Upload-Fehler'); };
+    xhr.onerror = () => { btn.disabled = false; prog.hidden = true; toast(tr('Upload error')); };
     const fd = new FormData();
     fd.append('firmware', file, file.name);
     xhr.send(fd);
   });
 
   $('#factory').addEventListener('click', async () => {
-    if (!confirm('Alle Einstellungen löschen?\nDas Hotspot-Passwort wird neu erzeugt (steht danach auf dem Display und im USB-Log).')) return;
-    try { await fetch('/api/factory', { method: 'POST' }); toast('Werksreset – Neustart …', 4000); } catch (e) { toast('Fehler'); }
+    if (!confirm(tr('Erase all settings?\nA new hotspot password is created (it is on the display and in the USB log afterwards).'))) return;
+    try { await fetch('/api/factory', { method: 'POST' }); toast(tr('Factory reset – restarting …'), 4000); } catch (e) { toast(tr('Error')); }
   });
 
   // ------------------------------------------------------------------ net tab (WLAN client, HTTPS, certificates)
@@ -1302,9 +1311,9 @@
     try {
       const c = await (await fetch('/api/c2', { cache: 'no-store' })).json();
       let text = c.text;
-      if (c.state === 'active') text += c.lastOkS >= 0 ? ` – letzter Kontakt vor ${c.lastOkS} s` : ' – noch kein Kontakt';
+      if (c.state === 'active') text += c.lastOkS >= 0 ? tr(' – last contact {0} s ago', [c.lastOkS]) : tr(' – no contact yet');
       if (c.error) text += ` – ${c.error}`;
-      if (!c.sta && c.state !== 'failed') text += ' (WLAN-Client nicht verbunden)';
+      if (!c.sta && c.state !== 'failed') text += tr(' (Wi-Fi client not connected)');
       $('#c2State').textContent = text;
       $('#c2CodeRow').hidden = c.state !== 'pending';
       $('#c2Code').textContent = c.code;
@@ -1316,30 +1325,30 @@
       const rc = c.console || { state: 'none' };
       $('#c2ConRow').hidden = rc.state === 'none';
       $('#c2ConEnd').hidden = rc.state !== 'open';
-      $('#c2Con').textContent = rc.state === 'asked' ? `angefragt für Port ${rc.port}, ${rc.minutes} min – am Display des Geräts erlauben oder ablehnen`
-        : rc.state === 'open' ? `offen auf Port ${rc.port}, noch ${Math.floor(rc.leftS / 60)}:${String(rc.leftS % 60).padStart(2, '0')} min` : '';
+      $('#c2Con').textContent = rc.state === 'asked' ? tr('requested for port {0}, {1} min – allow or refuse on the device\'s display', [rc.port, rc.minutes])
+        : rc.state === 'open' ? tr('open on port {0}, {1}:{2} min left', [rc.port, Math.floor(rc.leftS / 60), String(rc.leftS % 60).padStart(2, '0')]) : '';
     } catch (e) { /* the next round tries again */ }
     c2Timer = setTimeout(loadC2, 3000);
   }
   $('#c2Enroll').addEventListener('click', async () => {
     const token = $('#c2Token').value.trim();
-    if (!token) { toast('Erst das Einladungs-Token einfügen'); return; }
+    if (!token) { toast(tr('Paste the invitation token first')); return; }
     try {
       const r = await fetch('/api/c2/enroll', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
       const j = await r.json();
-      if (!j.ok) { toast(j.error || 'Anmeldung nicht möglich', 5000); return; }
+      if (!j.ok) { toast(j.error || tr('Enrollment not possible'), 5000); return; }
       $('#c2Token').value = '';
-      toast('Anmeldung läuft …');
+      toast(tr('Enrolling …'));
       loadC2();
-    } catch (e) { toast('Gerät nicht erreichbar'); }
+    } catch (e) { toast(tr('Device not reachable')); }
   });
   $('#c2Control').addEventListener('change', async (e) => {
     const allow = e.target.checked;
-    if (allow && !confirm('Der Server kann dann gespeicherte Konfigurationen auf die Konsole des angeschlossenen Geräts abspielen und dieses Gerät neu starten. Erlauben?')) { e.target.checked = false; return; }
+    if (allow && !confirm(tr('The server can then play stored configurations to the console of whatever is connected, and restart this device. Allow?'))) { e.target.checked = false; return; }
     try {
       await fetch('/api/c2/control', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ allow }) });
-      toast(allow ? 'Erlaubt' : 'Nur noch lesen');
-    } catch (err) { toast('Gerät nicht erreichbar'); }
+      toast(allow ? tr('Allowed') : tr('Reading only from now on'));
+    } catch (err) { toast(tr('Device not reachable')); }
     loadC2();
   });
   // An invitation scanned as a QR code arrives as http://192.168.4.1/#c2=<token>:
@@ -1351,15 +1360,15 @@
       openPanel('net');
       $('#c2Token').value = token;
       $('#c2Token').scrollIntoView({ block: 'center' });
-      toast('Einladungs-Token übernommen – mit „Anmelden“ bestätigen', 5000);
+      toast(tr('Invitation token taken over – confirm with “Enroll”'), 5000);
     }, 300);
   }
   $('#c2ConEnd').addEventListener('click', async () => {
-    try { await fetch('/api/c2/console/end', { method: 'POST' }); toast('Fernkonsole beendet'); loadC2(); } catch (e) { toast('Gerät nicht erreichbar'); }
+    try { await fetch('/api/c2/console/end', { method: 'POST' }); toast(tr('Remote console ended')); loadC2(); } catch (e) { toast(tr('Device not reachable')); }
   });
   $('#c2Forget').addEventListener('click', async () => {
-    if (!confirm('Von der Leitstelle abmelden?\nDer Geräteschlüssel wird gelöscht; für eine neue Anmeldung braucht es ein neues Token.')) return;
-    try { await fetch('/api/c2/forget', { method: 'POST' }); toast('Abgemeldet'); loadC2(); } catch (e) { toast('Gerät nicht erreichbar'); }
+    if (!confirm(tr('Sign off from the control center?\nThe device key is erased; enrolling again needs a new token.'))) return;
+    try { await fetch('/api/c2/forget', { method: 'POST' }); toast(tr('Signed off')); loadC2(); } catch (e) { toast(tr('Device not reachable')); }
   });
 
   async function loadNet() {
@@ -1370,8 +1379,8 @@
       f.staSsid.value = s.staSsid || '';
       f.staPass.value = '';
       f.staEapPass.value = '';
-      f.staPass.placeholder = s.staPassSet ? 'unverändert' : '';
-      f.staEapPass.placeholder = s.staPassSet ? 'unverändert' : '';
+      f.staPass.placeholder = s.staPassSet ? tr('unchanged') : '';
+      f.staEapPass.placeholder = s.staPassSet ? tr('unchanged') : '';
       f.staAuth.value = String(s.staAuth || 0);
       f.staIdentity.value = s.staIdentity || '';
       f.staUser.value = s.staUser || '';
@@ -1384,9 +1393,9 @@
       authVisibility();
       const warn = $('#netWarn');
       warn.hidden = !(s.staSsid && !s.webPassSet);
-      warn.textContent = 'Kein Web-Passwort gesetzt: im Firmennetz kommt jeder an die Konsolen. Tab Setup → Zugriff.';
+      warn.textContent = tr('No web password set: in a company network anybody reaches the consoles. Tab Setup → Access.');
     } catch (e) {
-      toast('Einstellungen konnten nicht geladen werden');
+      toast(tr('The settings could not be loaded'));
     }
   }
 
@@ -1408,39 +1417,39 @@
     };
     const pass = auth === 0 ? f.staPass.value : f.staEapPass.value;
     if (pass) body.staPass = pass;
-    if (!confirm('Speichern und neu starten?')) return;
+    if (!confirm(tr('Save and restart?'))) return;
     try {
       const r = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const j = await r.json();
-      if (j.ok) { toast('Gespeichert – Neustart …', 4000); closePanel(); }
-      else toast('Fehler: ' + (j.error || r.status), 5000);
+      if (j.ok) { toast(tr('Saved – restarting …'), 4000); closePanel(); }
+      else toast(tr('Error: ') + (j.error || r.status), 5000);
     } catch (err) {
-      toast('Fehler beim Speichern');
+      toast(tr('Error while saving'));
     }
   });
 
   // ---- certificates
   const SLOTS = [
-    { id: 'ca', title: 'CA-Zertifikat', hint: 'Zertifikat der Stelle, die das RADIUS-Server-Zertifikat ausgestellt hat. Ohne dieses prüft das Gerät den Server nicht.' },
-    { id: 'client', title: 'Client-Zertifikat (802.1X)', hint: 'Gerätezertifikat mit privatem Schlüssel, meist als .p12/.pfx aus der Firmen-PKI. Braucht EKU „clientAuth“.' },
-    { id: 'https', title: 'HTTPS-Zertifikat', hint: 'Für die Web-Oberfläche. Braucht EKU „serverAuth“ und den verwendeten Namen im SAN. Ohne Upload stellt sich das Gerät selbst eines aus.' },
+    { id: 'ca', title: tr('CA certificate'), hint: tr('Certificate of the authority that issued the RADIUS server\'s certificate. Without it the device does not check the server.') },
+    { id: 'client', title: tr('Client certificate (802.1X)'), hint: tr('Device certificate with its private key, usually a .p12/.pfx from the company\'s PKI. Needs the EKU “clientAuth”.') },
+    { id: 'https', title: tr('HTTPS certificate'), hint: tr('For the web interface. Needs the EKU “serverAuth” and the name in use in the SAN. Without an upload the device issues one to itself.') },
   ];
 
   function certTable(c, full) {
-    const rows = [['Inhaber', c.subject], ['Aussteller', c.issuer], ['Gültig', `${c.from} bis ${c.to}`]];
+    const rows = [[tr('Subject'), c.subject], [tr('Issuer'), c.issuer], [tr('Valid'), tr('{0} to {1}', [c.from, c.to])]];
     if (full) {
-      if (c.key) rows.push(['Schlüssel im Zertifikat', c.key]);
-      if (c.eku) rows.push(['Verwendung (EKU)', c.eku.length ? c.eku.join(', ') : 'keine Einschränkung']);
-      if (c.san && c.san.length) rows.push(['Namen (SAN)', c.san.join(', ')]);
-      if (c.sha256) rows.push(['Fingerabdruck', c.sha256.replace(/(.{4})(?=.)/g, '$1 ')]);
+      if (c.key) rows.push([tr('Key in the certificate'), c.key]);
+      if (c.eku) rows.push([tr('Usage (EKU)'), c.eku.length ? c.eku.join(', ') : tr('no restriction')]);
+      if (c.san && c.san.length) rows.push([tr('Names (SAN)'), c.san.join(', ')]);
+      if (c.sha256) rows.push([tr('Fingerprint'), c.sha256.replace(/(.{4})(?=.)/g, '$1 ')]);
     }
     const flags = [];
-    if (c.expired) flags.push('<b class="warn">abgelaufen</b>');
-    if (c.notYet) flags.push('<b class="warn">noch nicht gültig</b>');
+    if (c.expired) flags.push(tr('<b class="warn">expired</b>'));
+    if (c.notYet) flags.push(tr('<b class="warn">not valid yet</b>'));
     if (c.ca) flags.push('CA');
-    if (c.self) flags.push('selbst signiert');
-    if (flags.length) rows.push(['Hinweis', flags.join(' · ')]);
-    return '<table class="kv">' + rows.map((r) => `<tr><th>${r[0]}</th><td>${r[1] === undefined ? '–' : (r[0] === 'Hinweis' ? r[1] : esc(r[1]))}</td></tr>`).join('') + '</table>';
+    if (c.self) flags.push(tr('self-signed'));
+    if (flags.length) rows.push([tr('Note'), flags.join(' · ')]);
+    return '<table class="kv">' + rows.map((r) => `<tr><th>${r[0]}</th><td>${r[1] === undefined ? '–' : (r[0] === tr('Note') ? r[1] : esc(r[1]))}</td></tr>`).join('') + '</table>';
   }
 
   function renderTls(info) {
@@ -1450,31 +1459,20 @@
     el.innerHTML = SLOTS.map((def) => {
       const s = by[def.id] || {};
       const certs = s.certs || [];
-      let state = 'leer';
-      if (s.ready) state = 'bereit';
-      else if (s.cert && def.id !== 'ca') state = s.key ? 'Schlüssel passt nicht' : 'Schlüssel fehlt';
-      else if (s.key && !s.cert) state = 'nur Schlüssel';
-      const extra = certs.length > 1 ? `<p class="hint">+ ${certs.length - 1} weitere(s) Zertifikat(e) in der Kette: ${certs.slice(1).map((c) => esc(c.subject)).join(' · ')}</p>` : '';
-      return `<div class="pcard">
-        <div class="pcard-head"><b>${def.title}</b><span class="chip static">${state}${s.auto ? ' · vom Gerät' : ''}</span></div>
-        <p class="hint">${def.hint}</p>
-        ${certs.length ? certTable(certs[0], true) + extra : '<p class="hint">Kein Zertifikat gespeichert.</p>'}
-        ${s.keyType ? `<p class="hint">Privater Schlüssel: ${esc(s.keyType)}</p>` : ''}
-        <div class="row">
-          <input type="file" data-file="${def.id}" accept=".p12,.pfx,.pem,.crt,.cer,.der,.key,.p7b,application/x-pkcs12,application/x-pem-file">
-          <input type="password" data-pass="${def.id}" placeholder="Passwort der Datei" maxlength="64" style="max-width:190px">
-          <button class="btn" type="button" data-up="${def.id}">Hochladen</button>
-          ${s.cert ? `<button class="btn" type="button" data-dl="${def.id}">Zertifikat laden</button><button class="btn danger" type="button" data-rm="${def.id}">Löschen</button>` : ''}
-        </div>
-      </div>`;
+      let state = tr('empty');
+      if (s.ready) state = tr('ready');
+      else if (s.cert && def.id !== 'ca') state = s.key ? tr('key does not match') : tr('key missing');
+      else if (s.key && !s.cert) state = tr('key only');
+      const extra = certs.length > 1 ? tr('<p class="hint">+ {0} more certificate(s) in the chain: {1}</p>', [certs.length - 1, certs.slice(1).map((c) => esc(c.subject)).join(' · ')]) : '';
+      return tr('<div class="pcard">\n        <div class="pcard-head"><b>{0}</b><span class="chip static">{1}{2}</span></div>\n        <p class="hint">{3}</p>\n        {4}\n        {5}\n        <div class="row">\n          <input type="file" data-file="{6}" accept=".p12,.pfx,.pem,.crt,.cer,.der,.key,.p7b,application/x-pkcs12,application/x-pem-file">\n          <input type="password" data-pass="{7}" placeholder="The file\'s password" maxlength="64" style="max-width:190px">\n          <button class="btn" type="button" data-up="{8}">Upload</button>\n          {9}\n        </div>\n      </div>', [def.title, state, s.auto ? tr(' · from the device') : '', def.hint, certs.length ? certTable(certs[0], true) + extra : tr('<p class="hint">No certificate stored.</p>'), s.keyType ? tr('<p class="hint">Private key: {0}</p>', [esc(s.keyType)]) : '', def.id, def.id, def.id, s.cert ? tr('<button class="btn" type="button" data-dl="{0}">Download certificate</button><button class="btn danger" type="button" data-rm="{1}">Delete</button>', [def.id, def.id]) : '']);
     }).join('');
     const ca = info.devca || {};
     $('#devCaDownload').hidden = !ca.subject;
     if (ca.subject) $('#devCaInfo').dataset.ca = ca.subject;
     const csr = info.csr || {};
     $('#csrDownload').hidden = !csr.have;
-    $('#csrInfo').textContent = csr.busy ? 'Schlüssel wird erzeugt … (kann eine Minute dauern)'
-      : csr.have ? `Antrag bereit: ${csr.subject || ''} (${csr.key || ''})` : '';
+    $('#csrInfo').textContent = csr.busy ? tr('Generating the key … (can take a minute)')
+      : csr.have ? tr('Request ready: {0} ({1})', [csr.subject || '', csr.key || '']) : '';
     $('#csrStart').disabled = !!csr.busy;
     if (csr.busy) setTimeout(loadTls, 3000);
   }
@@ -1484,7 +1482,7 @@
       const r = await fetch('/api/tls', { cache: 'no-store' });
       renderTls(await r.json());
     } catch (e) {
-      $('#tlsCards').innerHTML = '<p class="hint">Zertifikate konnten nicht geladen werden.</p>';
+      $('#tlsCards').innerHTML = tr('<p class="hint">The certificates could not be loaded.</p>');
     }
   }
 
@@ -1494,15 +1492,15 @@
     const up = btn.dataset.up, rm = btn.dataset.rm, dl = btn.dataset.dl;
     if (dl) { window.location = '/api/tls/download?what=' + dl; return; }
     if (rm) {
-      if (!confirm('Zertifikat und Schlüssel löschen?')) return;
+      if (!confirm(tr('Delete certificate and key?'))) return;
       await fetch('/api/tls/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ slot: rm }) });
-      toast('Gelöscht – Neustart übernimmt die Änderung');
+      toast(tr('Deleted – a restart applies the change'));
       loadTls();
       return;
     }
     if (!up) return;
     const file = $(`[data-file="${up}"]`).files[0];
-    if (!file) { toast('Bitte eine Datei auswählen'); return; }
+    if (!file) { toast(tr('Please choose a file')); return; }
     const fd = new FormData();
     fd.append('slot', up);
     fd.append('pass', $(`[data-pass="${up}"]`).value);
@@ -1511,31 +1509,31 @@
     try {
       const r = await fetch('/api/tls/upload', { method: 'POST', body: fd });
       const j = await r.json();
-      toast(j.ok ? j.msg : 'Fehler: ' + (j.error || r.status), j.ok ? 6000 : 8000);
+      toast(j.ok ? j.msg : tr('Error: ') + (j.error || r.status), j.ok ? 6000 : 8000);
       if (j.ok) $(`[data-pass="${up}"]`).value = '';
       loadTls();
     } catch (err) {
-      toast('Upload fehlgeschlagen');
+      toast(tr('Upload failed'));
     }
     btn.disabled = false;
   });
 
   $('#csrStart').addEventListener('click', async () => {
     const subject = $('#csrSubject').value.trim();
-    if (!subject) { toast('Bitte einen Namen (CN) angeben'); return; }
+    if (!subject) { toast(tr('Please give a name (CN)')); return; }
     try {
       const r = await fetch('/api/tls/csr', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ subject, san: $('#csrSan').value.trim(), rsa: $('#csrKey').value === '1' }),
       });
       const j = await r.json();
-      if (!j.ok) { toast('Fehler: ' + (j.error || r.status), 5000); return; }
-      toast('Schlüssel wird erzeugt …');
+      if (!j.ok) { toast(tr('Error: ') + (j.error || r.status), 5000); return; }
+      toast(tr('Generating the key …'));
       $('#csrStart').disabled = true;
-      $('#csrInfo').textContent = 'Schlüssel wird erzeugt … (kann eine Minute dauern)';
+      $('#csrInfo').textContent = tr('Generating the key … (can take a minute)');
       setTimeout(loadTls, 2000);
     } catch (e) {
-      toast('Fehler');
+      toast(tr('Error'));
     }
   });
   $('#csrDownload').addEventListener('click', () => { window.location = '/api/tls/download?what=csr'; });
@@ -1552,8 +1550,8 @@
   // a phone's captive-portal mini browser that blocks it.
   setTimeout(() => {
     if (!state.connected) {
-      termNote('Terminal verbindet nicht. Tipp: Hotspot-Fenster mit "Fertig"/"Ohne Internet verwenden" schließen '
-        + 'und im Browser http://' + location.hostname + '/ öffnen.');
+      termNote(tr('The terminal does not connect. Tip: close the hotspot window with "Done"/"Use without internet" ')
+        + tr('and open http://') + location.hostname + tr('/ in the browser.'));
     }
   }, 7000);
   setTermOnly(store.get('termOnly', desktopLike), false);

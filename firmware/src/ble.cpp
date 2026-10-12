@@ -1,4 +1,5 @@
 #include "ble.h"
+#include "lang.h"
 
 #include "settings.h"
 #include "serial_bridge.h"
@@ -185,7 +186,7 @@ void loop() {
   rxDropped = 0;
   portEXIT_CRITICAL(&rxMux);
   if (n) Bridge::write(PORT, buf, n);
-  if (lost) Net::onMessage("Bluetooth: " + String(lost) + " Byte Eingabe verworfen (Port zu langsam)");
+  if (lost) Net::onMessage("Bluetooth: " + String(lost) + TR(" bytes of input dropped (port too slow)", " Byte Eingabe verworfen (Port zu langsam)", " bytes de entrada descartados (porta lenta demais)"));
 
   // serial line -> phone. notify() says whether the stack took the packet; if
   // not, the bytes stay queued and are tried again on the next pass.
@@ -202,7 +203,7 @@ void loop() {
     txLen -= c;
   }
   if (txDropped && txLen < TX_QUEUE_SIZE / 2) {
-    Net::onMessage("Bluetooth: " + String(txDropped) + " Byte verworfen (Empfaenger zu langsam)");
+    Net::onMessage("Bluetooth: " + String(txDropped) + TR(" bytes dropped (receiver too slow)", " Byte verworfen (Empfaenger zu langsam)", " bytes descartados (receptor lento demais)"));
     txDropped = 0;
   }
 }

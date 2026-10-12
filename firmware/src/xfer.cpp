@@ -1,4 +1,5 @@
 #include "xfer.h"
+#include "lang.h"
 #include "config.h"
 #include "settings.h"
 #include "serial_bridge.h"
@@ -77,7 +78,7 @@ static const char *stateName() {
 
 static const char *phaseText() {
   switch (st) {
-    case WAIT_START: return "warte auf Empfänger";
+    case WAIT_START: return TR("waiting for the receiver", "warte auf Empfänger", "aguardando o receptor");
     case WAIT_HDR_ACK:
     case WAIT_HDR_C: return "Kopfblock";
     case SEND_DATA:
@@ -172,7 +173,7 @@ static void fail(const String &why, bool sendCan = true) { finishWith("error", w
 static void done() {
   uint32_t ms = millis() - t0;
   char b[96];
-  snprintf(b, sizeof(b), "%lu Bytes in %lu s übertragen", (unsigned long)fsize, (unsigned long)((ms + 500) / 1000));
+  snprintf(b, sizeof(b), TR("%lu bytes transferred in %lu s", "%lu Bytes in %lu s übertragen", "%lu bytes transferidos em %lu s"), (unsigned long)fsize, (unsigned long)((ms + 500) / 1000));
   finishWith("done", b, false);
 }
 
@@ -267,7 +268,7 @@ static void retry() {
   retries++;
   retriesTotal++;
   if (retries > MAX_RETRIES) {
-    fail("Abbruch nach " + String(MAX_RETRIES) + " Wiederholungen (Block " + String(blocks + 1) + ")");
+    fail(TR("Giving up after ", "Abbruch nach ", "Desistindo após ") + String(MAX_RETRIES) + TR(" retries (block ", " Wiederholungen (Block ", " repetições (bloco ") + String(blocks + 1) + ")");
     return;
   }
   if (st == WAIT_ACK && frame[0] == STX && !ever1k && retries >= 3) {
@@ -276,7 +277,7 @@ static void retry() {
     memcpy(carry, frameRaw, frameData);
     carryLen = frameData;
     carryPos = 0;
-    note = "Empfänger nimmt keine 1K-Blöcke, weiter mit 128 Byte";
+    note = TR("The receiver takes no 1K blocks, going on with 128 bytes", "Empfänger nimmt keine 1K-Blöcke, weiter mit 128 Byte", "O receptor não aceita blocos de 1K, continuando com 128 bytes");
     setState(SEND_DATA);
     sendNext();
     notify();
@@ -290,7 +291,7 @@ static void handshake(uint8_t c) {
   crcMode = c == 'C';
   if (proto == YMODEM && !crcMode) {
     proto = XMODEM;
-    note = "Empfänger will XMODEM mit Prüfsumme";
+    note = TR("The receiver wants XMODEM with checksum", "Empfänger will XMODEM mit Prüfsumme", "O receptor quer XMODEM com checksum");
   }
   use1k = crcMode && proto != XMODEM;
   t0 = millis();
@@ -315,7 +316,7 @@ static bool handleByte(uint8_t b) {
   if (b < 0x20 || b == 'C') Serial.printf("[XFER] rx 0x%02x in state %d\n", b, st);
 #endif
   if (b == CAN) {
-    if (++cans >= 2) fail("vom Empfänger abgebrochen", false);
+    if (++cans >= 2) fail(TR("cancelled by the receiver", "vom Empfänger abgebrochen", "cancelado pelo receptor"), false);
     return true;
   }
   cans = 0;
@@ -379,13 +380,13 @@ bool on(uint8_t p) { return st != IDLE && p == port; }
 bool blocksInput(uint8_t p) { return st != IDLE && st != WAIT_START && p == port; }
 
 bool start(uint8_t p, Proto pr, const String &name, uint32_t size, uint8_t client, String &err) {
-  if (st != IDLE) { err = "Es läuft schon eine Übertragung"; return false; }
-  if (!Bridge::enabled(p)) { err = "Port nicht aktiv"; return false; }
-  if (Bridge::autobaudRunning(p)) { err = "Auto-Baud läuft"; return false; }
-  if (!size) { err = "Die Datei ist leer"; return false; }
+  if (st != IDLE) { err = TR("A transfer is running already", "Es läuft schon eine Übertragung", "Já há uma transferência em andamento"); return false; }
+  if (!Bridge::enabled(p)) { err = TR("Port not active", "Port nicht aktiv", "Porta não ativa"); return false; }
+  if (Bridge::autobaudRunning(p)) { err = TR("Auto-baud is running", "Auto-Baud läuft", "Auto-baud em andamento"); return false; }
+  if (!size) { err = TR("The file is empty", "Die Datei ist leer", "O arquivo está vazio"); return false; }
   if (pr > YMODEM) pr = XMODEM;
   buf = (uint8_t *)malloc(XFER_BUF);
-  if (!buf) { err = "Zu wenig Speicher"; return false; }
+  if (!buf) { err = TR("Not enough memory", "Zu wenig Speicher", "Memória insuficiente"); return false; }
 
   // YMODEM header name: no path, printable ASCII, no spaces
   String n = name;
@@ -429,7 +430,7 @@ bool start(uint8_t p, Proto pr, const String &name, uint32_t size, uint8_t clien
   }
   Serial.printf("[XFER] %s \"%s\" (%lu Bytes) auf Port %u: warte auf Empfänger\n", protoName(proto), fname.c_str(),
                 (unsigned long)fsize, port + 1);
-  Display::message(protoName(proto), "warte auf Empf.", 3000);
+  Display::message(protoName(proto), TR("waiting for recv.", "warte auf Empf.", "aguardando recep."), 3000);
   notify();
   return true;
 }
@@ -459,7 +460,7 @@ size_t feed(uint8_t client, const uint8_t *d, size_t n) {
   if (n > fileLeft) n = fileLeft;
   uint32_t space = XFER_BUF - (recv - taken);
   if (n > space) {
-    fail("Pufferüberlauf (Browser zu schnell)");
+    fail(TR("Buffer overflow (browser too fast)", "Pufferüberlauf (Browser zu schnell)", "Estouro de buffer (navegador rápido demais)"));
     return 0;
   }
   for (size_t i = 0; i < n; i++) buf[(recv + i) % XFER_BUF] = d[i];
@@ -503,7 +504,7 @@ void loop() {
   uint32_t now = millis();
 
   if (owner < 0 && now - ownerGoneAt > OWNER_GRACE_MS && recv < fsize) {
-    fail("Browser getrennt", st != WAIT_START);
+    fail(TR("Browser disconnected", "Browser getrennt", "Navegador desconectado"), st != WAIT_START);
     return;
   }
 
@@ -514,14 +515,14 @@ void loop() {
         cand = 0;
         handshake(c);
       } else if (now - stateAt > START_TIMEOUT_MS) {
-        fail("Empfänger hat nicht gestartet (kein C/NAK)", false);
+        fail(TR("The receiver did not start (no C/NAK)", "Empfänger hat nicht gestartet (kein C/NAK)", "O receptor não iniciou (sem C/NAK)"), false);
         return;
       }
       break;
     case SEND_DATA:
       sendNext();
       if (st == SEND_DATA && owner >= 0 && now - lastData > STARVE_MS) {
-        fail("Keine Daten vom Browser");
+        fail(TR("No data from the browser", "Keine Daten vom Browser", "Sem dados do navegador"));
         return;
       }
       break;
@@ -535,7 +536,7 @@ void loop() {
       }
       break;
     case WAIT_HDR_C:
-      if (now - stateAt > 60000) { fail("Empfänger fordert keine Daten an"); return; }
+      if (now - stateAt > 60000) { fail(TR("The receiver asks for no data", "Empfänger fordert keine Daten an", "O receptor não solicita dados")); return; }
       break;
     case WAIT_FIN_C:
       if (now - stateAt > ACK_TIMEOUT_MS) { done(); return; }

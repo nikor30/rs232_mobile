@@ -12,6 +12,7 @@
 
 #include <ArduinoJson.h>
 #include <Preferences.h>
+#include "lang.h"
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <esp_heap_caps.h>
@@ -407,8 +408,8 @@ static Ex handshake(C2Proto::Kind kind, const C2Proto::Token *tok) {
       else {
         ex = EX_BAD;
         confirmFailed = r == C2Proto::ERR_CONFIRM;
-        publish(r == C2Proto::ERR_CONFIRM ? "Server hat seinen Schluessel nicht bewiesen"
-                : r == C2Proto::ERR_CRYPTO ? "zu wenig Speicher fuer den Handshake" : "Handshake: Antwort unbrauchbar");
+        publish(r == C2Proto::ERR_CONFIRM ? TR("the server did not prove its key", "Server hat seinen Schluessel nicht bewiesen", "o servidor nao provou sua chave")
+                : r == C2Proto::ERR_CRYPTO ? TR("not enough memory for the handshake", "zu wenig Speicher fuer den Handshake", "memoria insuficiente para o handshake") : TR("handshake: unusable answer", "Handshake: Antwort unbrauchbar", "handshake: resposta invalida"));
       }
     }
   }
@@ -544,7 +545,7 @@ static void run(JsonObject cmd) {
     job.type = type;
     if (cmd["args"].is<JsonObject>()) serializeJson(cmd["args"], job.args);
     Lock l;
-    if (jobs.size() >= MAX_JOBS) refused = "zu viele Auftraege auf einmal";
+    if (jobs.size() >= MAX_JOBS) refused = "too many commands at once";
     else jobs.push_back(job);
   }
   if (refused) {
@@ -579,8 +580,8 @@ static size_t collectJobResults() {
 
 static void doEnroll(const String &text) {
   C2Proto::Token tok;
-  if (!C2Proto::parseToken(text.c_str(), tok)) return publish("Token unbrauchbar");
-  if (WiFi.status() != WL_CONNECTED) return publish("kein WLAN-Client verbunden");
+  if (!C2Proto::parseToken(text.c_str(), tok)) return publish(TR("unusable token", "Token unbrauchbar", "token invalido"));
+  if (WiFi.status() != WL_CONNECTED) return publish(TR("Wi-Fi client not connected", "kein WLAN-Client verbunden", "cliente Wi-Fi nao conectado"));
   State before = state;
   state = ENROLLING;
   publish("");
@@ -590,8 +591,8 @@ static void doEnroll(const String &text) {
   size_t got = 0;
   const char *err = nullptr;
   int code = key ? request(tok.url, "/v1/server-key", nullptr, 0, key, C2Proto::PUB_SIZE, got) : -1;
-  if (code != 200 || got != C2Proto::PUB_SIZE) err = "Server nicht erreichbar";
-  else if (!C2Proto::tokenPinsServer(tok, key)) err = "Serverschluessel passt nicht zum Token";
+  if (code != 200 || got != C2Proto::PUB_SIZE) err = TR("server not reachable", "Server nicht erreichbar", "servidor inacessivel");
+  else if (!C2Proto::tokenPinsServer(tok, key)) err = TR("the server key does not match the token", "Serverschluessel passt nicht zum Token", "a chave do servidor nao confere com o token");
   if (err) {
     free(key);
     state = before;
@@ -626,7 +627,8 @@ static void doEnroll(const String &text) {
     serverUrl.clear();
     skTag[0] = 0;
     state = OFF;
-    err = ex == EX_REFUSED ? "Token abgelehnt (verbraucht oder abgelaufen)" : ex == EX_NET ? "Server nicht erreichbar" : "Anmeldung gescheitert";
+    err = ex == EX_REFUSED ? TR("token refused (used or expired)", "Token abgelehnt (verbraucht oder abgelaufen)", "token recusado (usado ou expirado)")
+          : ex == EX_NET ? TR("server not reachable", "Server nicht erreichbar", "servidor inacessivel") : TR("enrollment failed", "Anmeldung gescheitert", "falha no registro");
     Serial.printf("[C2]   Anmeldung gescheitert: %s\n", err);
     Preferences p;                       // the previous server (if any) is no longer valid either
     if (p.begin(NVS, false)) {
@@ -653,7 +655,7 @@ static void doEnroll(const String &text) {
   publish("", session.sas);
   Serial.printf("[C2]   angemeldet, wartet auf Bestaetigung - Code %s\n", session.sas);
   Display::wake();
-  Display::message("Leitstelle: Code", session.sas, 60000);
+  Display::message(TR("Control center: code", "Leitstelle: Code", "Central: codigo"), session.sas, 60000);
   nextPollAt = millis() + 5000;
   retryMs = RETRY_MIN_MS;
 }
@@ -686,9 +688,9 @@ static void doPoll() {
     state = REFUSED;
     storeState(nullptr);
     nextPollAt = now + REFUSED_RETRY_MS;
-    return publish("vom Server abgewiesen");
+    return publish(TR("refused by the server", "vom Server abgewiesen", "recusado pelo servidor"));
   }
-  if (ex != EX_OK) return retry(ex == EX_NET ? "Server nicht erreichbar" : "Antwort des Servers unbrauchbar");
+  if (ex != EX_OK) return retry(ex == EX_NET ? TR("server not reachable", "Server nicht erreichbar", "servidor inacessivel") : TR("unusable answer from the server", "Antwort des Servers unbrauchbar", "resposta invalida do servidor"));
 
   if (rebootWanted && results.size()) rebootNow = true;    // the answer to "reboot" has arrived at the server
   if (conAtCollect) conAnnounced = true;
@@ -700,7 +702,7 @@ static void doPoll() {
   if (state != was) {
     storeState(nullptr);
     Serial.printf("[C2]   Zustand: %s\n", stateName(state));
-    if (state == ACTIVE) Display::message("Leitstelle", "verbunden", 4000);
+    if (state == ACTIVE) Display::message(TR("Control center", "Leitstelle", "Central"), TR("connected", "verbunden", "conectado"), 4000);
   }
   for (JsonObject cmd : reply["cmds"].as<JsonArray>()) {
     if (!results.is<JsonArray>()) results.to<JsonArray>();
@@ -723,6 +725,28 @@ static void doPoll() {
 
 static uint32_t conOkMs = 0;             // last console message the server answered
 
+// Why a remote console ended travels over the wire in English - the server's
+// interface translates it for whoever reads it there. What this device shows
+// is in its own language.
+static const char *here(const char *reason) {
+  static const struct { const char *wire, *text; } KNOWN[] = {
+    {"closed at the device", TR("closed at the device", "am Geraet beendet", "encerrado no dispositivo")},
+    {"time is up", TR("time is up", "Zeit abgelaufen", "tempo esgotado")},
+    {"port switched off", TR("port switched off", "Port abgeschaltet", "porta desligada")},
+    {"Wi-Fi lost", TR("Wi-Fi lost", "WLAN getrennt", "Wi-Fi perdido")},
+    {"refused by the server", TR("refused by the server", "vom Server abgewiesen", "recusado pelo servidor")},
+    {"server not reachable", TR("server not reachable", "Server nicht erreichbar", "servidor inacessivel")},
+    {"signed off", TR("signed off", "abgemeldet", "desconectado")},
+    {"closed by the administrator", TR("closed by the administrator", "vom Administrator beendet", "encerrado pelo administrador")},
+    {"device revoked", TR("device revoked", "Geraet gesperrt", "dispositivo bloqueado")},
+    {"the device no longer answers", TR("no contact with the server", "keine Verbindung zum Server", "sem contato com o servidor")},
+    {"server restarted", TR("server restarted", "Server neu gestartet", "servidor reiniciado")},
+  };
+  for (const auto &k : KNOWN)
+    if (!strcmp(reason, k.wire)) return k.text;
+  return reason;
+}
+
 static void conFinish(const char *reason) {
   {
     Lock l;
@@ -738,8 +762,8 @@ static void conFinish(const char *reason) {
   nextPollAt = millis() + 1000;
   Serial.printf("[C2]   Fernkonsole beendet: %s\n", reason);
   char text[40];
-  snprintf(text, sizeof(text), "%s", reason);
-  Display::message("Fernkonsole beendet", text, 5000);
+  snprintf(text, sizeof(text), "%s", here(reason));
+  Display::message(TR("Remote console ended", "Fernkonsole beendet", "Console remoto encerrado"), text, 5000);
 }
 
 // One question to the server: here is what the port has sent, what has been typed?
@@ -762,17 +786,17 @@ static void conStep() {
     if (ex == EX_OK) return;             // next round, on the new session
   }
   if (ex == EX_REFUSED) {
-    conFinish("vom Server abgewiesen");
+    conFinish("refused by the server");
     nextPollAt = millis();               // the poll finds out what that means
     return;
   }
   if (ex != EX_OK) {
-    if (endReason[0] || millis() - conOkMs > CON_LOST_MS) conFinish(endReason[0] ? endReason : "Server nicht erreichbar");
+    if (endReason[0] || millis() - conOkMs > CON_LOST_MS) conFinish(endReason[0] ? endReason : "server not reachable");
     else vTaskDelay(pdMS_TO_TICKS(500));
     return;
   }
   conOkMs = millis();
-  const char *end = "abgemeldet";
+  const char *end = "signed off";
   {
     Lock l;
     if (con.stream) {
@@ -785,12 +809,12 @@ static void conStep() {
 }
 
 static void task(void *) {
-  const char *failed = "zu wenig Speicher";
+  const char *failed = TR("not enough memory", "zu wenig Speicher", "memoria insuficiente");
   big([&] { failed = C2Proto::selfTest(); });
   if (failed) {
     state = FAILED;
     char buf[64];
-    snprintf(buf, sizeof(buf), "Selbsttest: %s", failed);
+    snprintf(buf, sizeof(buf), TR("self-test: %s", "Selbsttest: %s", "autoteste: %s"), failed);
     publish(buf);
     Serial.printf("[C2]   %s - Leitstelle abgeschaltet\n", buf);
     vTaskDelete(nullptr);
@@ -838,7 +862,7 @@ static void task(void *) {
     } else if (online) conStep();
     else {
       if (!conOkMs) conOkMs = millis();
-      if (millis() - conOkMs > CON_LOST_MS) conFinish("WLAN getrennt");
+      if (millis() - conOkMs > CON_LOST_MS) conFinish("Wi-Fi lost");
     }
     vTaskDelay(pdMS_TO_TICKS(conLive && online ? 5 : 200));
   }
@@ -890,7 +914,7 @@ static String playReport() {
 static void execute(const MainJob &job) {
   JsonDocument args;
   if (job.args.length()) deserializeJson(args, job.args);
-  const char *denied = "am Geraet nicht freigegeben (Menue -> Netz -> Leitstelle)";
+  const char *denied = "not allowed at the device (Menu -> Network -> Control center)";
   if (job.type == "status") answer(job.id, true, Net::deviceStatus());
   else if (job.type == "settings") answer(job.id, true, Net::deviceSettings());
   else if (job.type == "configs") answer(job.id, true, Configs::listJson());
@@ -898,8 +922,8 @@ static void execute(const MainJob &job) {
     const char *name = args["name"] | "";
     int port = args["port"] | 1;
     if (!settings.c2Control) answer(job.id, false, quoted(denied));
-    else if (Player::state() == Player::RUNNING) answer(job.id, false, quoted("es wird schon eine Konfiguration abgespielt"));
-    else if (port < 1 || port > MAX_PORTS || !Player::start(name, port - 1)) answer(job.id, false, quoted(port < 1 || port > MAX_PORTS ? "Port unbekannt" : Player::result()));
+    else if (Player::state() == Player::RUNNING) answer(job.id, false, quoted("a configuration is being played already"));
+    else if (port < 1 || port > MAX_PORTS || !Player::start(name, port - 1)) answer(job.id, false, quoted(port < 1 || port > MAX_PORTS ? "unknown port" : Player::result()));
     else {
       playJob = job.id;                  // answered when the player has finished
       Serial.printf("[C2]   spielt \"%s\" auf Port %d ab\n", name, port);
@@ -907,7 +931,7 @@ static void execute(const MainJob &job) {
   } else if (job.type == "reboot") {
     if (!settings.c2Control) answer(job.id, false, quoted(denied));
     else {
-      answer(job.id, true, quoted("Neustart"));
+      answer(job.id, true, quoted("restarting"));
       rebootWanted = true;               // carried out once the answer has reached the server
     }
   } else if (job.type == "console") {
@@ -915,10 +939,10 @@ static void execute(const MainJob &job) {
     int port = args["port"] | 1, minutes = constrain((int)(args["minutes"] | 15), 1, (int)CON_MAX_MIN);
     const char *no = nullptr;
     Lock l;
-    if (con.state != CON_NONE) no = "es ist schon eine Fernkonsole offen oder angefragt";
+    if (con.state != CON_NONE) no = "a remote console is already open or asked for";
     else if (port < 1 || port > MAX_PORTS || !Bridge::enabled(port - 1)) no = "Port unbekannt";
-    else if (!Display::usable()) no = "das Geraet hat kein Display, an dem jemand zustimmen koennte";
-    else if ((int32_t)(conRefuseUntil - millis()) > 0) no = "am Geraet gerade abgelehnt";
+    else if (!Display::usable()) no = "the device has no display on which somebody could agree";
+    else if ((int32_t)(conRefuseUntil - millis()) > 0) no = "just refused at the device";
     if (no) {
       String r = String("{\"id\":") + job.id + ",\"ok\":false,\"out\":" + quoted(no) + "}";
       jobResults.push_back(r);
@@ -932,7 +956,7 @@ static void execute(const MainJob &job) {
     con.askedMs = millis();
     Display::wake();
     Serial.printf("[C2]   Fernkonsole angefragt: Port %d, %d min - wartet auf Zustimmung am Display\n", port, minutes);
-  } else answer(job.id, false, quoted("unbekannter Auftrag"));
+  } else answer(job.id, false, quoted("unknown command"));
 }
 
 // Closes the console from this side; the task tells the server. Under mux.
@@ -949,7 +973,7 @@ void consoleAnswer(bool allow) {
     Lock l;
     if (con.state != CON_ASK) return;
     C2Console::Stream *st = allow ? new (std::nothrow) C2Console::Stream() : nullptr;
-    const char *no = !allow ? "am Geraet abgelehnt" : !st ? "zu wenig Speicher" : nullptr;
+    const char *no = !allow ? "refused at the device" : !st ? "not enough memory" : nullptr;
     if (no) {
       r = String("{\"id\":") + con.id + ",\"ok\":false,\"out\":" + quoted(no) + "}";
       con.state = CON_NONE;
@@ -965,13 +989,13 @@ void consoleAnswer(bool allow) {
     jobResults.push_back(r);
   }
   Serial.printf("[C2]   Fernkonsole %s\n", allow ? "am Display erlaubt" : "am Display abgelehnt");
-  if (allow) Net::onMessage(String("Leitstelle: Fernkonsole auf ") + Store::portName(con.port) + " für " + con.minutes + " min erlaubt");
+  if (allow) Net::onMessage(String(TR("Control center: remote console on ", "Leitstelle: Fernkonsole auf ", "Central: console remoto em ")) + Store::portName(con.port) + TR(" allowed for ", " für ", " permitido por ") + con.minutes + TR(" min", " min erlaubt", " min"));
 }
 
 void consoleEnd() {
   if (!mux) return;
   Lock l;
-  conEndLocked("am Geraet beendet");
+  conEndLocked("closed at the device");
 }
 
 Console console() {
@@ -994,7 +1018,7 @@ static void conPump() {
     Lock l;
     port = con.port;
     if (con.state == CON_ASK && now - con.askedMs > CON_ASK_MS) {
-      String r = String("{\"id\":") + con.id + ",\"ok\":false,\"out\":" + quoted("am Geraet hat niemand geantwortet") + "}";
+      String r = String("{\"id\":") + con.id + ",\"ok\":false,\"out\":" + quoted("nobody answered at the device") + "}";
       jobResults.push_back(r);
       con.state = CON_NONE;
       conBusy = false;
@@ -1003,8 +1027,8 @@ static void conPump() {
     }
     if (con.state != CON_OPEN) return;
     C2Console::Stream &st = *con.stream;
-    if ((int32_t)(con.untilMs - now) <= 0) return conEndLocked("Zeit abgelaufen");
-    if (!Bridge::enabled(port)) return conEndLocked("Port abgeschaltet");
+    if ((int32_t)(con.untilMs - now) <= 0) return conEndLocked("time is up");
+    if (!Bridge::enabled(port)) return conEndLocked("port switched off");
     // port -> server. What does not fit waits in the port's ring; if the ring
     // has moved on, the gap is counted so the offsets stay true.
     uint32_t first = Bridge::ringStartSeq(port);
@@ -1035,7 +1059,7 @@ void loop() {
   if (!mux) return;
   if (rebootNow) {
     Serial.println("[C2]   Neustart auf Auftrag der Leitstelle");
-    Display::message("Leitstelle", "Neustart ...", 3000);
+    Display::message(TR("Control center", "Leitstelle", "Central"), TR("Restarting ...", "Neustart ...", "Reiniciando ..."), 3000);
     Display::loop();
     delay(800);
     ESP.restart();
@@ -1063,33 +1087,33 @@ Info info() {
 
 const char *stateName(State s) {
   switch (s) {
-    case ENROLLING: return "meldet an";
-    case PENDING:   return "wartet auf Bestaetigung";
-    case ACTIVE:    return "verbunden";
-    case REFUSED:   return "abgewiesen";
-    case FAILED:    return "Fehler";
-    default:        return "nicht angemeldet";
+    case ENROLLING: return TR("enrolling", "meldet an", "registrando");
+    case PENDING:   return TR("waiting for confirmation", "wartet auf Bestaetigung", "aguardando confirmacao");
+    case ACTIVE:    return TR("connected", "verbunden", "conectado");
+    case REFUSED:   return TR("refused", "abgewiesen", "recusado");
+    case FAILED:    return TR("error", "Fehler", "erro");
+    default:        return TR("not enrolled", "nicht angemeldet", "nao registrado");
   }
 }
 
 String line() {
   Info i = info();
-  if (i.state == PENDING) return String("Code ") + i.code;
-  if (i.state == ACTIVE && i.error[0]) return "nicht erreichbar";
+  if (i.state == PENDING) return String(TR("Code ", "Code ", "Codigo ")) + i.code;
+  if (i.state == ACTIVE && i.error[0]) return TR("not reachable", "nicht erreichbar", "inacessivel");
   if (i.state == ACTIVE && conBusy) {
     Console c = console();
-    if (c.state == 2) return String("Fernkonsole Port ") + (c.port + 1);
+    if (c.state == 2) return String(TR("Remote console port ", "Fernkonsole Port ", "Console remoto porta ")) + (c.port + 1);
   }
   return stateName(i.state);
 }
 
 const char *enroll(const String &token) {
   C2Proto::Token tok;
-  if (!C2Proto::parseToken(token.c_str(), tok)) return "Das ist kein Einladungs-Token";
-  if (WiFi.status() != WL_CONNECTED) return "Erst den WLAN-Client verbinden (Menü → Netz)";
-  if (!mux) return "Gerät startet noch";
+  if (!C2Proto::parseToken(token.c_str(), tok)) return TR("This is not an invitation token", "Das ist kein Einladungs-Token", "Isto não é um token de convite");
+  if (WiFi.status() != WL_CONNECTED) return TR("Connect the Wi-Fi client first (Menu → Network)", "Erst den WLAN-Client verbinden (Menü → Netz)", "Conecte primeiro o cliente Wi-Fi (Menu → Rede)");
+  if (!mux) return TR("The device is still starting", "Gerät startet noch", "O dispositivo ainda está iniciando");
   Lock l;
-  if (shared.state == FAILED) return "Leitstelle auf diesem Gerät nicht verfügbar";
+  if (shared.state == FAILED) return TR("Control center not available on this device", "Leitstelle auf diesem Gerät nicht verfügbar", "Central não disponível neste dispositivo");
   reqToken = token;
   return nullptr;
 }

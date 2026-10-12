@@ -7,15 +7,18 @@
   'use strict';
   const $ = (s) => document.querySelector(s);
   const HOTSPOT = 'http://192.168.4.1/';     // a device's own web interface, where the QR code leads
-  const STATES = { pending: 'wartet auf Bestätigung', active: 'verbunden', revoked: 'gesperrt' };
-  const CMD_STATES = { queued: 'wartet', sent: 'abgeholt', done: 'erledigt', failed: 'abgelehnt', expired: 'verfallen' };
-  const CMD_NAMES = { ping: 'Ping', status: 'Zustand', settings: 'Einstellungen', configs: 'Konfigurationen', play: 'Abspielen', reboot: 'Neustart', console: 'Fernkonsole' };
+  // The page is written in English; I18N (i18n.js) has the other languages.
+  const { t } = I18N;
+  const STATES = { pending: t('waiting for confirmation'), active: t('connected'), revoked: t('revoked') };
+  const CMD_STATES = { queued: t('queued'), sent: t('fetched'), done: t('done'), failed: t('refused'), expired: t('expired') };
+  const CMD_NAMES = { ping: t('Ping'), status: t('Status'), settings: t('Settings'), configs: t('Configurations'), play: t('Play'), reboot: t('Restart'), console: t('Remote console') };
+  const APP = t('RS232 Control Center');
 
   let token = sessionStorage.getItem('c2admin') || '';   // admin token, if that is how this tab got in
   let signedIn = false, me = '', methods = { token: false, entra: false };
   let devices = [], selected = '', timer = 0, expTimer = 0;
-  let view = 'geraete', server = null, status = null, loaded = false;
-  const VIEWS = { geraete: 'Geräte', benutzer: 'Benutzer', protokoll: 'Protokoll', server: 'Server' };
+  let view = 'devices', server = null, status = null, loaded = false;
+  const VIEWS = { devices: t('Devices'), users: t('Users'), audit: t('Audit log'), server: t('Server') };
   // The cookie of a signed-in account travels by itself. The X-C2 header shows
   // the server that the call comes from this page and not from another site.
   const authHeaders = () => (token ? { Authorization: 'Bearer ' + token } : { 'X-C2': '1' });
@@ -26,11 +29,11 @@
     return e;
   }
   function toast(text, ms = 3000) {
-    const t = $('#toast');
-    t.textContent = text;
-    t.hidden = false;
-    clearTimeout(toast.t);
-    toast.t = setTimeout(() => { t.hidden = true; }, ms);
+    const box = $('#toast');
+    box.textContent = text;
+    box.hidden = false;
+    clearTimeout(toast.timer);
+    toast.timer = setTimeout(() => { box.hidden = true; }, ms);
   }
 
   async function api(method, path, body) {
@@ -39,21 +42,21 @@
       headers: Object.assign(authHeaders(), body ? { 'Content-Type': 'application/json' } : {}),
       body: body ? JSON.stringify(body) : undefined,
     });
-    if (r.status === 401) { showLogin(); throw new Error(token ? 'Token nicht angenommen' : 'Nicht mehr angemeldet'); }
+    if (r.status === 401) { showLogin(); throw new Error(token ? t('The token was not accepted') : t('No longer signed in')); }
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw Object.assign(new Error(j.error || 'HTTP ' + r.status), { status: r.status });
+    if (!r.ok) throw Object.assign(new Error(j.error ? t(j.error) : 'HTTP ' + r.status), { status: r.status });   // the server answers in English
     return j;
   }
 
   function ago(iso) {
     if (!iso) return '–';
     const s = Math.max(0, Math.round((Date.now() - new Date(iso)) / 1000));
-    if (s < 90) return `vor ${s} s`;
-    if (s < 5400) return `vor ${Math.round(s / 60)} min`;
-    if (s < 129600) return `vor ${Math.round(s / 3600)} h`;
-    return new Date(iso).toLocaleString('de-DE');
+    if (s < 90) return t('{n} s ago', { n: s });
+    if (s < 5400) return t('{n} min ago', { n: Math.round(s / 60) });
+    if (s < 129600) return t('{n} h ago', { n: Math.round(s / 3600) });
+    return new Date(iso).toLocaleString(I18N.locale);
   }
-  const when = (iso) => (iso ? new Date(iso).toLocaleString('de-DE') : '–');
+  const when = (iso) => (iso ? new Date(iso).toLocaleString(I18N.locale) : '–');
   function badge(state, names) {
     return el('span', { className: 'badge ' + state, textContent: names[state] || state });
   }
@@ -79,20 +82,20 @@
   $('#askNo').addEventListener('click', () => $('#askDlg').close(''));
   $('#askYes').addEventListener('click', () => $('#askDlg').close('yes'));
 
-  // ---- where one is: #geraete, #geraete/<id>, #benutzer, #protokoll, #server
+  // ---- where one is: #devices, #devices/<id>, #users, #audit, #server
   function route() {
     const [v, id] = location.hash.slice(1).split('/');
     const was = selected;
-    view = VIEWS[v] ? v : 'geraete';
-    selected = view === 'geraete' && id ? id : '';
+    view = VIEWS[v] ? v : 'devices';
+    selected = view === 'devices' && id ? id : '';
     document.body.classList.toggle('detail', !!selected);
-    document.body.classList.toggle('popped', !!was && !selected && view === 'geraete');   // back from a device: the list returns from the left
+    document.body.classList.toggle('popped', !!was && !selected && view === 'devices');   // back from a device: the list returns from the left
     for (const name of Object.keys(VIEWS)) $('#v-' + name).hidden = name !== view || !signedIn;
     for (const a of $('#nav').children) {
       if (a.dataset.view === view) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
     }
-    $('#title').textContent = signedIn ? VIEWS[view] : 'RS232-Leitstelle';
-    document.title = signedIn ? `${VIEWS[view]} – RS232-Leitstelle` : 'RS232-Leitstelle';
+    $('#title').textContent = signedIn ? VIEWS[view] : APP;
+    document.title = signedIn ? `${VIEWS[view]} – ${APP}` : APP;
     if (!signedIn) return;
     if (was !== selected) {
       if (was) conDetach();
@@ -100,7 +103,7 @@
       if (selected) { renderDetail(); window.scrollTo(0, 0); }
     }
     showDetail();
-    if (view === 'benutzer' || view === 'protokoll') loadAdmin();
+    if (view === 'users' || view === 'audit') loadAdmin();
     if (view === 'server') renderServer();
   }
   window.addEventListener('hashchange', route);
@@ -118,7 +121,7 @@
       body: body ? JSON.stringify(body) : undefined,
     });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw Object.assign(new Error(r.status === 429 ? 'Zu viele Versuche – einen Moment warten' : j.error || 'HTTP ' + r.status), { status: r.status });
+    if (!r.ok) throw Object.assign(new Error(r.status === 429 ? t('Too many attempts – wait a moment') : j.error ? t(j.error) : 'HTTP ' + r.status), { status: r.status });
     return j;
   }
   function showLogin() {
@@ -132,7 +135,7 @@
     $('#logout').hidden = $('#nav').hidden = true;
     $('#whoami').textContent = '';
     document.body.classList.remove('detail', 'popped');
-    $('#title').textContent = document.title = 'RS232-Leitstelle';
+    $('#title').textContent = document.title = APP;
     $('#entraLogin').hidden = !methods.entra;
     $('#tokenBox').hidden = !methods.token;
     $('#login').hidden = false;
@@ -147,7 +150,7 @@
       server = await api('GET', '/server');
       if (token) sessionStorage.setItem('c2admin', token);
       signedIn = true;
-      $('#whoami').textContent = token ? 'Admin-Token' : me;
+      $('#whoami').textContent = token ? t('Admin token') : me;
       $('#login').hidden = true;
       $('#app').hidden = false;
       $('#logout').hidden = $('#nav').hidden = false;
@@ -193,7 +196,7 @@
   $('#setupForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     setupError('');
-    if ($('#setupPass').value !== $('#setupPass2').value) return setupError('Die beiden Passwörter sind nicht gleich');
+    if ($('#setupPass').value !== $('#setupPass2').value) return setupError(t('The two passwords are not the same'));
     const name = $('#setupName').value, setup = $('#setupCode').value;
     try {
       const r = await auth('setup', { name, setup, password: $('#setupPass').value });
@@ -241,29 +244,29 @@
     list.textContent = '';
     for (const d of devices) {
       const st = d.status || {}, meta = [];
-      if (d.last_seen) meta.push('zuletzt ' + ago(d.last_seen));
-      if (st.bat_pct != null) meta.push(`Akku ${st.bat_pct} %${st.charge ? ' (' + st.charge + ')' : ''}`);
+      if (d.last_seen) meta.push(t('last seen {ago}', { ago: ago(d.last_seen) }));
+      if (st.bat_pct != null) meta.push(t('battery {n} %', { n: st.bat_pct }) + (st.charge ? ' (' + st.charge + ')' : ''));
       if (st.rssi != null) meta.push(`${st.rssi} dBm`);
       const fw = st.fw || (d.info && d.info.fw);
-      if (fw) meta.push('Firmware ' + fw);
-      if (d.open_commands) meta.push(d.open_commands === 1 ? '1 Auftrag offen' : `${d.open_commands} Aufträge offen`);
-      if (d.old_key) meta.push('alter Serverschlüssel');
-      const a = el('a', { className: 'dev', href: '#geraete/' + d.id, role: 'listitem' },
+      if (fw) meta.push(t('firmware {v}', { v: fw }));
+      if (d.open_commands) meta.push(d.open_commands === 1 ? t('1 command open') : t('{n} commands open', { n: d.open_commands }));
+      if (d.old_key) meta.push(t('old server key'));
+      const a = el('a', { className: 'dev', href: '#devices/' + d.id, role: 'listitem' },
         el('b', { textContent: d.name || d.id.slice(0, 8) }), badge(d.state, STATES),
-        el('span', { className: 'meta', textContent: meta.join(' · ') || 'hat sich noch nicht gemeldet' }));
+        el('span', { className: 'meta', textContent: meta.join(' · ') || t('has not reported in yet') }));
       a.dataset.id = d.id;
       if (d.id === selected) a.setAttribute('aria-current', 'true');
       list.append(a);
       if (d.id === focus) a.focus({ preventScroll: true });     // the list is rebuilt under the keyboard's feet
     }
     $('#noDevices').hidden = !!devices.length;
-    if (loaded && selected && !devices.some((d) => d.id === selected)) { conDetach(); location.hash = '#geraete'; }   // it is gone
+    if (loaded && selected && !devices.some((d) => d.id === selected)) { conDetach(); location.hash = '#devices'; }   // it is gone
     showDetail();
   }
 
   // ---- one device
   function pretty(v) {
-    return typeof v === 'string' ? v : JSON.stringify(v, null, 1);
+    return typeof v === 'string' ? t(v) : JSON.stringify(v, null, 1);   // a refusal comes in English: 'refused at the device'
   }
   async function renderDetail() {
     const d = devices.find((x) => x.id === selected);
@@ -314,9 +317,9 @@
     e.preventDefault();
     try {
       await api('POST', `/devices/${selected}/approve`, { sas: $('#sas').value.trim() });
-      toast('Gerät bestätigt');
+      toast(t('Device confirmed'));
     } catch (err) {
-      toast(err.status === 403 ? 'Der Code stimmt nicht' : err.status === 404 ? 'Zu viele falsche Eingaben – die Anmeldung wurde verworfen' : err.message, 5000);
+      toast(err.status === 403 ? t('The code does not match') : err.status === 404 ? t('Too many wrong entries – the enrollment was discarded') : err.message, 5000);
     }
     $('#sas').value = '';
     refresh();
@@ -325,20 +328,20 @@
   async function send(type, args) {
     try {
       await api('POST', `/devices/${selected}/commands`, args ? { type, args } : { type });
-      toast(`${CMD_NAMES[type] || type}: eingereiht – das Gerät holt den Auftrag bei seiner nächsten Meldung ab`);
+      toast(t('{cmd}: queued – the device fetches the command the next time it reports in', { cmd: CMD_NAMES[type] || type }));
     } catch (err) { toast(err.message, 5000); }
     refresh();
   }
   $('#commands').addEventListener('click', async (e) => {
     const type = e.target.dataset && e.target.dataset.cmd;
     if (!type) return;
-    if (type === 'reboot' && !await ask('Gerät neu starten?', 'Laufende Konsolensitzungen brechen ab.', 'Neu starten')) return;
+    if (type === 'reboot' && !await ask(t('Restart the device?'), t('Console sessions that are running break off.'), t('Restart'))) return;
     send(type);
   });
   $('#playForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const name = $('#playName').value.trim(), port = +$('#playPort').value;
-    if (!await ask(`„${name}“ auf Port ${port} abspielen?`, 'Die Zeilen gehen an die Konsole des dort angeschlossenen Geräts.', 'Abspielen')) return;
+    if (!await ask(t('Play “{name}” on port {port}?', { name, port }), t('The lines go to the console of whatever is connected there.'), t('Play'))) return;
     send('play', { name, port });
   });
   // ---- remote console
@@ -389,7 +392,7 @@
         const r = await fetch(`/admin/v1/devices/${c.dev}/console/${c.id}/output?from=${c.next}`, {
           cache: 'no-store', headers: authHeaders(), signal: c.abort.signal,
         });
-        if (r.status === 404) { o = { state: 'ended', reason: 'dem Server nicht mehr bekannt', d: '', next: c.next }; } else if (!r.ok) throw new Error('HTTP ' + r.status);
+        if (r.status === 404) { o = { state: 'ended', reason: 'no longer known to the server', d: '', next: c.next }; } else if (!r.ok) throw new Error('HTTP ' + r.status);
         else o = await r.json();
       } catch (e) {
         if (con !== c) return;
@@ -397,14 +400,14 @@
         continue;
       }
       if (con !== c) return;
-      if (o.lost) c.term.write(`\r\n\x1b[90m[${o.lost} Zeichen fehlen]\x1b[0m\r\n`);
+      if (o.lost) c.term.write(`\r\n\x1b[90m[${t('{n} characters are missing', { n: o.lost })}]\x1b[0m\r\n`);
       if (o.d) c.term.write(unb64(o.d));
       c.next = o.next;
       c.left = o.left_s;
       c.leftAt = Date.now();
       if (o.state === 'ended') {
         c.ended = true;
-        c.term.write(`\r\n\x1b[90m[Sitzung beendet: ${o.reason}]\x1b[0m\r\n`);
+        c.term.write(`\r\n\x1b[90m[${t('Session ended: {why}', { why: t(o.reason) })}]\x1b[0m\r\n`);
         c.term.options.disableStdin = true;
         refresh();
       }
@@ -432,11 +435,12 @@
       if (selected !== d.id) return;
       const cur = v.console, st = $('#conState');
       let text = '', cls = '';
-      if (cur && cur.state === 'requested') { text = `Angefragt (Port ${cur.port}) – am Gerät muss jetzt jemand auf dem Display „Erlauben“ tippen.`; cls = 'wait'; }
-      else if (cur && cur.state === 'granted') { text = 'Am Gerät erlaubt – die Verbindung kommt.'; cls = 'wait'; }
-      else if (cur && cur.state === 'open') { text = `Offen auf Port ${cur.port}.`; cls = 'open'; }
-      else if (cur && cur.state === 'refused') text = `Nicht zustande gekommen: ${cur.reason}`;
-      else if (cur && cur.state === 'ended') text = `Letzte Sitzung beendet: ${cur.reason}`;
+      // why a session ended comes from the server in English, or from the device in the device's language
+      if (cur && cur.state === 'requested') { text = t('Requested (port {port}) – somebody at the device now has to tap “Allow” on its display.', { port: cur.port }); cls = 'wait'; }
+      else if (cur && cur.state === 'granted') { text = t('Allowed at the device – the connection is coming up.'); cls = 'wait'; }
+      else if (cur && cur.state === 'open') { text = t('Open on port {port}.', { port: cur.port }); cls = 'open'; }
+      else if (cur && cur.state === 'refused') text = t('Did not come about: {why}', { why: t(cur.reason) });
+      else if (cur && cur.state === 'ended') text = t('Last session ended: {why}', { why: t(cur.reason) });
       st.textContent = text;
       st.className = 'dim ' + cls;
       const busy = cur && ['requested', 'granted', 'open'].includes(cur.state);
@@ -444,7 +448,7 @@
       if (cur && cur.state === 'open' && !(con && con.id === cur.id)) conAttach(d.id, cur.id, cur.left_s);
       if (con) {
         const left = Math.max(0, con.left - Math.round((Date.now() - con.leftAt) / 1000));
-        $('#conInfo').textContent = con.ended ? 'beendet' : `Port ${cur ? cur.port : ''} · noch ${mmss(left)} min`;
+        $('#conInfo').textContent = con.ended ? t('ended') : t('Port {port} · {left} min left', { port: cur ? cur.port : '', left: mmss(left) });
         $('#conBreak').hidden = $('#conClose').hidden = con.ended;
       }
       const body = $('#conLog tbody');
@@ -455,8 +459,8 @@
           el('td', { textContent: l.id }),
           el('td', { textContent: l.port }),
           el('td', { textContent: when(l.start) }),
-          el('td', { textContent: dur == null ? 'läuft' : mmss(dur) + ' min' }),
-          el('td', { textContent: l.reason || '' }),
+          el('td', { textContent: dur == null ? t('running') : mmss(dur) + ' min' }),
+          el('td', { textContent: l.reason ? t(l.reason) : '' }),
           el('td', { textContent: l.end ? `${l.bytes_in} / ${l.bytes_out}` : '' })));
       }
       label($('#conLog'));
@@ -476,8 +480,8 @@
 
   $('#revoke').addEventListener('click', async () => {
     const d = devices.find((x) => x.id === selected);
-    if (!d || !await ask(`„${d.name || d.id}“ sperren?`, 'Das gilt sofort und endgültig: Das Gerät kommt auch mit einer neuen Einladung nicht zurück.', 'Sperren')) return;
-    try { await api('POST', `/devices/${selected}/revoke`); toast('Gesperrt'); } catch (err) { toast(err.message); }
+    if (!d || !await ask(t('Revoke “{name}”?', { name: d.name || d.id }), t('This takes effect at once and for good: the device does not come back, not even with a new invitation.'), t('Revoke'))) return;
+    try { await api('POST', `/devices/${selected}/revoke`); toast(t('Device revoked')); } catch (err) { toast(err.message); }
     refresh();
   });
 
@@ -497,42 +501,42 @@
         if (qr.isDark(y, x)) g.fillRect((x + margin) * scale, (y + margin) * scale, scale, scale);
   }
   $('#invite').addEventListener('click', async () => {
-    let t;
-    try { t = await api('POST', '/enroll-tokens', { ttl_s: 600 }); } catch (err) { toast(err.message); return; }
-    $('#tokenText').value = t.token;
-    drawQr($('#qr'), HOTSPOT + '#c2=' + encodeURIComponent(t.token));
-    const until = new Date(t.expires);
+    let inv;
+    try { inv = await api('POST', '/enroll-tokens', { ttl_s: 600 }); } catch (err) { toast(err.message); return; }
+    $('#tokenText').value = inv.token;
+    drawQr($('#qr'), HOTSPOT + '#c2=' + encodeURIComponent(inv.token));
+    const until = new Date(inv.expires);
     clearInterval(expTimer);
     const tick = () => {
       const s = Math.round((until - Date.now()) / 1000);
-      $('#tokenExp').textContent = s > 0 ? `gilt noch ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')} min, für ein Gerät` : 'abgelaufen';
+      $('#tokenExp').textContent = s > 0 ? t('valid for another {left} min, for one device', { left: `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}` }) : t('expired');
     };
     tick();
     expTimer = setInterval(tick, 1000);
     $('#inviteDlg').showModal();
   });
   $('#copyToken').addEventListener('click', async () => {
-    try { await navigator.clipboard.writeText($('#tokenText').value); toast('Kopiert'); } catch (e) { $('#tokenText').select(); toast('Markiert – mit Strg+C kopieren'); }
+    try { await navigator.clipboard.writeText($('#tokenText').value); toast(t('Copied')); } catch (e) { $('#tokenText').select(); toast(t('Selected – copy with Ctrl+C')); }
   });
   $('#closeInvite').addEventListener('click', () => $('#inviteDlg').close());
   $('#inviteDlg').addEventListener('close', () => { clearInterval(expTimer); $('#tokenText').value = ''; refresh(); });
 
   // ---- accounts and the audit record
-  const KINDS = { local: 'Passwort + App', entra: 'Microsoft Entra ID' };
+  const KINDS = { local: t('Password + app'), entra: 'Microsoft Entra ID' };
   const ACTIONS = {
-    login: 'Anmeldung', 'login entra': 'Anmeldung über Microsoft', logout: 'Abmeldung', setup: 'Konto einrichten',
-    'POST /users': 'Benutzer angelegt', 'POST /users/{name}/reset': 'Konto zurückgesetzt', 'POST /users/{name}/disable': 'Konto gesperrt oder freigegeben',
-    'DELETE /users/{name}': 'Benutzer gelöscht', 'POST /enroll-tokens': 'Einladung erzeugt', 'POST /devices/{id}/approve': 'Gerät bestätigt',
-    'POST /devices/{id}/revoke': 'Gerät gesperrt', 'POST /devices/{id}/commands': 'Auftrag', 'POST /devices/{id}/console/{sess}/close': 'Fernkonsole beendet',
-    'POST /server/rotate-key': 'Serverschlüssel gewechselt', 'POST /server/rotate-key/end': 'Schlüsselwechsel beendet',
+    login: t('Sign-in'), 'login entra': t('Sign-in with Microsoft'), logout: t('Sign-out'), setup: t('Account set up'),
+    'POST /users': t('User added'), 'POST /users/{name}/reset': t('Account reset'), 'POST /users/{name}/disable': t('Account disabled or enabled'),
+    'DELETE /users/{name}': t('User deleted'), 'POST /enroll-tokens': t('Invitation created'), 'POST /devices/{id}/approve': t('Device confirmed'),
+    'POST /devices/{id}/revoke': t('Device revoked'), 'POST /devices/{id}/commands': t('Command'), 'POST /devices/{id}/console/{sess}/close': t('Remote console ended'),
+    'POST /server/rotate-key': t('Server key changed'), 'POST /server/rotate-key/end': t('Key change ended'),
   };
   function showCode(name, code) {
     $('#codeFor').textContent = name;
     $('#codeText').textContent = code;
     $('#codeDlg').showModal();
   }
-  async function userAction(title, text, yes, method, path, body) {
-    if (!await ask(title, text, yes, yes === 'Freigeben' ? '' : 'danger')) return;
+  async function userAction(title, text, yes, method, path, body, harmless) {
+    if (!await ask(title, text, yes, harmless ? '' : 'danger')) return;
     try {
       const r = await api(method, path, body);
       if (r.setup) showCode(r.name, r.setup);
@@ -545,17 +549,18 @@
     const ub = $('#users tbody');
     ub.textContent = '';
     for (const u of users) {
-      const state = u.disabled ? 'gesperrt' : u.ready ? 'aktiv' : u.setup_expires ? `wartet auf Einrichtung (Code gilt bis ${when(u.setup_expires)})` : 'nicht eingerichtet, Code abgelaufen';
-      const how = KINDS[u.kind] + (u.kind === 'entra' ? ` (${u.entra_name || u.entra_oid}${u.entra_name && !u.entra_oid ? ', noch nie angemeldet' : ''})` : '');
+      const state = u.disabled ? t('disabled') : u.ready ? t('active') : u.setup_expires ? t('waiting to be set up (code valid until {until})', { until: when(u.setup_expires) }) : t('not set up, code expired');
+      const how = KINDS[u.kind] + (u.kind === 'entra' ? ` (${u.entra_name || u.entra_oid}${u.entra_name && !u.entra_oid ? ', ' + t('never signed in') : ''})` : '');
       const acts = el('td', { className: 'acts' });
       const name = encodeURIComponent(u.name);
-      if (u.kind === 'local') acts.append(el('button', { className: 'btn small', textContent: 'Zurücksetzen',
-        onclick: () => userAction(`Konto „${u.name}“ zurücksetzen?`, 'Passwort und Authenticator-App gelten dann nicht mehr; es gibt einen neuen Einrichtungscode.', 'Zurücksetzen', 'POST', `/users/${name}/reset`) }));
-      acts.append(el('button', { className: 'btn small', textContent: u.disabled ? 'Freigeben' : 'Sperren',
-        onclick: () => userAction(`Konto „${u.name}“ ${u.disabled ? 'freigeben' : 'sperren'}?`, u.disabled ? 'Die Person kann sich danach wieder anmelden.' : 'Die Person wird abgemeldet und kommt nicht mehr herein, bis das Konto freigegeben wird.',
-          u.disabled ? 'Freigeben' : 'Sperren', 'POST', `/users/${name}/disable`, { disabled: !u.disabled }) }));
-      acts.append(el('button', { className: 'btn small danger', textContent: 'Löschen',
-        onclick: () => userAction(`Konto „${u.name}“ löschen?`, 'Das lässt sich nicht zurücknehmen.', 'Löschen', 'DELETE', `/users/${name}`) }));
+      if (u.kind === 'local') acts.append(el('button', { className: 'btn small', textContent: t('Reset'),
+        onclick: () => userAction(t('Reset the account “{name}”?', { name: u.name }), t('Password and authenticator app stop working; there will be a new setup code.'), t('Reset'), 'POST', `/users/${name}/reset`) }));
+      acts.append(el('button', { className: 'btn small', textContent: u.disabled ? t('Enable') : t('Disable'),
+        onclick: () => userAction(u.disabled ? t('Enable the account “{name}”?', { name: u.name }) : t('Disable the account “{name}”?', { name: u.name }),
+          u.disabled ? t('The person can sign in again afterwards.') : t('The person is signed out and cannot get in until the account is enabled again.'),
+          u.disabled ? t('Enable') : t('Disable'), 'POST', `/users/${name}/disable`, { disabled: !u.disabled }, u.disabled) }));
+      acts.append(el('button', { className: 'btn small danger', textContent: t('Delete'),
+        onclick: () => userAction(t('Delete the account “{name}”?', { name: u.name }), t('This cannot be undone.'), t('Delete'), 'DELETE', `/users/${name}`) }));
       ub.append(el('tr', null, el('td', { textContent: u.name }), el('td', { textContent: how }), el('td', { textContent: state }),
         el('td', { textContent: when(u.last_login) }), acts));
     }
@@ -570,7 +575,7 @@
         el('td', { textContent: when(a.time) }), el('td', { textContent: a.who }), el('td', { textContent: a.ip }),
         el('td', { textContent: (ACTIONS[a.action] || a.action) + (a.detail ? ': ' + a.detail : '') }),
         el('td', { textContent: dev ? dev.name || a.target.slice(0, 8) : a.target || '' }),
-        el('td', { textContent: a.ok ? '' : 'abgelehnt' })));
+        el('td', { textContent: a.ok ? '' : t('refused') })));
     }
     label($('#audit'));
   }
@@ -580,22 +585,22 @@
     if (s < 120) return `${s} s`;
     if (s < 7200) return `${Math.round(s / 60)} min`;
     if (s < 172800) return `${Math.round(s / 3600)} h`;
-    return `${Math.round(s / 86400)} Tagen`;
+    return t('{n} days', { n: Math.round(s / 86400) });
   }
   function renderServer() {
     if (!server || !status) return;
     const st = status.state, kc = server.key_change, dv = status.devices;
     // what is wrong is said on every page, not only where the numbers are
     $('#alert').hidden = st.ok;
-    if (!st.ok) $('#alert').textContent = `Der Server kann seinen Zustand nicht speichern (seit ${when(st.since)}). Änderungen gehen verloren, wenn er jetzt neu startet.`;
+    if (!st.ok) $('#alert').textContent = t('The server cannot save its state (since {since}). Changes are lost if it restarts now.', { since: when(st.since) });
     const mark = $('#navMark');
     mark.hidden = st.ok && !kc;
     mark.className = 'mark' + (st.ok ? '' : ' bad');
     const b = $('#stState');
     b.className = 'badge ' + (st.ok ? 'ok' : 'failed');
-    b.textContent = st.ok ? 'in Ordnung' : 'Fehler';
+    b.textContent = st.ok ? t('all right') : t('error');
     $('#stError').hidden = st.ok;
-    $('#stError').textContent = st.ok ? '' : `Speichern scheitert seit ${when(st.since)}: ${st.error}`;
+    $('#stError').textContent = st.ok ? '' : t('Saving has been failing since {since}: {error}', { since: when(st.since), error: st.error });
     const turned = status.turned_away;
     const set = (id, n, attn) => { $(id).textContent = n; $(id).parentNode.classList.toggle('attn', !!attn); };
     set('#stActive', dv.active);
@@ -607,7 +612,7 @@
     set('#stDenied', turned.handshake + turned.sign_in + turned.admin);
     $('#stUptime').textContent = span(status.uptime_s);
     $('#stUptime').className = 'text';
-    $('#stNote').textContent = `„Still“ heißt: verbunden, aber seit über ${span(status.silent_after_s)} nicht gemeldet. Abgewiesen wird, wer zu schnell zu oft anfragt (Geräte ${turned.handshake}, Anmeldungen ${turned.sign_in}, Aufrufe ohne Anmeldung ${turned.admin}).`;
+    $('#stNote').textContent = t('“Silent” means: connected, but not heard from for more than {span}. Turned away is who asks too often too fast (devices {h}, sign-ins {s}, calls without a sign-in {a}).', { span: span(status.silent_after_s), h: turned.handshake, s: turned.sign_in, a: turned.admin });
 
     $('#srvUrl').textContent = server.public_url;
     $('#srvFp').textContent = server.fingerprint;
@@ -616,10 +621,10 @@
     $('#kcStart').hidden = !!kc;
     if (kc) {
       const waiting = devices.filter((d) => d.old_key).map((d) => d.name || d.id.slice(0, 8));
-      $('#kcText').textContent = kc.devices_waiting ? 'Geräte, die den neuen noch nicht haben, erkennen den Server weiter am alten.' : 'Alle Geräte haben den neuen Schlüssel – der Wechsel kann beendet werden.';
+      $('#kcText').textContent = kc.devices_waiting ? t('Devices that do not have the new one yet still recognise the server by the old one.') : t('All devices have the new key – the change can be ended.');
       $('#kcOld').textContent = kc.old_fingerprint;
       $('#kcUntil').textContent = when(kc.old_until);
-      $('#kcWaiting').textContent = waiting.length ? `${waiting.length}: ${waiting.join(', ')}` : 'kein Gerät';
+      $('#kcWaiting').textContent = waiting.length ? `${waiting.length}: ${waiting.join(', ')}` : t('no device');
     }
   }
   $('#kcStart').addEventListener('click', () => {
@@ -634,7 +639,7 @@
     try {
       server = await api('POST', '/server/rotate-key', { days: +$('#rotateDays').value });
       $('#rotateDlg').close();
-      toast('Neuer Serverschlüssel – die Geräte erfahren ihn, sobald sie sich melden', 5000);
+      toast(t('New server key – the devices learn it as soon as they report in'), 5000);
       refresh();
     } catch (err) {
       $('#rotateErr').textContent = err.message;
@@ -644,10 +649,11 @@
   $('#kcEnd').addEventListener('click', async () => {
     const waiting = devices.filter((d) => d.old_key).map((d) => d.name || d.id.slice(0, 8));
     const text = waiting.length
-      ? `Der alte Schlüssel gilt dann nicht mehr. ${waiting.length === 1 ? 'Dieses Gerät hat' : 'Diese Geräte haben'} den neuen noch nicht und ${waiting.length === 1 ? 'muss' : 'müssen'} danach neu angemeldet werden:\n${waiting.join(', ')}`
-      : 'Der alte Schlüssel gilt dann nicht mehr. Alle Geräte haben den neuen schon.';
-    if (!await ask('Schlüsselwechsel beenden?', text, 'Beenden', waiting.length ? 'danger' : '')) return;
-    try { server = await api('POST', '/server/rotate-key/end'); toast('Der alte Schlüssel ist vergessen'); } catch (err) { toast(err.message, 5000); }
+      ? (waiting.length === 1 ? t('The old key stops counting. This device does not have the new one yet and has to be enrolled again afterwards:')
+        : t('The old key stops counting. These devices do not have the new one yet and have to be enrolled again afterwards:')) + '\n' + waiting.join(', ')
+      : t('The old key stops counting. All devices have the new one already.');
+    if (!await ask(t('End the key change?'), text, t('End'), waiting.length ? 'danger' : '')) return;
+    try { server = await api('POST', '/server/rotate-key/end'); toast(t('The old key is forgotten')); } catch (err) { toast(err.message, 5000); }
     refresh();
   });
   $('#auditReload').addEventListener('click', loadAdmin);
@@ -665,13 +671,17 @@
     try {
       const r = await api('POST', '/users', { name: $('#userName').value, kind: $('#userKind').value, entra: $('#userEntra').value });
       $('#userDlg').close();
-      if (r.setup) showCode(r.name, r.setup); else toast('Angelegt');
+      if (r.setup) showCode(r.name, r.setup); else toast(t('Added'));
       loadAdmin();
     } catch (err) {
       $('#userErr').textContent = err.message;
       $('#userErr').hidden = false;
     }
   });
+
+  // ---- the language: chosen here, kept in this browser, applied by loading the page again
+  $('#lang').value = I18N.lang;
+  $('#lang').addEventListener('change', () => I18N.set($('#lang').value));
 
   // ---- start: who is signed in, and what the login page may offer
   (async () => {
@@ -683,7 +693,7 @@
     showLogin();
     if (location.hash === '#entra=refused') {
       history.replaceState(null, '', '/');
-      loginError('Die Anmeldung über Microsoft wurde nicht angenommen: Für dieses Microsoft-Konto gibt es hier kein freigegebenes Konto, oder die Antwort war ungültig.');
+      loginError(t('The sign-in with Microsoft was not accepted: there is no enabled account here for this Microsoft account, or the answer was invalid.'));
     }
   })();
 })();

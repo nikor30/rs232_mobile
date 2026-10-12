@@ -58,7 +58,7 @@ const (
 var passIter = 600000
 
 var (
-	errLogin  = errors.New("Anmeldung fehlgeschlagen")
+	errLogin  = errors.New("sign-in failed")
 	userNames = regexp.MustCompile(`^[a-z0-9][a-z0-9._@-]{1,63}$`)
 	guid      = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 	b32       = base32.StdEncoding.WithPadding(base32.NoPadding)
@@ -426,11 +426,11 @@ func (sv *Server) setup(w http.ResponseWriter, r *http.Request) {
 	if _, ok := sv.setupUser(name, in.Setup); !ok {
 		sv.loginFailed(name)
 		sv.audit(r, "-", "setup", name, "", false)
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Name oder Einrichtungscode stimmt nicht, oder der Code ist abgelaufen"})
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "name or setup code is wrong, or the code has expired"})
 		return
 	}
 	if len(in.Password) < minPassword || len(in.Password) > maxPassword {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("Das Passwort braucht mindestens %d Zeichen", minPassword)})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("password: at least %d characters", minPassword)})
 		return
 	}
 	salt, secret := make([]byte, 16), make([]byte, 20)
@@ -478,7 +478,7 @@ func (sv *Server) setupConfirm(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		sv.loginFailed(name)
 		sv.audit(r, "-", "setup", name, "", false)
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Der Code stimmt nicht"})
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "the code does not match"})
 		return
 	}
 	sv.loginOK(name)
@@ -536,7 +536,7 @@ func (sv *Server) addUser(w http.ResponseWriter, r *http.Request) {
 	note(r).target = u.Name
 	note(r).detail = in.Kind
 	if !userNames.MatchString(u.Name) || u.Name == kindToken {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Name: 2 bis 64 Zeichen aus a–z, 0–9, Punkt, Strich, Unterstrich, @"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name: 2 to 64 characters from a–z, 0–9, dot, hyphen, underscore, @"})
 		return
 	}
 	out := map[string]any{"name": u.Name, "kind": u.Kind}
@@ -554,7 +554,7 @@ func (sv *Server) addUser(w http.ResponseWriter, r *http.Request) {
 		case strings.Contains(e, "@") && len(e) <= 256:
 			u.EntraName = e
 		default:
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Entra: Anmeldename (name@firma.de) oder Objekt-ID des Benutzers angeben"})
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Entra: give the user's sign-in name (name@company.com) or object ID"})
 			return
 		}
 	default:
@@ -599,7 +599,7 @@ func (sv *Server) disableUser(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	note(r).detail = "disabled=" + strconv.FormatBool(in.Disabled)
 	if name == who(r).Name && who(r).Kind != kindToken {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "Das eigene Konto lässt sich nicht sperren"})
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "your own account cannot be disabled"})
 		return
 	}
 	if err := sv.st.UpdateUser(name, func(u *store.User) error { u.Disabled = in.Disabled; return nil }); err != nil {
@@ -615,7 +615,7 @@ func (sv *Server) disableUser(w http.ResponseWriter, r *http.Request) {
 func (sv *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if name == who(r).Name && who(r).Kind != kindToken {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "Das eigene Konto lässt sich nicht löschen"})
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "your own account cannot be deleted"})
 		return
 	}
 	if err := sv.st.DeleteUser(name); err != nil {

@@ -97,7 +97,7 @@ func (sv *Server) conGet(deviceID string) *console {
 	}
 	now := sv.now()
 	if c.ended == nil && now.Sub(c.lastDev) > conSilence {
-		sv.conEnd(c, "Gerät meldet sich nicht mehr")
+		sv.conEnd(c, "the device no longer answers")
 	}
 	if c.ended != nil && now.Sub(*c.ended) > conKeep {
 		delete(sv.cons, deviceID)
@@ -250,12 +250,12 @@ func (sv *Server) conStatus(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			if v.State == "granted" && sv.now().Sub(*c.Done) > conGrantAge {
-				v.State, v.Reason = "ended", "das Gerät hat die Sitzung nicht geöffnet"
+				v.State, v.Reason = "ended", "the device did not open the session"
 			}
 		default:
 			v.State = "refused"
 			if c.State == store.CmdExpired {
-				v.Reason = "keine Antwort vom Gerät"
+				v.Reason = "no answer from the device"
 			} else if json.Unmarshal(c.Result, &v.Reason) != nil {
 				v.Reason = string(c.Result)
 			}
@@ -372,7 +372,7 @@ func (sv *Server) conClose(w http.ResponseWriter, r *http.Request) {
 	}
 	defer sv.mu.Unlock()
 	if c.ended == nil && c.closing == "" {
-		c.closing = "vom Administrator beendet"
+		c.closing = "closed by the administrator"
 		c.changed()
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"state": "closing"})

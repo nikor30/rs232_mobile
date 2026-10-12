@@ -431,7 +431,7 @@ func TestCommandsExpire(t *testing.T) {
 
 func TestWebInterface(t *testing.T) {
 	e := newEnv(t)
-	for path, want := range map[string]string{"/": "RS232-Leitstelle", "/ui/app.js": "use strict", "/ui/style.css": "--accent", "/ui/qrcode.js": "QR Code Generator", "/ui/xterm.js": "Terminal", "/ui/xterm.css": ".xterm", "/ui/xterm-csp.js": "csp-style", "/ui/addon-fit.js": "FitAddon"} {
+	for path, want := range map[string]string{"/": "RS232 Control Center", "/ui/app.js": "use strict", "/ui/i18n.js": "Serverschlüssel", "/ui/style.css": "--accent", "/ui/qrcode.js": "QR Code Generator", "/ui/xterm.js": "Terminal", "/ui/xterm.css": ".xterm", "/ui/xterm-csp.js": "csp-style", "/ui/addon-fit.js": "FitAddon"} {
 		resp, err := http.Get(e.ts.URL + path)
 		if err != nil {
 			t.Fatal(err)

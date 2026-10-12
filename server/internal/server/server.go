@@ -704,7 +704,7 @@ func (sv *Server) revoke(w http.ResponseWriter, r *http.Request) {
 	}
 	sv.mu.Lock()
 	if c := sv.cons[id]; c != nil {
-		sv.conEnd(c, "Gerät gesperrt")
+		sv.conEnd(c, "device revoked")
 	}
 	for sid, e := range sv.sess { // its open sessions end now, not at the next handshake
 		if e.deviceID == id {

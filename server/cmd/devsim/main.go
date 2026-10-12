@@ -107,7 +107,7 @@ func main() {
 				for _, cmd := range r.Cmds {
 					res := device.Result{ID: cmd.ID, OK: true}
 					// what the firmware answers, in miniature
-					denied := "am Geraet nicht freigegeben (Menue -> Netz -> Leitstelle)"
+					denied := "not allowed at the device (Menu -> Network -> Control center)"
 					switch cmd.Type {
 					case "ping":
 						res.Out = "pong"
@@ -127,13 +127,13 @@ func main() {
 						case !*control:
 							res.OK, res.Out = false, denied
 						case a.Name != "Demo" && a.Name != "Uplink":
-							res.OK, res.Out = false, "Konfiguration nicht gefunden"
+							res.OK, res.Out = false, "configuration not found"
 						default:
-							res.Out = map[string]any{"name": a.Name, "port": a.Port, "line": 3, "lines": 3, "result": "fertig"}
+							res.Out = map[string]any{"name": a.Name, "port": a.Port, "line": 3, "lines": 3, "result": "done"}
 						}
 					case "reboot":
 						if *control {
-							res.Out = "Neustart"
+							res.Out = "restarting"
 						} else {
 							res.OK, res.Out = false, denied
 						}
@@ -144,7 +144,7 @@ func main() {
 							conID, conMinutes = cmd.ID, a.Minutes
 							res.Out = map[string]any{"port": a.Port, "minutes": a.Minutes}
 						} else {
-							res.OK, res.Out = false, "am Gerät abgelehnt"
+							res.OK, res.Out = false, "refused at the device"
 						}
 					default:
 						res.OK, res.Out = false, "unbekannter Auftrag"
@@ -182,15 +182,15 @@ func runConsole(c *device.Client, id uint64, limit time.Duration) string {
 	for failures := 0; ; {
 		m := device.ConMsg{ID: id, Off: off, D: out[:min(len(out), 1024)], IAck: iack, LeftS: int(time.Until(deadline).Seconds())}
 		if m.LeftS <= 0 {
-			m.End = "Zeit abgelaufen"
+			m.End = "time is up"
 		}
 		r, err := c.Console(m)
 		if errors.Is(err, device.ErrRefused) {
-			return "vom Server abgewiesen"
+			return "refused by the server"
 		}
 		if err != nil {
 			if failures++; failures > 10 {
-				return "Server nicht erreichbar"
+				return "server not reachable"
 			}
 			time.Sleep(500 * time.Millisecond)
 			continue

@@ -1,4 +1,5 @@
 #include "certs.h"
+#include "lang.h"
 #include "legacy_ciphers.h"
 
 #include <LittleFS.h>
@@ -469,7 +470,7 @@ static DecErr pbeDecrypt(const Tlv &algId, const String &pw, const std::string &
       kl = 8;
       algName = "DES";
     } else {
-      algName = "PBES2 (Verfahren)";
+      algName = TR("PBES2 (scheme)", "PBES2 (Verfahren)", "PBES2 (esquema)");
       return DEC_UNSUPPORTED;
     }
     if (ivT.tag != 0x04 || ivT.len != ivl) return DEC_FORMAT;
@@ -516,9 +517,9 @@ struct Parsed {
 
 static bool decErr(DecErr e, const String &alg, bool emptyPw, String &err) {
   if (e == DEC_OK) return true;
-  if (e == DEC_PASSWORD) err = emptyPw ? "Datei ist verschlüsselt – bitte Passwort angeben" : "Passwort falsch";
-  else if (e == DEC_UNSUPPORTED) err = "Verschlüsselung " + alg + " wird nicht unterstützt – bitte mit AES-256 exportieren";
-  else err = "Datei beschädigt oder unbekanntes Format";
+  if (e == DEC_PASSWORD) err = emptyPw ? TR("The file is encrypted – please give the password", "Datei ist verschlüsselt – bitte Passwort angeben", "O arquivo está criptografado – informe a senha") : TR("Wrong password", "Passwort falsch", "Senha incorreta");
+  else if (e == DEC_UNSUPPORTED) err = TR("Encryption ", "Verschlüsselung ", "A criptografia ") + alg + TR(" is not supported – please export with AES-256", " wird nicht unterstützt – bitte mit AES-256 exportieren", " não é suportada – exporte com AES-256");
+  else err = TR("File damaged or unknown format", "Datei beschädigt oder unbekanntes Format", "Arquivo danificado ou formato desconhecido");
   return false;
 }
 
@@ -625,7 +626,7 @@ static bool parseP12(const Tlv &pfx, const String &pw, Parsed &P, String &err) {
   Tlv oid, cont;
   if (!ai.next(oid)) return decErr(DEC_FORMAT, "", false, err);
   if (oidIs(oid, OID_SIGNED_DATA)) {
-    err = "PKCS#12 mit Public-Key-Schutz wird nicht unterstützt – bitte mit Passwort exportieren";
+    err = TR("PKCS#12 with public-key protection is not supported – please export with a password", "PKCS#12 mit Public-Key-Schutz wird nicht unterstützt – bitte mit Passwort exportieren", "PKCS#12 com proteção por chave pública não é suportado – exporte com senha");
     return false;
   }
   if (!oidIs(oid, OID_DATA) || !ai.next(cont)) return decErr(DEC_FORMAT, "", false, err);
@@ -640,7 +641,7 @@ static bool parseP12(const Tlv &pfx, const String &pw, Parsed &P, String &err) {
       r = 1;
     }
     if (r == 0) {
-      err = pw.isEmpty() ? "Datei ist verschlüsselt – bitte Passwort angeben" : "Passwort falsch";
+      err = pw.isEmpty() ? TR("The file is encrypted – please give the password", "Datei ist verschlüsselt – bitte Passwort angeben", "O arquivo está criptografado – informe a senha") : TR("Wrong password", "Passwort falsch", "Senha incorreta");
       burn(bmpPw);
       return false;
     }
@@ -685,7 +686,7 @@ static bool parseP12(const Tlv &pfx, const String &pw, Parsed &P, String &err) {
       }
       parseSafeContents(pt, pw, bmpPw, P, firstErr, 0);
     } else if (oidIs(ctype, OID_ENVELOPED_DATA)) {
-      if (firstErr.isEmpty()) firstErr = "Zertifikats-verschlüsselter Teil wird nicht unterstützt";
+      if (firstErr.isEmpty()) firstErr = TR("A part encrypted with a certificate is not supported", "Zertifikats-verschlüsselter Teil wird nicht unterstützt", "Parte criptografada com certificado não é suportada");
     }
   }
   burn(bmpPw);
@@ -731,7 +732,7 @@ static bool keyAlgSupported(const std::string &der) {
 
 static bool keyDerOk(const std::string &der, String &err) {
   if (!keyAlgSupported(der)) {
-    err = "Schlüsseltyp nicht unterstützt (nur RSA und EC P-256/384/521)";
+    err = TR("Key type not supported (RSA and EC P-256/384/521 only)", "Schlüsseltyp nicht unterstützt (nur RSA und EC P-256/384/521)", "Tipo de chave não suportado (apenas RSA e EC P-256/384/521)");
     return false;
   }
   mbedtls_pk_context pk;
@@ -746,15 +747,15 @@ static bool keyDerOk(const std::string &der, String &err) {
     }
   }
   mbedtls_pk_free(&pk);
-  if (!ok) err = r == MBEDTLS_ERR_PK_UNKNOWN_PK_ALG ? "Schlüsseltyp nicht unterstützt (nur RSA und EC P-256/384/521)"
-                                                     : "Privater Schlüssel nicht lesbar (Passwort falsch?)";
+  if (!ok) err = r == MBEDTLS_ERR_PK_UNKNOWN_PK_ALG ? TR("Key type not supported (RSA and EC P-256/384/521 only)", "Schlüsseltyp nicht unterstützt (nur RSA und EC P-256/384/521)", "Tipo de chave não suportado (apenas RSA e EC P-256/384/521)")
+                                                     : TR("Private key not readable (wrong password?)", "Privater Schlüssel nicht lesbar (Passwort falsch?)", "Chave privada ilegível (senha errada?)");
   return ok;
 }
 
 // "-----BEGIN RSA PRIVATE KEY-----" with "Proc-Type: 4,ENCRYPTED" / "DEK-Info: AES-256-CBC,<iv>"
 static bool decryptLegacyPem(const String &dek, const std::string &ct, const String &pw, std::string &pt, String &err) {
   if (pw.isEmpty()) {
-    err = "Schlüssel ist verschlüsselt – bitte Passwort angeben";
+    err = TR("The key is encrypted – please give the password", "Schlüssel ist verschlüsselt – bitte Passwort angeben", "A chave está criptografada – informe a senha");
     return false;
   }
   int comma = dek.indexOf(',');
@@ -769,11 +770,11 @@ static bool decryptLegacyPem(const String &dek, const std::string &ct, const Str
   else if (alg == "DES-EDE3-CBC") { kl = 24; ivl = 8; }
   else if (alg == "DES-CBC") { kl = 8; ivl = 8; lc = Legacy::DES_CBC; }
   else {
-    err = "PEM-Verschlüsselung " + alg + " wird nicht unterstützt";
+    err = TR("PEM encryption ", "PEM-Verschlüsselung ", "A criptografia PEM ") + alg + TR(" is not supported", " wird nicht unterstützt", " não é suportada");
     return false;
   }
   if (comma < 0 || ivHex.length() != ivl * 2) {
-    err = "DEK-Info ungültig";
+    err = TR("Invalid DEK-Info", "DEK-Info ungültig", "DEK-Info inválido");
     return false;
   }
   uint8_t iv[16], key[32];
@@ -781,7 +782,7 @@ static bool decryptLegacyPem(const String &dek, const std::string &ct, const Str
   // OpenSSL EVP_BytesToKey(MD5, salt = IV[0..7], 1 round)
   const mbedtls_md_info_t *md5 = mbedtls_md_info_from_type(MBEDTLS_MD_MD5);
   if (!md5) {
-    err = "MD5 fehlt";
+    err = TR("MD5 missing", "MD5 fehlt", "Falta o MD5");
     return false;
   }
   uint8_t dig[16];
@@ -815,7 +816,7 @@ static bool decryptLegacyPem(const String &dek, const std::string &ct, const Str
   mbedtls_platform_zeroize(key, sizeof(key));
   if (!ok) {
     burn(pt);
-    err = "Passwort falsch";
+    err = TR("Wrong password", "Passwort falsch", "Senha incorreta");
   }
   return ok;
 }
@@ -834,7 +835,7 @@ static bool parsePem(const char *s, size_t n, const String &pw, Parsed &P, Strin
     std::string endMark = "-----END " + label + "-----";
     size_t be = text.find(endMark, bodyStart);
     if (be == std::string::npos) {
-      err = "PEM-Block „" + String(label.c_str()) + "“ unvollständig";
+      err = TR("PEM block “", "PEM-Block „", "Bloco PEM “") + String(label.c_str()) + TR("” incomplete", "“ unvollständig", "” incompleto");
       return false;
     }
     std::string body = text.substr(bodyStart, be - bodyStart);
@@ -857,7 +858,7 @@ static bool parsePem(const char *s, size_t n, const String &pw, Parsed &P, Strin
     }
     std::string der;
     if (!b64decode(body.data(), body.size(), der)) {
-      err = "PEM-Block „" + String(label.c_str()) + "“ ist kein gültiges Base64";
+      err = TR("PEM block “", "PEM-Block „", "Bloco PEM “") + String(label.c_str()) + TR("” is not valid Base64", "“ ist kein gültiges Base64", "” não é Base64 válido");
       return false;
     }
     any = true;
@@ -876,7 +877,7 @@ static bool parsePem(const char *s, size_t n, const String &pw, Parsed &P, Strin
       }
     } else if (label == "ENCRYPTED PRIVATE KEY") {
       if (pw.isEmpty()) {
-        err = "Schlüssel ist verschlüsselt – bitte Passwort angeben";
+        err = TR("The key is encrypted – please give the password", "Schlüssel ist verschlüsselt – bitte Passwort angeben", "A chave está criptografada – informe a senha");
         return false;
       }
       Tlv t;
@@ -885,7 +886,7 @@ static bool parsePem(const char *s, size_t n, const String &pw, Parsed &P, Strin
       bool ok = berRead(p, p + der.size(), t) && decryptPkcs8(t, pw, bmpPw, P, err);
       burn(bmpPw);
       if (!ok) {
-        if (err.isEmpty()) err = "Verschlüsselter Schlüssel nicht lesbar";
+        if (err.isEmpty()) err = TR("Encrypted key not readable", "Verschlüsselter Schlüssel nicht lesbar", "Chave criptografada ilegível");
         return false;
       }
     } else if (label == "PKCS7" || label == "CMS") {
@@ -897,14 +898,14 @@ static bool parsePem(const char *s, size_t n, const String &pw, Parsed &P, Strin
     }
     burn(der);
   }
-  if (!any) err = "Keine PEM-Daten gefunden";
+  if (!any) err = TR("No PEM data found", "Keine PEM-Daten gefunden", "Nenhum dado PEM encontrado");
   return any;
 }
 
 static bool parseDer(const uint8_t *d, size_t n, const String &pw, Parsed &P, String &err) {
   Tlv t;
   if (!berRead(d, d + n, t) || t.tag != 0x30) {
-    err = "Unbekanntes Dateiformat (erwartet PEM, DER, .p7b oder .p12/.pfx)";
+    err = TR("Unknown file format (PEM, DER, .p7b or .p12/.pfx expected)", "Unbekanntes Dateiformat (erwartet PEM, DER, .p7b oder .p12/.pfx)", "Formato de arquivo desconhecido (esperado PEM, DER, .p7b ou .p12/.pfx)");
     return false;
   }
   BerIter it(t);
@@ -914,7 +915,7 @@ static bool parseDer(const uint8_t *d, size_t n, const String &pw, Parsed &P, St
   if (a.tag == 0x02 && a.len == 1 && a.v[0] == 3 && b.tag == 0x30) return parseP12(t, pw, P, err);
   if (a.tag == 0x06) {
     if (p7Certs(t, P)) return true;
-    err = "PKCS#7-Datei ohne Zertifikate";
+    err = TR("PKCS#7 file without certificates", "PKCS#7-Datei ohne Zertifikate", "Arquivo PKCS#7 sem certificados");
     return false;
   }
   if (a.tag == 0x30 && b.tag == 0x04) {        // EncryptedPrivateKeyInfo
@@ -948,13 +949,13 @@ static bool parseDer(const uint8_t *d, size_t n, const String &pw, Parsed &P, St
     P.addKey(std::string((const char *)d, len));
     return true;
   }
-  err = "Datei nicht erkannt (Zertifikat, Schlüssel, .p7b oder .p12/.pfx erwartet)";
+  err = TR("File not recognised (certificate, key, .p7b or .p12/.pfx expected)", "Datei nicht erkannt (Zertifikat, Schlüssel, .p7b oder .p12/.pfx erwartet)", "Arquivo não reconhecido (esperado certificado, chave, .p7b ou .p12/.pfx)");
   return false;
 }
 
 static bool parseInput(const uint8_t *d, size_t n, const String &pw, Parsed &P, String &err) {
   if (!n) {
-    err = "Datei ist leer";
+    err = TR("The file is empty", "Datei ist leer", "O arquivo está vazio");
     return false;
   }
   static const char MARK[] = "-----BEGIN ";
@@ -972,7 +973,7 @@ static bool parseInput(const uint8_t *d, size_t n, const String &pw, Parsed &P, 
     burn(der);
     return ok;
   }
-  err = "Unbekanntes Dateiformat (erwartet PEM, DER, .p7b oder .p12/.pfx)";
+  err = TR("Unknown file format (PEM, DER, .p7b or .p12/.pfx expected)", "Unbekanntes Dateiformat (erwartet PEM, DER, .p7b oder .p12/.pfx)", "Formato de arquivo desconhecido (esperado PEM, DER, .p7b ou .p12/.pfx)");
   return false;
 }
 
@@ -1321,22 +1322,22 @@ static String derChainToPem(const std::vector<std::string> &ders) {
 }
 
 bool upload(Slot s, const uint8_t *data, size_t len, const String &password, String &msg) {
-  if (s >= SLOTS) { msg = "Unbekannter Speicherplatz"; return false; }
-  if (!fsOk) { msg = "Dateisystem nicht verfügbar"; return false; }
-  if (len > MAX_UPLOAD) { msg = "Datei zu groß (max. 24 kB)"; return false; }
+  if (s >= SLOTS) { msg = TR("Unknown slot", "Unbekannter Speicherplatz", "Local de armazenamento desconhecido"); return false; }
+  if (!fsOk) { msg = TR("File system not available", "Dateisystem nicht verfügbar", "Sistema de arquivos indisponível"); return false; }
+  if (len > MAX_UPLOAD) { msg = TR("File too large (max. 24 kB)", "Datei zu groß (max. 24 kB)", "Arquivo grande demais (máx. 24 kB)"); return false; }
   Parsed P;
   String err;
   bool parsed = false;
   try {
     parsed = parseInput(data, len, password, P, err);
   } catch (const std::bad_alloc &) {           // crafted file with huge nesting
-    msg = "Zu wenig Speicher für diese Datei";
+    msg = TR("Not enough memory for this file", "Zu wenig Speicher für diese Datei", "Memória insuficiente para este arquivo");
     return false;
   }
   if (!parsed) { msg = err; return false; }
   if (P.certs.empty() && P.keys.empty()) {
-    msg = P.csr ? "Das ist ein Zertifikatsantrag (CSR) – hochgeladen wird das von der CA ausgestellte Zertifikat"
-                : "Keine Zertifikate oder Schlüssel in der Datei";
+    msg = P.csr ? TR("This is a certificate request (CSR) – what is uploaded is the certificate the CA issued", "Das ist ein Zertifikatsantrag (CSR) – hochgeladen wird das von der CA ausgestellte Zertifikat", "Isto é uma solicitação de certificado (CSR) – o que se envia é o certificado emitido pela CA")
+                : TR("No certificates or keys in the file", "Keine Zertifikate oder Schlüssel in der Datei", "Nenhum certificado ou chave no arquivo");
     return false;
   }
   // every certificate must be readable
@@ -1344,11 +1345,11 @@ bool upload(Slot s, const uint8_t *data, size_t len, const String &password, Str
     mbedtls_x509_crt c;
     bool ok = crtFromDer(d, c);
     mbedtls_x509_crt_free(&c);
-    if (!ok) { msg = "Zertifikat in der Datei nicht lesbar"; return false; }
+    if (!ok) { msg = TR("The certificate in the file is not readable", "Zertifikat in der Datei nicht lesbar", "O certificado do arquivo é ilegível"); return false; }
   }
 
   if (s == CA) {
-    if (P.certs.empty()) { msg = "Keine Zertifikate in der Datei (für „CA“ wird das Zertifikat der ausstellenden CA gebraucht)"; return false; }
+    if (P.certs.empty()) { msg = TR("No certificates in the file (“CA” needs the certificate of the issuing CA)", "Keine Zertifikate in der Datei (für „CA“ wird das Zertifikat der ausstellenden CA gebraucht)", "Nenhum certificado no arquivo (para “CA” é preciso o certificado da CA emissora)"); return false; }
     std::vector<std::string> cas, all;
     for (auto &d : P.certs) {
       mbedtls_x509_crt c;
@@ -1366,9 +1367,9 @@ bool upload(Slot s, const uint8_t *data, size_t len, const String &password, Str
       slot[CA].crt = pem;
     }
     gen++;
-    msg = String(use.size()) + " Zertifikat(e) gespeichert: " + summary(CA);
-    if (!P.keys.empty()) msg += " (privater Schlüssel ignoriert)";
-    if (onlyLeaf) msg += ". Achtung: kein CA-Zertifikat – der RADIUS-Server muss genau dieses Zertifikat verwenden";
+    msg = String(use.size()) + TR(" certificate(s) saved: ", " Zertifikat(e) gespeichert: ", " certificado(s) salvo(s): ") + summary(CA);
+    if (!P.keys.empty()) msg += TR(" (private key ignored)", " (privater Schlüssel ignoriert)", " (chave privada ignorada)");
+    if (onlyLeaf) msg += TR(". Note: not a CA certificate – the RADIUS server has to use exactly this certificate", ". Achtung: kein CA-Zertifikat – der RADIUS-Server muss genau dieses Zertifikat verwenden", ". Atenção: não é um certificado de CA – o servidor RADIUS precisa usar exatamente este certificado");
     return true;
   }
 
@@ -1378,7 +1379,7 @@ bool upload(Slot s, const uint8_t *data, size_t len, const String &password, Str
   if (!P.keys.empty()) {
     if (!keyDerOk(P.keys[0], err)) { msg = err; return false; }
     keyDer = P.keys[0];
-    keySource = "aus der Datei";
+    keySource = TR("from the file", "aus der Datei", "do arquivo");
   }
   String curKeyPem, curCrtPem;
   Burner burnCur{curKeyPem};                   // key material never stays in freed heap
@@ -1403,20 +1404,20 @@ bool upload(Slot s, const uint8_t *data, size_t len, const String &password, Str
 
   if (!keyDer.empty()) {
     keyPem = keyPemFromDer(keyDer);
-    if (keyPem.isEmpty()) { msg = "Schlüssel konnte nicht umgewandelt werden"; return false; }
+    if (keyPem.isEmpty()) { msg = TR("The key could not be converted", "Schlüssel konnte nicht umgewandelt werden", "Não foi possível converter a chave"); return false; }
     if (!P.certs.empty()) {
       mbedtls_pk_context pk;
       parseKey(keyPem, pk);
       leaf = matchKey(pk);
       mbedtls_pk_free(&pk);
-      if (leaf < 0) { msg = "Der Schlüssel passt zu keinem Zertifikat in der Datei"; wipeString(keyPem); return false; }
+      if (leaf < 0) { msg = TR("The key matches no certificate in the file", "Der Schlüssel passt zu keinem Zertifikat in der Datei", "A chave não corresponde a nenhum certificado do arquivo"); wipeString(keyPem); return false; }
     } else if (curCrtPem.length()) {
-      if (!pemPairMatches(curCrtPem, keyPem)) { msg = "Schlüssel passt nicht zum gespeicherten Zertifikat"; wipeString(keyPem); return false; }
+      if (!pemPairMatches(curCrtPem, keyPem)) { msg = TR("The key does not match the stored certificate", "Schlüssel passt nicht zum gespeicherten Zertifikat", "A chave não corresponde ao certificado armazenado"); wipeString(keyPem); return false; }
     }
   } else {
     // certificate(s) only: take the stored key or the key of the CSR generated on the device
     const String *cands[2] = {&curKeyPem, &csrKey};
-    const char *src[2] = {"bereits gespeichert", "aus dem Antrag (CSR)"};
+    const char *src[2] = {TR("already stored", "bereits gespeichert", "já armazenada"), TR("from the request (CSR)", "aus dem Antrag (CSR)", "da solicitação (CSR)")};
     for (int k = 0; k < 2 && leaf < 0; k++) {
       if (cands[k]->isEmpty()) continue;
       mbedtls_pk_context pk;
@@ -1467,21 +1468,21 @@ bool upload(Slot s, const uint8_t *data, size_t len, const String &password, Str
   gen++;
 
   if (P.certs.empty()) {
-    msg = crtPem.length() ? "Schlüssel gespeichert (passt zum Zertifikat)" : "Schlüssel gespeichert – Zertifikat fehlt noch";
+    msg = crtPem.length() ? TR("Key saved (matches the certificate)", "Schlüssel gespeichert (passt zum Zertifikat)", "Chave salva (corresponde ao certificado)") : TR("Key saved – the certificate is still missing", "Schlüssel gespeichert – Zertifikat fehlt noch", "Chave salva – ainda falta o certificado");
     return true;
   }
-  msg = "Gespeichert: " + summary(s);
-  if (P.certs.size() > 1) msg += String(" + ") + (P.certs.size() - 1) + " Zwischen-/CA-Zertifikat(e)";
-  if (match) msg += String(", Schlüssel ") + keySource;
-  else msg += ". Passender privater Schlüssel fehlt noch";
+  msg = TR("Saved: ", "Gespeichert: ", "Salvo: ") + summary(s);
+  if (P.certs.size() > 1) msg += String(" + ") + (P.certs.size() - 1) + TR(" intermediate/CA certificate(s)", " Zwischen-/CA-Zertifikat(e)", " certificado(s) intermediário(s)/de CA");
+  if (match) msg += String(TR(", key ", ", Schlüssel ", ", chave ")) + keySource;
+  else msg += TR(". The matching private key is still missing", ". Passender privater Schlüssel fehlt noch", ". Ainda falta a chave privada correspondente");
   mbedtls_x509_crt c;
   if (parseChain(crtPem, c)) {
     if (s == CLIENT && !ekuHas(&c, MBEDTLS_OID_CLIENT_AUTH, MBEDTLS_OID_SIZE(MBEDTLS_OID_CLIENT_AUTH)))
-      msg += ". Warnung: Zertifikat ist nicht für Client-Authentifizierung (EKU)";
+      msg += TR(". Warning: the certificate is not for client authentication (EKU)", ". Warnung: Zertifikat ist nicht für Client-Authentifizierung (EKU)", ". Aviso: o certificado não é para autenticação de cliente (EKU)");
     if (s == HTTPS && !ekuHas(&c, MBEDTLS_OID_SERVER_AUTH, MBEDTLS_OID_SIZE(MBEDTLS_OID_SERVER_AUTH)))
-      msg += ". Warnung: Zertifikat ist nicht für Server-Authentifizierung (EKU) – Browser lehnen es ab";
+      msg += TR(". Warning: the certificate is not for server authentication (EKU) – browsers refuse it", ". Warnung: Zertifikat ist nicht für Server-Authentifizierung (EKU) – Browser lehnen es ab", ". Aviso: o certificado não é para autenticação de servidor (EKU) – os navegadores o recusam");
     if (s == HTTPS && sanList(&c).empty())
-      msg += ". Warnung: keine alternativen Namen (SAN) – Chrome/iOS lehnen es ab";
+      msg += TR(". Warning: no alternative names (SAN) – Chrome/iOS refuse it", ". Warnung: keine alternativen Namen (SAN) – Chrome/iOS lehnen es ab", ". Aviso: sem nomes alternativos (SAN) – Chrome/iOS o recusam");
   }
   mbedtls_x509_crt_free(&c);
   return true;
@@ -1607,7 +1608,7 @@ static bool buildSan(const String &list, std::string &der, String &err) {
       for (size_t i = 0; i < cur.length(); i++) {
         char c = cur[i];
         if (!(isalnum((unsigned char)c) || c == '-' || c == '.' || c == '*' || c == '_')) {
-          err = "Ungültiger Name: " + cur;
+          err = TR("Invalid name: ", "Ungültiger Name: ", "Nome inválido: ") + cur;
           return false;
         }
       }
@@ -1649,7 +1650,7 @@ static void runCsr() {
   mbedtls_pk_context pk;
   if (!genKey(pk, job.rsa)) {
     mbedtls_pk_free(&pk);
-    job.err = "Schlüsselerzeugung fehlgeschlagen";
+    job.err = TR("Key generation failed", "Schlüsselerzeugung fehlgeschlagen", "Falha ao gerar a chave");
     return;
   }
   mbedtls_x509write_csr req;
@@ -1671,7 +1672,7 @@ static void runCsr() {
     job.keyPem = keyPemFromPk(pk);
     job.ok = job.reqPem.length() && job.keyPem.length();
   }
-  if (!job.ok) job.err = r ? "Ungültiger Name (Beispiel: CN=rs232-01,O=Firma,C=DE)" : "CSR konnte nicht erzeugt werden";
+  if (!job.ok) job.err = r ? TR("Invalid name (example: CN=rs232-01,O=Company,C=US)", "Ungültiger Name (Beispiel: CN=rs232-01,O=Firma,C=DE)", "Nome inválido (exemplo: CN=rs232-01,O=Empresa,C=BR)") : TR("The CSR could not be created", "CSR konnte nicht erzeugt werden", "Não foi possível criar o CSR");
   free(buf);
   mbedtls_x509write_csr_free(&req);
   mbedtls_pk_free(&pk);
@@ -1774,23 +1775,23 @@ static bool startJob() {
 }
 
 bool csrStart(const String &subjectIn, const String &sans, bool rsa, String &err) {
-  if (busy()) { err = "Schlüsselerzeugung läuft bereits"; return false; }
+  if (busy()) { err = TR("A key is being generated already", "Schlüsselerzeugung läuft bereits", "Já há uma chave sendo gerada"); return false; }
   String subject = subjectIn;
   subject.trim();
-  if (subject.isEmpty()) { err = "Name (CN) fehlt"; return false; }
+  if (subject.isEmpty()) { err = TR("Name (CN) missing", "Name (CN) fehlt", "Falta o nome (CN)"); return false; }
   if (subject.indexOf('=') < 0) subject = "CN=" + subject;
   mbedtls_x509write_csr probe;
   mbedtls_x509write_csr_init(&probe);
   int r = mbedtls_x509write_csr_set_subject_name(&probe, subject.c_str());
   mbedtls_x509write_csr_free(&probe);
-  if (r) { err = "Ungültiger Name (Beispiel: CN=rs232-01,O=Firma,C=DE)"; return false; }
+  if (r) { err = TR("Invalid name (example: CN=rs232-01,O=Company,C=US)", "Ungültiger Name (Beispiel: CN=rs232-01,O=Firma,C=DE)", "Nome inválido (exemplo: CN=rs232-01,O=Empresa,C=BR)"); return false; }
   std::string san;
   if (!buildSan(sans, san, err)) return false;
   job.kind = JOB_CSR;
   job.rsa = rsa;
   job.subject = subject;
   job.san = san;
-  if (!startJob()) { err = "Zu wenig Speicher"; return false; }
+  if (!startJob()) { err = TR("Not enough memory", "Zu wenig Speicher", "Memória insuficiente"); return false; }
   Serial.printf("[TLS] erzeuge %s-Schlüssel + CSR für %s ...\n", rsa ? "RSA-2048" : "EC-P-256", subject.c_str());
   return true;
 }

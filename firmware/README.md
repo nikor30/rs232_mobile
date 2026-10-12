@@ -6,6 +6,21 @@ Alles zum Board selbst — Touch-Oberfläche, Bluetooth, Pins, Akku, Stromsparen
 
 ![Web-UI auf dem Handy](docs/webui_handy.png)
 
+## Sprachen
+
+Die Firmware gibt es in Englisch (Vorgabe), Deutsch und Portugiesisch — je Sprache ein eigener Build; Touch-Display, Weboberfläche und Meldungen folgen ihm:
+
+```bash
+pio run -t upload                              # Englisch
+pio run -e waveshare-s3-lcd2-de -t upload      # Deutsch
+pio run -e waveshare-s3-lcd2-pt -t upload      # Portugiesisch (brasilianisch)
+tools/i18n_check.py                            # fehlt der Weboberfläche eine Übersetzung?
+```
+
+Einstellungen bleiben beim Wechsel der Sprache erhalten. Das Log am USB-Port ist in jeder Firmware deutsch. Wie Texte angelegt werden: `src/lang.h` (Firmware, `TR(...)`), `web/lang/*.json` (Weboberfläche). Die Vorgabe für Portnamen („Port 1“) und Namen, die jemand selbst vergeben hat, werden nicht übersetzt.
+
+Stand 12. Oktober 2026: alle drei Firmwares gebaut und nacheinander aufs Waveshare-Board gespielt; je Sprache sechs Display-Seiten per Screenshot und die Weboberfläche in Chromium (Handy-Format, alle sieben Reiter, keine Skriptfehler) angesehen. **Nicht geprüft:** die Übersetzungen durch jemanden, der Portugiesisch als Muttersprache spricht; selten erreichte Meldungen (Zertifikate, Dateiübertragung, 802.1X) sind übersetzt, aber in keiner Sprache am Gerät ausgelöst worden; das Hochformat des Displays in Englisch und Portugiesisch.
+
 ## Funktionen
 
 - **Web-Terminal** (xterm.js, offline im Flash eingebettet) mit **Eingabezeile + Senden** und Befehlsverlauf (↑/↓), dazu eine Sondertasten-Leiste fürs Handy: Ctrl (einrastend), Tab, `?`, Pfeiltasten, Space, `q`, ^C, ^Z, Ctrl-Shift-6, Esc

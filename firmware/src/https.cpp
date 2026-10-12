@@ -1,4 +1,5 @@
 #include "https.h"
+#include "lang.h"
 #include "certs.h"
 #include "config.h"
 #include "settings.h"
@@ -149,7 +150,7 @@ static bool setupTls() {
   Certs::copy(s, crtPem, keyPem);
   if (crtPem.isEmpty() || keyPem.isEmpty()) {
     if (settings.httpsCert == 1 && !Certs::hasCert(Certs::CLIENT))
-      setText(errText, "Client-Zertifikat fehlt");
+      setText(errText, TR("Client certificate missing", "Client-Zertifikat fehlt", "Falta o certificado de cliente"));
     return false;
   }
   if (ctxInit) {                                 // free what a previous certificate allocated
@@ -186,7 +187,7 @@ static bool setupTls() {
     return false;
   }
   String name = Certs::summary(s);
-  setText(certText, name + (s == Certs::CLIENT ? " (802.1X-Zertifikat)" : Certs::httpsIsAuto() ? " (Geräte-CA)" : ""));
+  setText(certText, name + (s == Certs::CLIENT ? TR(" (802.1X certificate)", " (802.1X-Zertifikat)", " (certificado 802.1X)") : Certs::httpsIsAuto() ? TR(" (device CA)", " (Geräte-CA)", " (CA do dispositivo)") : ""));
   setText(errText, "");
   tlsReady = true;
   certGen = Certs::generation();
@@ -210,7 +211,7 @@ static void startConn(int fd) {
       mbedtls_ssl_free(&c.ssl);
       close(fd);
       c = Conn();
-      setText(errText, "Zu wenig Speicher für eine weitere TLS-Verbindung");
+      setText(errText, TR("Not enough memory for another TLS connection", "Zu wenig Speicher für eine weitere TLS-Verbindung", "Memória insuficiente para outra conexão TLS"));
       return;
     }
     c.used = true;
@@ -370,7 +371,7 @@ static void tlsTask(void *) {
       if (bind(listenFd, (struct sockaddr *)&a, sizeof(a)) < 0 || listen(listenFd, 4) < 0) {
         close(listenFd);
         listenFd = -1;
-        setText(errText, "Port 443 nicht verfügbar");
+        setText(errText, TR("Port 443 not available", "Port 443 nicht verfügbar", "Porta 443 indisponível"));
         vTaskDelay(2000 / portTICK_PERIOD_MS);
         continue;
       }
@@ -432,7 +433,7 @@ static void tlsTask(void *) {
 void begin() {
   if (!settings.httpsEnabled) return;
   if (xTaskCreatePinnedToCore(tlsTask, "https", 10240, nullptr, 1, nullptr, 0) != pdPASS)
-    setText(errText, "Task konnte nicht gestartet werden");
+    setText(errText, TR("The task could not be started", "Task konnte nicht gestartet werden", "Não foi possível iniciar a tarefa"));
 }
 
 }  // namespace Https

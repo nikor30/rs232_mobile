@@ -1,4 +1,5 @@
 #include "power.h"
+#include "lang.h"
 #include "config.h"
 #include "settings.h"
 #include "bat_curve.h"
@@ -18,7 +19,7 @@ static float filt = 0;
 static uint32_t lastSample = 0;
 
 bool measured() { return settings.batPin >= 0; }
-const char *typeName() { return settings.batType == 1 ? "NiCd/NiMH 4 Zellen" : "LiPo 1S"; }
+const char *typeName() { return settings.batType == 1 ? TR("NiCd/NiMH 4 cells", "NiCd/NiMH 4 Zellen", "NiCd/NiMH 4 células") : "LiPo 1S"; }
 
 // ---- charging ---------------------------------------------------------------
 // The charger on these boards (ETA6096 on the Waveshare) has no status line to
@@ -106,7 +107,7 @@ const char *chargeName() {
 
 String diag() {
   char buf[340];
-  if (!measured()) return "keine Messung";
+  if (!measured()) return TR("not measured", "keine Messung", "sem medição");
   uint8_t t = settings.batType;
   snprintf(buf, sizeof(buf), "GPIO%d %u mV x %u.%u = %u mV, gefiltert %u mV, %u%% (0 %% = %u mV%s, 100 %% = %u mV%s), %s | USB-Host %s, Sprung %s, >=%u mV seit %lu s, konstant seit %lu s -> %s | Sparmodus %s, CPU %u MHz",
            settings.batPin, lastPinMv, settings.batDiv / 10, settings.batDiv % 10,
@@ -152,7 +153,7 @@ uint16_t calEmptyMv() { return settings.batEmptyMv; }
 uint16_t calFullMv() { return settings.batFullMv; }
 
 const char *setCal(uint16_t emptyMv, uint16_t fullMv) {
-  if (!measured()) return "keine Akku-Messung eingerichtet";
+  if (!measured()) return TR("no battery measurement set up", "keine Akku-Messung eingerichtet", "medição da bateria não configurada");
   const char *err = BatCurve::calError(settings.batType, emptyMv, fullMv);
   if (err) return err;
   settings.batEmptyMv = emptyMv;
@@ -165,7 +166,7 @@ const char *setCal(uint16_t emptyMv, uint16_t fullMv) {
 }
 
 const char *calibrateNow(bool full) {
-  if (!present()) return "kein Akku gemessen";
+  if (!present()) return TR("no battery measured", "kein Akku gemessen", "nenhuma bateria medida");
   return full ? setCal(settings.batEmptyMv, mv()) : setCal(mv(), settings.batFullMv);
 }
 

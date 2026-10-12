@@ -6,6 +6,17 @@ Projektgedächtnis für Claude-Sitzungen. Die ausführliche Fassung ist `HANDOVE
 
 Mobiler serieller Konsolenserver auf dem Waveshare ESP32-S3-Touch-LCD-2 (2″-Touch-LCD): WLAN-Hotspot, `http://192.168.4.1`, xterm.js-Terminal auf Switch/Router/Firewall. Bis zu vier Ports, Raw-TCP/Telnet, XMODEM/YMODEM, 802.1X, HTTPS. Firmware-Stand **v1.8.0** (7. Oktober 2026).
 
+## Sprachen (seit 12. Oktober 2026)
+
+Englisch ist die Quellsprache aller Oberflächen und immer die Vorgabe; dazu Deutsch und Portugiesisch (brasilianisch).
+
+- **Firmware: eine Firmware je Sprache**, festgelegt beim Bauen. `pio run` = Englisch, `pio run -e waveshare-s3-lcd2-de` = Deutsch, `-pt` = Portugiesisch (`-t upload` zum Flashen). Texte stehen dort, wo sie gebraucht werden, als `TR("English", "Deutsch", "Portugues")` (`src/lang.h`); nur die eine Sprache landet im Flash. Texte fürs Touch-Display sind reines ASCII (ae/oe, keine Akzente) — was aus anderen Modulen kommt, entschärft `toAscii()`. **Nicht übersetzt** ist das Log am USB-Port (`[C2]`, `[WLAN]`, `[DIAG]`): Es bleibt deutsch, Werkzeuge lesen es.
+- **Geräte-Weboberfläche** (`firmware/web/`): in Englisch geschrieben; `tools/embed_web.py` übersetzt das Markup beim Bauen und gibt dem Skript seine Texte als `window.I18N` mit (`web/lang/de.json`, `pt.json`, je `page` und `script`). Im Skript `tr('Text {0}', [wert])`. `tools/i18n_check.py` prüft, dass nichts fehlt.
+- **Admin-Weboberfläche des Servers**: Sprachwahl in der Leiste (EN/DE/PT), im Browser gemerkt (`localStorage`), ohne Wahl Englisch — auch wenn der Browser Deutsch verlangt. Texte in `web/i18n.js`, nach dem englischen Text geschlüsselt; im Skript `t('Text {name}', { name })`, das Markup übersetzt `I18N.page()`. `server/test/i18n_check.py` prüft die Vollständigkeit (läuft in `ui.sh`).
+- **Was über die Leitung geht, ist Englisch**: Fehlermeldungen des Servers, Gründe für das Ende einer Fernkonsole (Server wie Gerät), Antworten der Firmware auf Aufträge. Übersetzt wird beim Anzeigen — in der Admin-Seite über `t()`, am Gerät über `here()` in `c2.cpp`. Wer einen neuen Text über die Leitung schickt, trägt ihn in `i18n.js` und gegebenenfalls in `here()` ein.
+- Neue Texte: in allen drei Sprachen anlegen; die Prüfskripte lassen sonst `ui.sh` scheitern bzw. melden es. Variablen mit Namen `t` verdecken in den Skripten die Übersetzungsfunktion (im Geräteskript heißt sie deshalb `tr`).
+- `src/web_assets.h` im Repository ist der englische Stand; ein Build für `-de`/`-pt` schreibt die Datei um — nicht mit committen.
+
 ## Aufbau
 
 - `firmware/` — PlatformIO-Projekt (`src/`, `web/`, `tools/`)
@@ -74,18 +85,19 @@ Bis hierher wurde auf einem Raspberry Pi entwickelt; der ist aufgeräumt (kein C
 
 **Einrichten:** PlatformIO (Firmware), Docker mit Compose (Server; Go muss nicht installiert sein), dazu `curl`, `openssl`, `python3`, `g++` für die Tests. Erster Lauf zum Prüfen der Umgebung: `tests/` nach `tests/README.md`, dann `server/test/e2e.sh`, `tests/c2/run.sh`, `server/test/pg.sh`, `server/test/cloud.sh`, `server/test/backup.sh`; `server/test/ui.sh` zieht ein 3-GB-Image und war auf dem Pi langsam und wackelig (Zeitüberschreitungen) — auf einem größeren Rechner neu beurteilen.
 
-**Das Board:** hängt am USB des Laptops, trägt seit 12. Oktober 2026 die Firmware dieses Stands (Schlüsselwechsel, überarbeitetes Touch-Display) und ist im selben WLAN wie der Laptop (`192.168.10.163`; der Laptop `192.168.10.231`, per DHCP). Angemeldet bei der Leitstelle auf dem Laptop (Phase-5-Aufbau zum Testen, `server/.env`, `https://192.168.10.231`). Die Funkstrecke ist auch hier schwach (Ping um 600 ms).
+**Das Board:** hängt am USB des Laptops, trägt seit 12. Oktober 2026 die **deutsche** Firmware dieses Stands (`-e waveshare-s3-lcd2-de`; Schlüsselwechsel, überarbeitetes Touch-Display) und ist im selben WLAN wie der Laptop (`192.168.10.163`; der Laptop `192.168.10.231`, per DHCP). Angemeldet bei der Leitstelle auf dem Laptop (Phase-5-Aufbau zum Testen, `server/.env`, `https://192.168.10.231`). Die Funkstrecke ist auch hier schwach (Ping um 600 ms).
 
 **Stand am neuen Rechner (12. Oktober 2026, CachyOS, x86-64):** eingerichtet und alle genannten Läufe außer `ui.sh` grün. Nötig waren die Pakete `docker-buildx` (das Dockerfile braucht BuildKit), `platformio-core` und `python-pip`. Ein Firmware-Build schreibt `src/web_assets.h` dort neu, obwohl sich an `web/` nichts geändert hat (anderes zlib, andere gzip-Bytes) — nicht mit committen, `git checkout firmware/src/web_assets.h`. Das Board hängt am USB (`/dev/ttyACM0`), ist aber noch nicht neu eingerichtet.
 
 **Als Nächstes** (Phase 5 zu Ende): die Admin-Weboberfläche auf einem echten Handy ansehen, das Touch-Display mit echtem Finger; danach ein Lauf mit echtem Zertifikat (öffentlicher Name nötig). Vorher gehört der Server nicht ins Internet.
 
 **Entscheidungen des Besitzers, die gelten:**
+- Drei Sprachen: Englisch (immer Vorgabe), Deutsch, Portugiesisch; je Sprache eine eigene Firmware, am Server wählbar.
 - Speicher PostgreSQL, TLS über Caddy, zweiter Faktor TOTP, dazu Anmeldung über Microsoft Entra ID als Möglichkeit.
 - Die strenge Content-Security-Policy bleibt (`style-src 'self'`, kein `unsafe-inline`).
 - Die Werkzeuge bleiben in Python (kein Umschreiben nach Rust).
 - Kein Firmware-Update über die Leitstelle ohne Signaturprüfung.
-- Committen und pushen nur auf Ansage. Commit-Nachrichten deutsch, im Stil „Leitstelle Phase N: …“; Dokumentation deutsch, Code-Kommentare englisch.
+- Committen und pushen nur auf Ansage. Commit-Nachrichten deutsch, im Stil „Leitstelle Phase N: …“; Dokumentation deutsch, Code-Kommentare englisch, Texte der Oberflächen englisch mit Übersetzungen.
 
 **Ungeklärt aus der letzten Phase:** Das Board meldete sich in einem Browserlauf rund 50 s nicht (Funk danach in Ordnung). Über Caddy dauerte sein Handshake 6,3 s statt gut einer Sekunde — vermutet wird der Sparmodus bei 80 MHz, nachgeprüft ist es nicht. Entra ist nie gegen einen echten Mandanten gelaufen, TOTP nie mit einer echten Authenticator-App.
 

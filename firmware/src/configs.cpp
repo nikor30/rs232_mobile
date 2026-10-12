@@ -1,4 +1,5 @@
 #include "configs.h"
+#include "lang.h"
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 
@@ -82,11 +83,11 @@ static bool validName(const String &n) {
 }
 
 const char *save(const String &nameIn, const String &text, const String &oldName) {
-  if (!ok) return "Speicher nicht verfügbar";
+  if (!ok) return TR("Storage not available", "Speicher nicht verfügbar", "Armazenamento indisponível");
   String name = nameIn;
   name.trim();
-  if (!validName(name)) return "Name: 1-48 Zeichen";
-  if (text.length() > MAX_TEXT) return "Text zu lang (max. 32 kB)";
+  if (!validName(name)) return TR("Name: 1-48 characters", "Name: 1-48 Zeichen", "Nome: 1-48 caracteres");
+  if (text.length() > MAX_TEXT) return TR("Text too long (max. 32 kB)", "Text zu lang (max. 32 kB)", "Texto longo demais (máx. 32 kB)");
   String path = findPath(name);
   if (path.isEmpty() && oldName.length() && oldName != name) path = findPath(oldName);   // rename in place
   if (path.isEmpty()) {
@@ -108,17 +109,17 @@ const char *save(const String &nameIn, const String &text, const String &oldName
       path = p;
       break;
     }
-    if (path.isEmpty()) return "Zu viele Konfigurationen";
+    if (path.isEmpty()) return TR("Too many configurations", "Zu viele Konfigurationen", "Configurações demais");
   }
   size_t freeB = LittleFS.totalBytes() - LittleFS.usedBytes();
-  if (text.length() + 4096 > freeB) return "Speicher voll";
+  if (text.length() + 4096 > freeB) return TR("Storage full", "Speicher voll", "Armazenamento cheio");
   File f = LittleFS.open(path, "w");
-  if (!f) return "Datei kann nicht geschrieben werden";
+  if (!f) return TR("The file cannot be written", "Datei kann nicht geschrieben werden", "Não foi possível gravar o arquivo");
   f.print(name);
   f.print('\n');
   size_t w = f.print(text);
   f.close();
-  if (w != text.length()) return "Schreibfehler";
+  if (w != text.length()) return TR("Write error", "Schreibfehler", "Erro de gravação");
   // renamed into an existing file of the new name: drop the old one
   if (oldName.length() && oldName != name) {
     String old = findPath(oldName);

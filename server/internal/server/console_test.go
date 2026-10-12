@@ -173,8 +173,8 @@ func TestConsoleNeedsTheDevicesYes(t *testing.T) {
 	if e.conState(c.ID()).Console.State != "requested" || open(cmd.ID) == "" {
 		t.Fatal("console before the answer")
 	}
-	c.Poll(nil, []device.Result{{ID: cmd.ID, OK: false, Out: "am Gerät abgelehnt"}})
-	if v := e.conState(c.ID()).Console; v.State != "refused" || v.Reason != "am Gerät abgelehnt" || open(cmd.ID) == "" {
+	c.Poll(nil, []device.Result{{ID: cmd.ID, OK: false, Out: "refused at the device"}})
+	if v := e.conState(c.ID()).Console; v.State != "refused" || v.Reason != "refused at the device" || open(cmd.ID) == "" {
 		t.Fatalf("after the no: %+v", v)
 	}
 	// agreed, but too long ago
@@ -208,10 +208,10 @@ func TestConsoleEndsFromTheDeviceAndOnSilence(t *testing.T) {
 	c := e.enrolled()
 	id := e.granted(c)
 	c.Console(device.ConMsg{ID: id, D: []byte("a")})
-	if r, err := c.Console(device.ConMsg{ID: id, Off: 1, D: []byte("b"), End: "am Gerät beendet"}); err != nil || r.End == "" {
+	if r, err := c.Console(device.ConMsg{ID: id, Off: 1, D: []byte("b"), End: "closed at the device"}); err != nil || r.End == "" {
 		t.Fatalf("%+v %v", r, err)
 	}
-	if v := e.conState(c.ID()); v.Console.State != "ended" || v.Console.Reason != "am Gerät beendet" || v.Sessions[0].Out != 2 {
+	if v := e.conState(c.ID()); v.Console.State != "ended" || v.Console.Reason != "closed at the device" || v.Sessions[0].Out != 2 {
 		t.Fatalf("%+v %+v", v.Console, v.Sessions)
 	}
 

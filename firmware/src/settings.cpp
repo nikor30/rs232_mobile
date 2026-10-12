@@ -1,4 +1,5 @@
 #include "settings.h"
+#include "lang.h"
 #include "config.h"
 #include "bat_curve.h"
 #include <Preferences.h>
@@ -84,23 +85,23 @@ const char *checkPins(const Settings &s) {
   static char err[64];
   int8_t used[2 * MAX_PORTS + 2];
   size_t n = 0;
-  if (!s.port[0].enabled) return "Port 1 muss aktiv sein";
+  if (!s.port[0].enabled) return TR("Port 1 has to be active", "Port 1 muss aktiv sein", "A porta 1 precisa estar ativa");
   for (uint8_t i = 0; i < MAX_PORTS; i++) {
     const PortCfg &p = s.port[i];
     if (!p.enabled) continue;
-    if (!rxPinOk(p.rx)) { snprintf(err, sizeof(err), "Port %u: RX-Pin GPIO%d nicht erlaubt", i + 1, p.rx); return err; }
-    if (!txPinOk(p.tx)) { snprintf(err, sizeof(err), "Port %u: TX-Pin GPIO%d nicht erlaubt", i + 1, p.tx); return err; }
+    if (!rxPinOk(p.rx)) { snprintf(err, sizeof(err), TR("Port %u: RX pin GPIO%d not allowed", "Port %u: RX-Pin GPIO%d nicht erlaubt", "Porta %u: pino RX GPIO%d não permitido"), i + 1, p.rx); return err; }
+    if (!txPinOk(p.tx)) { snprintf(err, sizeof(err), TR("Port %u: TX pin GPIO%d not allowed", "Port %u: TX-Pin GPIO%d nicht erlaubt", "Porta %u: pino TX GPIO%d não permitido"), i + 1, p.tx); return err; }
     used[n++] = p.rx;
     used[n++] = p.tx;
   }
   if (s.batPin >= 0) {
-    if (!adcPinOk(s.batPin)) { snprintf(err, sizeof(err), "Akku-Pin GPIO%d kann nicht messen", s.batPin); return err; }
+    if (!adcPinOk(s.batPin)) { snprintf(err, sizeof(err), TR("Battery pin GPIO%d cannot measure", "Akku-Pin GPIO%d kann nicht messen", "O pino da bateria GPIO%d não consegue medir"), s.batPin); return err; }
     used[n++] = s.batPin;
   }
   for (size_t a = 0; a < n; a++)
     for (size_t b = a + 1; b < n; b++)
-      if (used[a] == used[b]) { snprintf(err, sizeof(err), "GPIO%d ist doppelt belegt", used[a]); return err; }
-  if (s.batDiv < 10 || s.batDiv > 60) return "Teiler ungültig";
+      if (used[a] == used[b]) { snprintf(err, sizeof(err), TR("GPIO%d is used twice", "GPIO%d ist doppelt belegt", "GPIO%d está em uso duas vezes"), used[a]); return err; }
+  if (s.batDiv < 10 || s.batDiv > 60) return TR("Invalid divider", "Teiler ungültig", "Divisor inválido");
   return nullptr;
 }
 

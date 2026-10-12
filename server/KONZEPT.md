@@ -302,6 +302,15 @@ Stand 12. Oktober 2026, `test/ui.sh` (Chromium über Playwright, gegen den Serve
 - **Handy** (neu, 390 × 844, Touch): Die Navigation liegt am unteren Rand über die ganze Breite; keine Seite ist breiter als der Schirm (Geräteliste, Gerät mit Verlauf, Benutzer, Protokoll, Server, Einladung); alles Drückbare ist mindestens 44 px hoch; ein Gerät nimmt den Schirm, „Geräte“ führt zurück, der Zurück-Knopf des Browsers wieder hin; ein Dialog sitzt am unteren Rand in voller Breite. Bilder hell und dunkel angesehen.
 - **Nicht geprüft:** echte Handys und Safari (nur Chromium mit nachgestelltem Handy — Sicherheitsabstände für Notch und Home-Balken, `dvh`, Verhalten der Bildschirmtastatur im Terminal); Tablets und Breiten zwischen Handy und 1200 px nur durch Hinsehen in einer Größe; der Fehlerbalken beim Speichern im Browser (der Zustand dahinter in `cloud.sh`); „weniger Bewegung“, „weniger Transparenz“, „mehr Kontrast“; Bedienung nur mit der Tastatur über das Geprüfte hinaus; Bildschirmleser.
 
+### Drei Sprachen
+
+Stand 12. Oktober 2026. Englisch ist Quellsprache und Vorgabe, dazu Deutsch und Portugiesisch.
+
+- **Über die Leitung geht Englisch.** Fehlermeldungen des Servers, die Gründe, aus denen eine Fernkonsole endet (vom Server wie vom Gerät), und die Antworten der Firmware auf Aufträge sind feste englische Texte; übersetzt wird dort, wo jemand sie liest — in der Admin-Seite und am Display des Geräts. So zeigt eine portugiesische Admin-Seite auch den Grund an, den ein deutsches Gerät gemeldet hat.
+- **Admin-Weboberfläche** (`test/ui.sh`, Abschnitt `language`, und `test/i18n_check.py`): ohne Wahl Englisch, auch mit einem Browser, der Deutsch verlangt; nach der Wahl Deutsch bzw. Portugiesisch für Markup, vom Skript gebaute Texte, Rückfragen und die englischen Meldungen des Servers; die Wahl übersteht ein Neuladen und gilt schon auf der Anmeldeseite. 208 Texte, in beiden Sprachen vollständig.
+- **Firmware:** je Sprache ein Build (`firmware/README.md`); am Waveshare-Board nacheinander alle drei aufgespielt und Display und Weboberfläche angesehen. Die übrigen Tests (`e2e.sh`, `cloud.sh`, `backup.sh`, `pg.sh`, `tests/c2/run.sh`) laufen mit den englischen Texten.
+- **Nicht geprüft:** die portugiesischen Texte durch einen Muttersprachler; die Admin-Seite als Handy in Deutsch und Portugiesisch (längere Wörter in der Leiste unten und in den Kacheln); eine Fernkonsole zwischen einem Server und einem Gerät in verschiedenen Sprachen am echten Board.
+
 Was die Arbeit am Gerät gezeigt hat:
 
 - **TLS und ML-KEM passen nicht gleichzeitig in den Speicher.** Eine TLS-Verbindung kostet rund 45 kB Heap, der Stack für ML-KEM 28 kB. Der Schlüsseltausch wird deshalb gerechnet, bevor die Anfrage hinausgeht und nachdem die Antwort da ist — in einem kurzlebigen Task mit großem Stack, dessen Speicher sofort wieder frei ist (`big()` in `c2.cpp`).

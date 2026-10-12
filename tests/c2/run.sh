@@ -96,8 +96,8 @@ expect "BREAK" "$(output "$GREETING+b'show\\r[BREAK]'")" "2012 characters, as se
 admin POST /admin/v1/devices/$ID/console/$CON/close >/dev/null
 [ "$(timeout 30 docker wait $P-console)" = 0 ] || { docker logs $P-console >&2; fail "console client"; }
 docker logs $P-console >"$LOG" 2>&1
-expect "the device's side" "$(tr '\n' ' ' <"$LOG")" "CONSOLE $CON open CLOSED vom Administrator beendet TYPED 73686f770d BRK 1 "
-expect "session log" "$(admin GET /admin/v1/devices/$ID/console | json '[(s["reason"],s["bytes_in"],s["bytes_out"]) for s in d["sessions"]][-1]')" "('vom Administrator beendet', 5, 2012)"
+expect "the device's side" "$(tr '\n' ' ' <"$LOG")" "CONSOLE $CON open CLOSED closed by the administrator TYPED 73686f770d BRK 1 "
+expect "session log" "$(admin GET /admin/v1/devices/$ID/console | json '[(s["reason"],s["bytes_in"],s["bytes_out"]) for s in d["sessions"]][-1]')" "('closed by the administrator', 5, 2012)"
 
 echo "== the server changes its key"
 OLDFP=$(admin GET /admin/v1/server | json 'd["fingerprint"]')

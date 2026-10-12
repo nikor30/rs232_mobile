@@ -9,6 +9,7 @@
 //    hold at power-on for 5 s -> factory reset (new WiFi password)
 // ============================================================================
 #include <Arduino.h>
+#include "lang.h"
 #include <WiFi.h>
 
 #include "config.h"
@@ -105,18 +106,18 @@ static void checkFactoryReset() {
     if (held >= 5000) {
       Store::factoryReset();
       Certs::wipe();                   // private keys never survive a factory reset
-      Display::message("Werksreset", "OK - Neustart", 2000);
+      Display::message(TR("Factory reset", "Werksreset", "Restaurar padrões"), TR("OK - restarting", "OK - Neustart", "OK - reiniciando"), 2000);
       Display::loop();
       delay(2000);
       ESP.restart();
     }
     char buf[22];
-    snprintf(buf, sizeof(buf), "halten: %lu s", (unsigned long)(5 - held / 1000));
+    snprintf(buf, sizeof(buf), TR("hold: %lu s", "halten: %lu s", "segure: %lu s"), (unsigned long)(5 - held / 1000));
     Display::message("Werksreset?", buf, 500);
     Display::loop();
     delay(50);
   }
-  Display::message("Abgebrochen", "", 1000);
+  Display::message(TR("Cancelled", "Abgebrochen", "Cancelado"), "", 1000);
 }
 
 // Everything that wants to see serial data: web/TCP clients, the SD recording
@@ -171,7 +172,7 @@ void setup() {
     if (!Bridge::enabled(p)) continue;
     char tcp[16];
     if (settings.tcpEnabled) snprintf(tcp, sizeof(tcp), "TCP :%u", RAW_TCP_PORT + p);
-    else strlcpy(tcp, "TCP aus", sizeof(tcp));      // Menü -> Setup -> "Raw-TCP / Telnet"
+    else strlcpy(tcp, TR("TCP off", "TCP aus", "TCP desligado"), sizeof(tcp));      // Menü -> Setup -> "Raw-TCP / Telnet"
     Serial.printf("Port %u : %-12s %s  RX=GPIO%d TX=GPIO%d  %s, %s\n", p + 1, Store::portName(p).c_str(),
                   Store::serialLabel(settings.port[p].serial).c_str(), Bridge::rxPin(p), Bridge::txPin(p),
                   Bridge::isHardware(p) ? "Hardware-UART" : "Software-UART", tcp);
@@ -213,7 +214,7 @@ void loop() {
   Net::loop();
   Power::loop();
   cpuClock();
-  if (Power::empty()) Display::powerOff("Akku leer");
+  if (Power::empty()) Display::powerOff(TR("Battery empty", "Akku leer", "Bateria vazia"));
   for (auto &b : buttons) pollButton(b);
   Display::loop();
   Sd::loop();
@@ -225,7 +226,7 @@ void loop() {
   static bool lowNotified = false;
   if (Power::low() && !lowNotified) {
     lowNotified = true;
-    Net::onMessage("Akku schwach: noch " + String(Power::pct()) + "%");
+    Net::onMessage(TR("Battery low: ", "Akku schwach: noch ", "Bateria fraca: ") + String(Power::pct()) + "%");
   } else if (Power::pct() > BAT_LOW_PCT + 5) {
     lowNotified = false;
   }

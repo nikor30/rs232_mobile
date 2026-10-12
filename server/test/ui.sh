@@ -19,6 +19,7 @@ cleanup() { docker rm -f ${COMPOSE_PROJECT_NAME}-sim >/dev/null 2>&1 || true; do
 trap cleanup EXIT
 cleanup
 
+python3 test/i18n_check.py || fail "texts without a translation"
 # the browsers come with the image, the Python package does not
 printf 'FROM mcr.microsoft.com/playwright/python:v1.63.0-noble\nRUN pip install -q playwright==1.63.0\n' | docker build -q -t $PW - >/dev/null
 docker compose up -d --build --quiet-pull 2>&1 | tail -1
@@ -43,6 +44,7 @@ docker run -d --name ${COMPOSE_PROJECT_NAME}-sim --network "$NET" -v ${COMPOSE_P
 browser server || fail "server"
 browser command "Labor" || fail "command"
 browser accounts || fail "accounts"
+browser language "Labor" || fail "language"
 browser phone "Labor" || fail "phone"
 browser revoke "Labor" || fail "revoke"
 echo "screenshots: $OUT"

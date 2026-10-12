@@ -94,6 +94,12 @@ In der Weboberfläche: Bereich **Server** → „Schlüssel wechseln“; dort st
 
 **Stand:** Go-Tests, `test/cloud.sh`, die Weboberfläche im Browser (`test/ui.sh`) und der Protokollcode der Firmware auf dem PC (`tests/c2/run.sh`). **Nicht am Board geprüft.**
 
+### Sprachen
+
+Die Admin-Weboberfläche gibt es in Englisch, Deutsch und Portugiesisch (brasilianisch). Gewählt wird oben in der Leiste; die Wahl merkt sich der Browser. Ohne Wahl ist sie **Englisch**, gleich was der Browser bevorzugt. Die Admin-Schnittstelle selbst antwortet immer englisch (Fehlermeldungen, Gründe für das Ende einer Fernkonsole) — die Seite übersetzt beim Anzeigen (`internal/server/web/i18n.js`). Was ein Gerät von sich aus meldet (Antworten auf Aufträge, Ergebnis einer abgespielten Konfiguration), kommt in der Sprache seiner Firmware und wird gezeigt, wie es kam.
+
+`test/i18n_check.py` prüft, dass jeder Text der Seite in beiden Übersetzungen vorhanden ist; `test/ui.sh` schaltet im Browser auf Deutsch und Portugiesisch um.
+
 ### Überwachung
 
 - **`GET /healthz`** (ohne Anmeldung) antwortet `200 ok`, solange der Server seinen Zustand schreiben kann, sonst `503 failing` — ohne Begründung; die steht im Log und in `/admin/v1/status`. Das ist die Adresse für einen Wächter von außen (`https://<C2_DOMAIN>/healthz`). Die Datenbank wird dafür höchstens alle 10 Sekunden gefragt.

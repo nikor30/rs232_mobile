@@ -1,4 +1,5 @@
 #include "sdcard.h"
+#include "lang.h"
 
 #include <FS.h>
 #include <SD.h>
@@ -74,7 +75,7 @@ uint64_t totalMb() { return ok ? cachedTotalMb : 0; }
 uint64_t usedMb() { return ok ? cachedUsedMb : 0; }
 
 const char *typeName() {
-  if (!ok) return "keine Karte";
+  if (!ok) return TR("no card", "keine Karte", "sem cartão");
   switch (SD.cardType()) {
     case CARD_MMC:  return "MMC";
     case CARD_SD:   return "SDSC";

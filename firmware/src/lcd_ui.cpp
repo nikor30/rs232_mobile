@@ -1,5 +1,6 @@
 #include "display.h"
 #include "config.h"
+#include "lang.h"
 
 // Colour touch front end on the Waveshare ESP32-S3-Touch-LCD-2 (ST7789T3
 // 240x320, CST816D touch, QMI8658 accelerometer). It implements the Display
@@ -138,8 +139,8 @@ static const uint32_t C_BG = 0x000000, C_PANEL = 0x2C2C2E, C_LINE = 0x48484A, C_
                       C_TINT = 0x0A84FF, C_TERM = 0x9AE6B4;
 
 enum Screen : uint8_t { S_STATUS = 0, S_TERM, S_SCRIPTS, S_WIFI, S_URL, S_BT, S_SYSTEM, S_INFO, S_SETUP, S_COUNT };
-static const char *const TITLES[S_COUNT] = {"Status", "Terminal", "Skripte", "WLAN", "Web-UI", "Bluetooth",
-                                            "System", "Info", "Setup"};
+static const char *const TITLES[S_COUNT] = {TR("Status", "Status", "Estado"), "Terminal", TR("Scripts", "Skripte", "Scripts"), TR("Wi-Fi", "WLAN", "Wi-Fi"), TR("Web UI", "Web-UI", "Web UI"), "Bluetooth",
+                                            TR("System", "System", "Sistema"), TR("Info", "Info", "Info"), TR("Setup", "Setup", "Ajustes")};
 static const int MAX_CFG = 16, MAX_NETS = 12;
 
 // 7.8 pixels are a millimetre on this panel: buttons are 6 mm high, list rows 4 mm.
@@ -279,8 +280,24 @@ static void toAscii(const char *in, char *out, size_t size) {
         case 0xA4: r = "ae"; break; case 0xB6: r = "oe"; break; case 0xBC: r = "ue"; break;
         case 0x84: r = "Ae"; break; case 0x96: r = "Oe"; break; case 0x9C: r = "Ue"; break;
         case 0x9F: r = "ss"; break;
+        // Portuguese: the letter without its accent reads well enough
+        case 0xA0: case 0xA1: case 0xA2: case 0xA3: r = "a"; break;
+        case 0x80: case 0x81: case 0x82: case 0x83: r = "A"; break;
+        case 0xA7: r = "c"; break; case 0x87: r = "C"; break;
+        case 0xA9: case 0xAA: r = "e"; break; case 0x89: case 0x8A: r = "E"; break;
+        case 0xAD: r = "i"; break; case 0x8D: r = "I"; break;
+        case 0xB3: case 0xB4: case 0xB5: r = "o"; break;
+        case 0x93: case 0x94: case 0x95: r = "O"; break;
+        case 0xBA: r = "u"; break; case 0x9A: r = "U"; break;
       }
     } else if (p[0] == 0xC2 && p[1] == 0xB7) r = "-";
+    else if (p[0] == 0xE2 && p[1] == 0x80) {           // typographic dashes and quotes
+      switch (p[2]) {
+        case 0x93: case 0x94: r = "-"; break;
+        case 0x9C: case 0x9D: case 0x9E: r = "\""; break;
+        case 0x98: case 0x99: r = "'"; break;
+      }
+    } else if (p[0] == 0xE2 && p[1] == 0x86 && p[2] == 0x92) r = "->";
     while (*r && o + 1 < size) out[o++] = *r++;
     while ((p[1] & 0xC0) == 0x80) p++;   // skip the rest of the UTF-8 sequence
   }
@@ -540,7 +557,7 @@ static const char *offReason = "";
 
 static void saveAndReboot(const char *what) {
   Store::save();
-  message(what, "Neustart ...", 3000);
+  message(what, TR("Restarting ...", "Neustart ...", "Reiniciando ..."), 3000);
   rebootAt = millis() + 1500;
 }
 
@@ -549,7 +566,7 @@ static void runCommand(uint8_t id, uint8_t arg, uint8_t port) {
   static const uint16_t TIMEOUTS[] = {15, 60, 300, 0};
   switch (id) {
     case B_PLAY:
-      if (arg < cfgCount && !Player::start(cfgNames[arg], port)) message("Konfiguration", Player::result(), 2500);
+      if (arg < cfgCount && !Player::start(cfgNames[arg], port)) message(TR("Configuration", "Konfiguration", "Configuracao"), Player::result(), 2500);
       break;
     case B_STOP: Player::stop(); break;
     case B_CON_ALLOW: C2::consoleAnswer(true); break;
@@ -563,13 +580,13 @@ static void runCommand(uint8_t id, uint8_t arg, uint8_t port) {
       settings.staAuth = 0;                // WPA2/WPA3 with a key; 802.1X is set up in the web UI
       memset(joinPass, 0, sizeof(joinPass));
     }
-      saveAndReboot("WLAN gespeichert");
+      saveAndReboot(TR("Wi-Fi saved", "WLAN gespeichert", "Wi-Fi salvo"));
       break;
     case B_FORGET:
       settings.staSsid = "";
       settings.staPass = "";
       settings.staAuth = 0;
-      saveAndReboot("WLAN-Client aus");
+      saveAndReboot(TR("Wi-Fi client off", "WLAN-Client aus", "Cliente Wi-Fi desligado"));
       break;
     case B_BRIGHT_DOWN:
     case B_BRIGHT_UP: {
@@ -592,14 +609,14 @@ static void runCommand(uint8_t id, uint8_t arg, uint8_t port) {
     case B_CAL_RESET: {
       const char *err = id == B_CAL_RESET ? Power::setCal(0, 0) : Power::calibrateNow(id == B_CAL_FULL);
       String now = String(Power::mv()) + " mV = " + String(Power::pct()) + " %";
-      if (err) message("Akku: nicht gespeichert", err, 4000);
-      else message(id == B_CAL_RESET ? "Kalibrierung geloescht" : "Akku kalibriert", now.c_str(), 2500);
+      if (err) message(TR("Battery: not saved", "Akku: nicht gespeichert", "Bateria: nao salvo"), err, 4000);
+      else message(id == B_CAL_RESET ? TR("Calibration cleared", "Kalibrierung geloescht", "Calibracao apagada") : TR("Battery calibrated", "Akku kalibriert", "Bateria calibrada"), now.c_str(), 2500);
       Net::markDirty();
       break;
     }
     case B_POWEROFF:
-      offReason = "Taste";
-      message("Ausschalten ...", "Einschalten: BOOT-Taste", 4000);
+      offReason = TR("button", "Taste", "botao");
+      message(TR("Switching off ...", "Ausschalten ...", "Desligando ..."), TR("Switch on: BOOT button", "Einschalten: BOOT-Taste", "Ligar: botao BOOT"), 4000);
       offAt = millis() + 1800;
       break;
     case B_BAUD: {
@@ -613,20 +630,20 @@ static void runCommand(uint8_t id, uint8_t arg, uint8_t port) {
       break;
     }
     case B_AUTO:  Bridge::startAutobaud(port); break;
-    case B_BREAK: Bridge::sendBreak(port); message("BREAK gesendet", "", 800); break;
+    case B_BREAK: Bridge::sendBreak(port); message(TR("BREAK sent", "BREAK gesendet", "BREAK enviado"), "", 800); break;
     case B_ENTER: Bridge::write(port, (const uint8_t *)"\r", 1); break;
     case B_CTRLC: Bridge::write(port, (const uint8_t *)"\x03", 1); break;
     case B_REC:
-      if (Sd::logging(port)) { Sd::logStop(port); message("Mitschnitt beendet", "", 1200); }
-      else if (Sd::logStart(port)) message("Mitschnitt", Sd::logName(port).c_str(), 1500);
-      else message("SD-Karte:", "Datei nicht angelegt", 1500);
+      if (Sd::logging(port)) { Sd::logStop(port); message(TR("Recording stopped", "Mitschnitt beendet", "Gravacao encerrada"), "", 1200); }
+      else if (Sd::logStart(port)) message(TR("Recording", "Mitschnitt", "Gravacao"), Sd::logName(port).c_str(), 1500);
+      else message(TR("SD card:", "SD-Karte:", "Cartao SD:"), TR("file not created", "Datei nicht angelegt", "arquivo nao criado"), 1500);
       break;
     case B_BT: Ble::setEnabled(Ble::state() == Ble::OFF); break;
     case B_SD:                           // a card put in after start-up; the attempt can take a few seconds
-      message("SD-Karte", "wird gesucht...", 6000);
+      message(TR("SD card", "SD-Karte", "Cartao SD"), TR("looking for it...", "wird gesucht...", "procurando..."), 6000);
       delay(150);                        // let the UI task show that before the bus is taken for seconds
-      if (Sd::begin()) message("SD-Karte", "eingebunden", 2000);
-      else message("SD-Karte", "nicht gefunden", 2000);
+      if (Sd::begin()) message(TR("SD card", "SD-Karte", "Cartao SD"), TR("mounted", "eingebunden", "montado"), 2000);
+      else message(TR("SD card", "SD-Karte", "Cartao SD"), TR("not found", "nicht gefunden", "nao encontrado"), 2000);
       break;
   }
 }
@@ -1155,36 +1172,36 @@ static void pressed(uint8_t id, uint8_t arg) {
       if (S.net[arg].locked) { setupMode = SETUP_PASS; return; }
       // open network: nothing to type, but never joined by a single (stray) tap
       confirmId = B_JOIN;
-      confirm1 = "Offenes Netz ohne Verschluesselung.";
-      confirm2 = "Verbinden? Das Geraet startet neu.";
+      confirm1 = TR("Open network without encryption.", "Offenes Netz ohne Verschluesselung.", "Rede aberta, sem criptografia.");
+      confirm2 = TR("Connect? The device restarts.", "Verbinden? Das Geraet startet neu.", "Conectar? O dispositivo reinicia.");
       setupMode = SETUP_CONFIRM;
       return;
     case B_ASK_FORGET:
       confirmId = B_FORGET;
-      confirm1 = "WLAN-Client ausschalten?";
-      confirm2 = "Das Geraet startet neu.";
+      confirm1 = TR("Switch the Wi-Fi client off?", "WLAN-Client ausschalten?", "Desligar o cliente Wi-Fi?");
+      confirm2 = TR("The device restarts.", "Das Geraet startet neu.", "O dispositivo reinicia.");
       setupMode = SETUP_CONFIRM;
       return;
     case B_ASK_OFF:
       confirmId = B_POWEROFF;
-      confirm1 = "Geraet ausschalten?";
-      confirm2 = "Einschalten mit der BOOT-Taste.";
+      confirm1 = TR("Switch the device off?", "Geraet ausschalten?", "Desligar o dispositivo?");
+      confirm2 = TR("Switch on with the BOOT button.", "Einschalten mit der BOOT-Taste.", "Ligar com o botao BOOT.");
       setupMode = SETUP_CONFIRM;
       return;
     case B_ASK_CAL_FULL:
     case B_ASK_CAL_EMPTY: {
       static char ask[40];
-      snprintf(ask, sizeof(ask), "%u mV als %s speichern?", S.batMv, id == B_ASK_CAL_FULL ? "100 %" : "0 %");
+      snprintf(ask, sizeof(ask), TR("Save %u mV as %s?", "%u mV als %s speichern?", "Salvar %u mV como %s?"), S.batMv, id == B_ASK_CAL_FULL ? "100 %" : "0 %");
       confirmId = id == B_ASK_CAL_FULL ? B_CAL_FULL : B_CAL_EMPTY;
       confirm1 = ask;
-      confirm2 = id == B_ASK_CAL_FULL ? "Akku geladen, Ladegeraet seit einer Minute ab?" : "Nur die Prozentanzeige aendert sich.";
+      confirm2 = id == B_ASK_CAL_FULL ? TR("Battery charged, charger off for a minute?", "Akku geladen, Ladegeraet seit einer Minute ab?", "Bateria carregada, carregador fora ha um minuto?") : TR("Only the percentage shown changes.", "Nur die Prozentanzeige aendert sich.", "So muda a porcentagem mostrada.");
       setupMode = SETUP_CONFIRM;
       return;
     }
     case B_ASK_CAL_RESET:
       confirmId = B_CAL_RESET;
-      confirm1 = "Akku-Kalibrierung loeschen?";
-      confirm2 = "Es gilt wieder die Kennlinie.";
+      confirm1 = TR("Clear the battery calibration?", "Akku-Kalibrierung loeschen?", "Apagar a calibracao da bateria?");
+      confirm2 = TR("The built-in curve applies again.", "Es gilt wieder die Kennlinie.", "Volta a valer a curva padrao.");
       setupMode = SETUP_CONFIRM;
       return;
     case B_CONFIRM:
@@ -1392,10 +1409,10 @@ static void drawHeader() {
   chevron(15, HEAD_H / 2, 0, backDown ? C_TEXT : C_TINT);   // the arrows lead somewhere: they carry the tint
   if (modal()) {                         // a sub-page: the arrow leads back, nothing else leaves it
     g->setTextColor(C_TEXT);
-    const char *title = setupMode == SETUP_NETS ? "WLAN waehlen"
-                      : setupMode == SETUP_CONFIRM && confirmId == B_FORGET ? "WLAN-Client"
-                      : setupMode == SETUP_CONFIRM && confirmId == B_POWEROFF ? "Ausschalten"
-                      : setupMode == SETUP_CONFIRM && confirmId >= B_CAL_FULL && confirmId <= B_CAL_RESET ? "Akku kalibrieren" : netSsid;
+    const char *title = setupMode == SETUP_NETS ? TR("Choose Wi-Fi", "WLAN waehlen", "Escolher Wi-Fi")
+                      : setupMode == SETUP_CONFIRM && confirmId == B_FORGET ? TR("Wi-Fi client", "WLAN-Client", "Cliente Wi-Fi")
+                      : setupMode == SETUP_CONFIRM && confirmId == B_POWEROFF ? TR("Switch off", "Ausschalten", "Desligar")
+                      : setupMode == SETUP_CONFIRM && confirmId >= B_CAL_FULL && confirmId <= B_CAL_RESET ? TR("Calibrate battery", "Akku kalibrieren", "Calibrar bateria") : netSsid;
     if (g->textWidth(title) <= W - 88) g->drawString(title, W / 2, HEAD_H / 2);
     else drawMarquee(title, 44, HEAD_H / 2, W - 52);
     addHotspot(0, 0, 64, HEAD_H + 6, B_BACK);
@@ -1405,7 +1422,7 @@ static void drawHeader() {
   // While the server has a console open, every page says so in place of its
   // title; a tap there leads to "Beenden". Otherwise the title opens the
   // overview of all pages, and the small arrowhead beside it says so.
-  const char *title = S.conState == 2 ? "Fernkonsole" : menu ? "Seiten" : TITLES[screen];
+  const char *title = S.conState == 2 ? TR("Remote console", "Fernkonsole", "Console remoto") : menu ? TR("Pages", "Seiten", "Paginas") : TITLES[screen];
   bool titleDown = isDown(64, 0, W - 128, HEAD_H + 6);
   g->setTextColor(S.conState == 2 ? C_RED : titleDown ? C_TINT : C_TEXT);
   int tw = g->textWidth(title), mark = S.conState == 2 ? 0 : 14;
@@ -1499,17 +1516,17 @@ static void drawSwipe() {
 static void drawMenu() {
   static char hint[S_COUNT][28];
   snprintf(hint[S_STATUS], sizeof(hint[0]), "%s", S.autobaud[selPort] ? "Auto-Baud" : S.serial[selPort]);
-  snprintf(hint[S_TERM], sizeof(hint[0]), "%s", S.recording[selPort] ? "zeichnet auf" : S.portName[selPort]);
-  if (S.playState == Player::RUNNING) snprintf(hint[S_SCRIPTS], sizeof(hint[0]), "laeuft");
-  else if (S.cfgCount) snprintf(hint[S_SCRIPTS], sizeof(hint[0]), S.cfgCount == 1 ? "1 Skript" : "%u Skripte", S.cfgCount);
-  else snprintf(hint[S_SCRIPTS], sizeof(hint[0]), "abspielen");   // the list is read when the page is opened
+  snprintf(hint[S_TERM], sizeof(hint[0]), "%s", S.recording[selPort] ? TR("recording", "zeichnet auf", "gravando") : S.portName[selPort]);
+  if (S.playState == Player::RUNNING) snprintf(hint[S_SCRIPTS], sizeof(hint[0]), TR("running", "laeuft", "em execucao"));
+  else if (S.cfgCount) snprintf(hint[S_SCRIPTS], sizeof(hint[0]), S.cfgCount == 1 ? TR("1 script", "1 Skript", "1 script") : TR("%u scripts", "%u Skripte", "%u scripts"), S.cfgCount);
+  else snprintf(hint[S_SCRIPTS], sizeof(hint[0]), TR("play", "abspielen", "reproduzir"));   // the list is read when the page is opened
   snprintf(hint[S_WIFI], sizeof(hint[0]), "%s", S.apSsid);
   snprintf(hint[S_URL], sizeof(hint[0]), "%s", S.apIp);
-  snprintf(hint[S_BT], sizeof(hint[0]), "%s", S.bleState == Ble::OFF ? "aus" : S.bleState == Ble::CONNECTED ? "verbunden" : "bereit");
+  snprintf(hint[S_BT], sizeof(hint[0]), "%s", S.bleState == Ble::OFF ? TR("off", "aus", "desligado") : S.bleState == Ble::CONNECTED ? TR("connected", "verbunden", "conectado") : TR("ready", "bereit", "pronto"));
   snprintf(hint[S_SYSTEM], sizeof(hint[0]), "%u MHz", S.cpuMhz);
-  if (S.batPresent) snprintf(hint[S_INFO], sizeof(hint[0]), "Akku %u%%", S.batPct);
+  if (S.batPresent) snprintf(hint[S_INFO], sizeof(hint[0]), TR("Battery %u%%", "Akku %u%%", "Bateria %u%%"), S.batPct);
   else snprintf(hint[S_INFO], sizeof(hint[0]), "%s", S.c2);
-  snprintf(hint[S_SETUP], sizeof(hint[0]), "%s", !S.staConfigured ? "kein LAN" : S.staConnected ? "LAN an" : "LAN sucht");
+  snprintf(hint[S_SETUP], sizeof(hint[0]), "%s", !S.staConfigured ? TR("no LAN", "kein LAN", "sem LAN") : S.staConnected ? TR("LAN up", "LAN an", "LAN ok") : TR("LAN searching", "LAN sucht", "LAN buscando"));
 
   const int cols = 3, rows = (S_COUNT + cols - 1) / cols, gap = 5;
   int top = HEAD_H + gap, bottom = H - NAV_H - 2;
@@ -1587,11 +1604,11 @@ static String clientsLine() {
 static String batteryLine() {
   if (S.batPresent) {
     String s = String(S.batPct) + "%  " + String(S.batMv) + " mV";
-    if (S.batCharge == Power::CHARGING) s += "  laedt";
-    else if (S.batCharge == Power::FULL) s += "  voll";
+    if (S.batCharge == Power::CHARGING) s += TR("  charging", "  laedt", "  carregando");
+    else if (S.batCharge == Power::FULL) s += TR("  full", "  voll", "  cheia");
     return s;
   }
-  return S.batMeasured ? String("keiner (USB)") : String("keine Messung");
+  return S.batMeasured ? String(TR("none (USB)", "keiner (USB)", "nenhuma (USB)")) : String(TR("not measured", "keine Messung", "sem medicao"));
 }
 
 static String sdLine() {
@@ -1600,8 +1617,8 @@ static String sdLine() {
 }
 
 static String lanLine() {
-  if (!S.staConfigured) return String("aus");
-  return S.staConnected ? String(S.staIp) : String("verbinde...");
+  if (!S.staConfigured) return String(TR("off", "aus", "desligado"));
+  return S.staConnected ? String(S.staIp) : String(TR("connecting...", "verbinde...", "conectando..."));
 }
 
 static void screenStatus() {
@@ -1609,7 +1626,7 @@ static void screenStatus() {
   int n = 3;
   static char portLabel[8];
   if (S.ports > 1) {
-    snprintf(portLabel, sizeof(portLabel), "Port %u", selPort + 1);
+    snprintf(portLabel, sizeof(portLabel), TR("Port %u", "Port %u", "Porta %u"), selPort + 1);
     defs[n++] = {portLabel, B_PORT, C_ACCENT};
   }
   contentBegin(HEAD_H, buttonRow(defs, n) - 2);
@@ -1640,11 +1657,11 @@ static void screenStatus() {
   g->drawFastHLine(8, y + 16, W - 16, C_LINE);
 
   rowY = y + 24;
-  row("WLAN", S.apSsid);
+  row(TR("Wi-Fi", "WLAN", "Wi-Fi"), S.apSsid);
   row("IP", S.apIp);
   row("LAN", lanLine());
   row("Clients", clientsLine());
-  row("Akku", batteryLine());
+  row(TR("Battery", "Akku", "Bateria"), batteryLine());
   row("SD", sdLine());
   contentEnd();
 }
@@ -1701,10 +1718,10 @@ static void screenQr(const String &payload, const char *l1, const String &v1, co
 
 static void screenBt() {
   uint8_t s = S.bleState;
-  const char *text = s == Ble::OFF ? "Aus" : s == Ble::ADVERTISING ? "Bereit, wartet auf Verbindung"
-                   : s == Ble::PAIRING ? "Kopplung: PIN am Handy eingeben" : "Verbunden";
+  const char *text = s == Ble::OFF ? TR("Off", "Aus", "Desligado") : s == Ble::ADVERTISING ? TR("Ready, waiting for a connection", "Bereit, wartet auf Verbindung", "Pronto, aguardando conexao")
+                   : s == Ble::PAIRING ? TR("Pairing: enter the PIN on the phone", "Kopplung: PIN am Handy eingeben", "Pareamento: digite o PIN no celular") : TR("Connected", "Verbunden", "Conectado");
   uint32_t color = s == Ble::OFF ? C_DIM : s == Ble::CONNECTED ? C_BLUE : s == Ble::PAIRING ? C_AMBER : C_GREEN;
-  BtnDef def = {s == Ble::OFF ? "Bluetooth einschalten" : "Bluetooth ausschalten", B_BT, C_TEXT};
+  BtnDef def = {s == Ble::OFF ? TR("Switch Bluetooth on", "Bluetooth einschalten", "Ligar o Bluetooth") : TR("Switch Bluetooth off", "Bluetooth ausschalten", "Desligar o Bluetooth"), B_BT, C_TEXT};
   contentBegin(HEAD_H, buttonRow(&def, 1) - 2);
 
   g->setFont(&fonts::DejaVu12);
@@ -1722,34 +1739,34 @@ static void screenBt() {
     g->drawString(pin, 80, rowY);
     rowY += 34;
   }
-  row("Name", S.apSsid);
-  row("Dienst", "Nordic UART (BLE)");
-  row("Port", String(S.portName[0]) + ", " + S.serial[0]);
+  row(TR("Name", "Name", "Nome"), S.apSsid);
+  row(TR("Service", "Dienst", "Servico"), "Nordic UART (BLE)");
+  row(TR("Port", "Port", "Porta"), String(S.portName[0]) + ", " + S.serial[0]);
   contentEnd();
 }
 
 static void screenInfo() {
   int bottom = H - NAV_H;
   if (!S.sdMounted) {
-    BtnDef def = {"SD-Karte einbinden", B_SD, C_TEXT};
+    BtnDef def = {TR("Mount SD card", "SD-Karte einbinden", "Montar cartao SD"), B_SD, C_TEXT};
     bottom = buttonRow(&def, 1) - 2;
   }
   contentBegin(HEAD_H, bottom);
-  String tcp = !S.tcpEnabled ? String("aus")
+  String tcp = !S.tcpEnabled ? String(TR("off", "aus", "desligado"))
              : S.ports > 1 ? ":" + String(RAW_TCP_PORT) + "-" + String(RAW_TCP_PORT + MAX_PORTS - 1)
              : ":" + String(RAW_TCP_PORT);
   char imu[40];
-  if (imuAddr) snprintf(imu, sizeof(imu), "Drehung %u", rot);
-  else strlcpy(imu, "Sensor nicht gefunden", sizeof(imu));
+  if (imuAddr) snprintf(imu, sizeof(imu), TR("rotation %u", "Drehung %u", "rotacao %u"), rot);
+  else strlcpy(imu, TR("sensor not found", "Sensor nicht gefunden", "sensor nao encontrado"), sizeof(imu));
   row("Firmware", String(FW_VERSION) + "  up " + fmtUptime(millis() / 1000));
   row("Host", String(S.hostname) + ".local");
-  row("Hotspot", String(S.apStations) + " Geraete");
+  row("Hotspot", String(S.apStations) + TR(" devices", " Geraete", " dispositivos"));
   row("Clients", clientsLine());
   row("Raw-TCP", tcp);
-  row("Leitstelle", S.c2);
-  row("Akku", batteryLine());
+  row(TR("Center", "Leitstelle", "Central"), S.c2);
+  row(TR("Battery", "Akku", "Bateria"), batteryLine());
   row("SD", sdLine());
-  row("Lage", imu);
+  row(TR("Position", "Lage", "Posicao"), imu);
   row("Board", BOARD_NAME);
   contentEnd();
 }
@@ -1774,21 +1791,21 @@ static uint32_t loadColor(int pct) { return pct >= 85 ? C_RED : pct >= 60 ? C_AM
 
 static void screenSystem() {
   contentBegin(HEAD_H, H - NAV_H);
-  bar("CPU 0", S.cpu[0], String(S.cpu[0]) + " %  Funk + Anzeige", loadColor(S.cpu[0]));
-  bar("CPU 1", S.cpu[1], String(S.cpu[1]) + " %  Bruecke", loadColor(S.cpu[1]));
+  bar("CPU 0", S.cpu[0], String(S.cpu[0]) + TR(" %  radio + display", " %  Funk + Anzeige", " %  radio + tela"), loadColor(S.cpu[0]));
+  bar("CPU 1", S.cpu[1], String(S.cpu[1]) + TR(" %  bridge", " %  Bruecke", " %  ponte"), loadColor(S.cpu[1]));
   int ram = S.heapTotal ? 100 - (int)((uint64_t)S.heapFree * 100 / S.heapTotal) : 0;
-  bar("RAM", ram, String((S.heapTotal - S.heapFree) / 1024) + " von " + String(S.heapTotal / 1024) + " kB", loadColor(ram));
+  bar("RAM", ram, String((S.heapTotal - S.heapFree) / 1024) + TR(" of ", " von ", " de ") + String(S.heapTotal / 1024) + " kB", loadColor(ram));
   if (S.psramTotal) {
     int ps = 100 - (int)((uint64_t)S.psramFree * 100 / S.psramTotal);
-    bar("PSRAM", ps, String((S.psramTotal - S.psramFree) / 1024) + " von " + String(S.psramTotal / 1024) + " kB", C_BLUE);
+    bar("PSRAM", ps, String((S.psramTotal - S.psramFree) / 1024) + TR(" of ", " von ", " de ") + String(S.psramTotal / 1024) + " kB", C_BLUE);
   }
   rowY += 2;
-  row("RAM frei", String(S.heapFree / 1024) + " kB, min. " + String(S.heapMin / 1024) + " kB");
-  row("Block", String(S.heapBlock / 1024) + " kB am Stueck");
-  row("Takt", "Pause " + String(S.loopMs) + " ms, Bild " + String(S.drawMs) + " ms");
-  row("CPU", String(S.cpuMhz) + " MHz" + (S.saver ? ", Sparmodus (Akku)" : ""));
+  row(TR("RAM free", "RAM frei", "RAM livre"), String(S.heapFree / 1024) + " kB, min. " + String(S.heapMin / 1024) + " kB");
+  row("Block", String(S.heapBlock / 1024) + TR(" kB in one piece", " kB am Stueck", " kB contiguos"));
+  row(TR("Timing", "Takt", "Ciclo"), TR("pause ", "Pause ", "pausa ") + String(S.loopMs) + TR(" ms, frame ", " ms, Bild ", " ms, quadro ") + String(S.drawMs) + " ms");
+  row("CPU", String(S.cpuMhz) + " MHz" + (S.saver ? TR(", power saving (battery)", ", Sparmodus (Akku)", ", economia (bateria)") : ""));
   row("Chip", String(S.tempC) + " C,  " + String(S.tasks) + " Tasks");
-  row("Laufzeit", fmtUptime(millis() / 1000));
+  row(TR("Uptime", "Laufzeit", "Ligado ha"), fmtUptime(millis() / 1000));
   contentEnd();
 }
 
@@ -1832,7 +1849,7 @@ static void screenScripts() {
   // a playback is running, or its result has not been dismissed yet
   if (S.playState == Player::RUNNING || (S.playState != Player::IDLE && !playAcked)) {
     bool running = S.playState == Player::RUNNING;
-    BtnDef def = running ? BtnDef{"Stopp", B_STOP, C_RED, 0} : BtnDef{"OK", B_PLAY_ACK, C_TEXT, 0};
+    BtnDef def = running ? BtnDef{TR("Stop", "Stopp", "Parar"), B_STOP, C_RED, 0} : BtnDef{"OK", B_PLAY_ACK, C_TEXT, 0};
     contentBegin(HEAD_H, buttonRow(&def, 1) - 2);
     g->setFont(&fonts::DejaVu18);
     g->setTextColor(C_TEXT);
@@ -1840,7 +1857,7 @@ static void screenScripts() {
     rowY += 26;
     g->setFont(&fonts::DejaVu12);
     g->setTextColor(C_DIM);
-    rowY += wrapped((String("auf ") + S.portName[S.playPort] + ",  Zeile " + S.playLine + " von " + S.playLines).c_str(),
+    rowY += wrapped((String(TR("on ", "auf ", "em ")) + S.portName[S.playPort] + TR(",  line ", ",  Zeile ", ",  linha ") + S.playLine + TR(" of ", " von ", " de ") + S.playLines).c_str(),
                     8, rowY, W - 20) + 6;
     int pct = S.playLines ? S.playLine * 100 / S.playLines : 0;
     g->fillRoundRect(8, rowY, W - 20, 14, 4, C_PANEL);
@@ -1855,7 +1872,7 @@ static void screenScripts() {
 
   int top = HEAD_H + 6, bottom = H - NAV_H - BTN_H - 6;
   if (!S.cfgCount) {
-    centered("Keine Konfigurationen gespeichert", "Anlegen: Weboberflaeche, Reiter Konfig", (HEAD_H + H - NAV_H) / 2);
+    centered(TR("No configurations stored", "Keine Konfigurationen gespeichert", "Nenhuma configuracao salva"), TR("Create them: web interface, tab Config", "Anlegen: Weboberflaeche, Reiter Konfig", "Criar: interface web, aba Config"), (HEAD_H + H - NAV_H) / 2);
     return;
   }
   int rows = listRows(top, bottom), pages = (S.cfgCount + rows - 1) / rows;
@@ -1866,8 +1883,8 @@ static void screenScripts() {
     listRow(idx, top + i * LIST_ROW_H, S.cfg[idx], nullptr, idx == cfgSel, B_CFG_ROW);
   }
   if (cfgSel >= 0 && cfgSel < S.cfgCount) {          // picked: one more tap sends it, on purpose
-    snprintf(label, sizeof(label), "Senden an Port %u", selPort + 1);
-    BtnDef defs[2] = {{label, B_PLAY, C_AMBER, (uint8_t)cfgSel}, {"Abbrechen", B_CFG_CANCEL, C_TEXT, 0}};
+    snprintf(label, sizeof(label), TR("Send to port %u", "Senden an Port %u", "Enviar para a porta %u"), selPort + 1);
+    BtnDef defs[2] = {{label, B_PLAY, C_AMBER, (uint8_t)cfgSel}, {TR("Cancel", "Abbrechen", "Cancelar"), B_CFG_CANCEL, C_TEXT, 0}};
     buttonRow(defs, 2, 1);
     return;
   }
@@ -1880,17 +1897,17 @@ static void screenScripts() {
     defs[n++] = {">", B_LIST_NEXT, C_TEXT, 0};
   }
   if (S.ports > 1) {
-    snprintf(label, sizeof(label), "Port %u", selPort + 1);
+    snprintf(label, sizeof(label), TR("Port %u", "Port %u", "Porta %u"), selPort + 1);
     defs[n++] = {label, B_PORT, C_ACCENT, 0};
   }
   if (n) buttonRow(defs, n, 1);
-  else centered("Antippen, dann senden", nullptr, H - NAV_H - BTN_H / 2 - 2);
+  else centered(TR("Tap one, then send", "Antippen, dann senden", "Toque em um e envie"), nullptr, H - NAV_H - BTN_H / 2 - 2);
 }
 
 // ---- on-screen keyboard (WLAN key). QWERTZ, three layers, ten keys per row.
 static const char *const KB_LAYERS[3][4] = {
-    {"1234567890", "qwertzuiop", "asdfghjkl-", "yxcvbnm._@"},
-    {"!\"#$%&/()=", "QWERTZUIOP", "ASDFGHJKL+", "YXCVBNM,;:"},
+    {"1234567890", TR("qwertyuiop", "qwertzuiop", "qwertyuiop"), "asdfghjkl-", TR("zxcvbnm._@", "yxcvbnm._@", "zxcvbnm._@")},
+    {"!\"#$%&/()=", TR("QWERTYUIOP", "QWERTZUIOP", "QWERTYUIOP"), "ASDFGHJKL+", TR("ZXCVBNM,;:", "YXCVBNM,;:", "ZXCVBNM,;:")},
     {"1234567890", "!\"#$%&/()=", "?+*~'<>|\\^", "{}[]_-.,;:"},
 };
 
@@ -1908,12 +1925,12 @@ static void keyboard(int top) {
   int y = top + 4 * kh + 1, h = kh - 2;
   button(x0 + 1, y, kw * 3 / 2 - 2, h, kbLayer == 1 ? "abc" : "ABC", K_SHIFT, C_ACCENT);
   button(x0 + kw * 3 / 2 + 1, y, kw * 3 / 2 - 2, h, kbLayer == 2 ? "abc" : "#+=", K_SYM, C_ACCENT);
-  button(x0 + kw * 3 + 1, y, kw * 3 - 2, h, "Leer", K_CHAR, C_DIM, ' ');
+  button(x0 + kw * 3 + 1, y, kw * 3 - 2, h, TR("Space", "Leer", "Espaco"), K_CHAR, C_DIM, ' ');
   button(x0 + kw * 6 + 1, y, kw * 2 - 2, h, "<-", K_BKSP, C_AMBER);
   button(x0 + kw * 8 + 1, y, kw * 2 - 2, h, "OK", K_OK, strlen(kbText) >= 8 ? C_GREEN : C_LINE);
 }
 
-static const char *signalText(int rssi) { return rssi >= -60 ? "stark" : rssi >= -75 ? "mittel" : "schwach"; }
+static const char *signalText(int rssi) { return rssi >= -60 ? TR("strong", "stark", "forte") : rssi >= -75 ? TR("medium", "mittel", "medio") : TR("weak", "schwach", "fraco"); }
 
 static void screenSetup() {
   static char pager[12], right[20];
@@ -1929,28 +1946,28 @@ static void screenSetup() {
       g->drawString((shown + "_").c_str(), 10, top + 12);
     } else {
       g->setTextColor(C_DIM);
-      g->drawString(fit("WLAN-Schluessel (8-63 Zeichen)", W - 24).c_str(), 10, top + 12);
+      g->drawString(fit(TR("Wi-Fi key (8-63 characters)", "WLAN-Schluessel (8-63 Zeichen)", "Senha do Wi-Fi (8-63 caracteres)"), W - 24).c_str(), 10, top + 12);
     }
     keyboard(top + 28);
     return;
   }
 
   if (setupMode == SETUP_CONFIRM) {
-    BtnDef defs[2] = {{"Ja", B_CONFIRM, C_AMBER, 0}, {"Abbrechen", B_BACK, C_TEXT, 0}};
+    BtnDef defs[2] = {{TR("Yes", "Ja", "Sim"), B_CONFIRM, C_AMBER, 0}, {TR("Cancel", "Abbrechen", "Cancelar"), B_BACK, C_TEXT, 0}};
     centered(confirm1, confirm2, (HEAD_H + buttonRow(defs, 2, 1)) / 2);
     return;
   }
 
   if (setupMode == SETUP_NETS) {
     int top = HEAD_H + 6, bottom = H - BTN_H - 6;
-    if (S.scanState == 1) centered("Suche Netze ...", nullptr, (top + bottom) / 2);
-    else if (!S.netCount) centered("Kein Netz gefunden", nullptr, (top + bottom) / 2);
+    if (S.scanState == 1) centered(TR("Looking for networks ...", "Suche Netze ...", "Procurando redes ..."), nullptr, (top + bottom) / 2);
+    else if (!S.netCount) centered(TR("No network found", "Kein Netz gefunden", "Nenhuma rede encontrada"), nullptr, (top + bottom) / 2);
     int rows = listRows(top, bottom), pages = max(1, (S.netCount + rows - 1) / rows);
     if (listPage >= pages) listPage = pages - 1;
     for (int i = 0; S.scanState == 2 && i < rows; i++) {
       int idx = listPage * rows + i;
       if (idx >= S.netCount) break;
-      snprintf(right, sizeof(right), "%s%s", S.net[idx].locked ? "" : "offen, ", signalText(S.net[idx].rssi));
+      snprintf(right, sizeof(right), "%s%s", S.net[idx].locked ? "" : TR("open, ", "offen, ", "aberta, "), signalText(S.net[idx].rssi));
       listRow(idx, top + i * LIST_ROW_H, S.net[idx].ssid, right, false, B_NET_ROW);
     }
     BtnDef defs[4];
@@ -1961,7 +1978,7 @@ static void screenSetup() {
       defs[n++] = {pager, B_NONE, C_DIM, 0};
       defs[n++] = {">", B_LIST_NEXT, C_TEXT, 0};
     }
-    defs[n++] = {"Neu suchen", B_SCAN, C_TEXT, 0};
+    defs[n++] = {TR("Search again", "Neu suchen", "Procurar de novo"), B_SCAN, C_TEXT, 0};
     buttonRow(defs, n, 1);
     return;
   }
@@ -1974,7 +1991,7 @@ static void screenSetup() {
   g->setFont(&fonts::DejaVu12);
   g->setTextDatum(lgfx::top_left);
   g->setTextColor(C_DIM);
-  g->drawString("Helligkeit", 8, y);
+  g->drawString(TR("Brightness", "Helligkeit", "Brilho"), 8, y);
   y += 18;
   button(8, y, bw, BTN_H, "-", B_BRIGHT_DOWN, C_TEXT, 0, &fonts::DejaVu24);
   button(right0 - bw, y, bw, BTN_H, "+", B_BRIGHT_UP, C_TEXT, 0, &fonts::DejaVu24);
@@ -1986,50 +2003,50 @@ static void screenSetup() {
   g->setFont(&fonts::DejaVu12);
   g->setTextDatum(lgfx::middle_left);
   g->setTextColor(C_DIM);
-  g->drawString("Display aus", 8, y + BTN_H / 2);
+  g->drawString(TR("Display off", "Display aus", "Apagar tela"), 8, y + BTN_H / 2);
   static char timeout[16];
-  if (!S.timeoutS) strlcpy(timeout, "nie", sizeof(timeout));
-  else if (S.timeoutS < 120) snprintf(timeout, sizeof(timeout), "nach %u s", S.timeoutS);
-  else snprintf(timeout, sizeof(timeout), "nach %u min", S.timeoutS / 60);
+  if (!S.timeoutS) strlcpy(timeout, TR("never", "nie", "nunca"), sizeof(timeout));
+  else if (S.timeoutS < 120) snprintf(timeout, sizeof(timeout), TR("after %u s", "nach %u s", "apos %u s"), S.timeoutS);
+  else snprintf(timeout, sizeof(timeout), TR("after %u min", "nach %u min", "apos %u min"), S.timeoutS / 60);
   button(right0 - 120, y, 120, BTN_H, timeout, B_TIMEOUT);
 
   y += BTN_H + 10;
   g->drawFastHLine(8, y, right0 - 8, C_LINE);
   rowY = y + 8;
-  row("WLAN", !S.staConfigured ? String("aus") : String(S.staSsid));
+  row(TR("Wi-Fi", "WLAN", "Wi-Fi"), !S.staConfigured ? String(TR("off", "aus", "desligado")) : String(S.staSsid));
   if (S.staConfigured)
-    row("Status", S.staConnected ? String("verbunden, ") + S.staIp : String("verbinde ..."), S.staConnected ? C_GREEN : C_AMBER);
+    row(TR("Status", "Status", "Estado"), S.staConnected ? String(TR("connected, ", "verbunden, ", "conectado, ")) + S.staIp : String(TR("connecting ...", "verbinde ...", "conectando ...")), S.staConnected ? C_GREEN : C_AMBER);
   y = rowY + 4;
   if (S.staConfigured) {
     int w = (right0 - 8 - BTN_GAP) / 2;
-    button(8, y, w, BTN_H, "Netz waehlen", B_NET_OPEN);
-    button(8 + w + BTN_GAP, y, w, BTN_H, "WLAN-Client aus", B_ASK_FORGET, C_AMBER);
+    button(8, y, w, BTN_H, TR("Choose network", "Netz waehlen", "Escolher rede"), B_NET_OPEN);
+    button(8 + w + BTN_GAP, y, w, BTN_H, TR("Wi-Fi client off", "WLAN-Client aus", "Cliente Wi-Fi desligado"), B_ASK_FORGET, C_AMBER);
   } else {
-    button(8, y, right0 - 8, BTN_H, "Netz waehlen", B_NET_OPEN);
+    button(8, y, right0 - 8, BTN_H, TR("Choose network", "Netz waehlen", "Escolher rede"), B_NET_OPEN);
   }
   y += BTN_H + 10;
   g->drawFastHLine(8, y, right0 - 8, C_LINE);
   if (S.batMeasured) {
     // battery calibration: the voltage measured now becomes 100 % or 0 % (power.cpp: setCal)
     rowY = y + 8;
-    row("Akku", batteryLine());
-    row("0 / 100 %", String(S.batEmptyMv) + " / " + String(S.batFullMv) + " mV" + (S.batCal ? ", kalibriert" : ""));
+    row(TR("Battery", "Akku", "Bateria"), batteryLine());
+    row("0 / 100 %", String(S.batEmptyMv) + " / " + String(S.batFullMv) + " mV" + (S.batCal ? TR(", calibrated", ", kalibriert", ", calibrado") : ""));
     y = rowY + 4;
     if (S.batPresent) {
       int w = (right0 - 8 - BTN_GAP) / 2;
-      button(8, y, w, BTN_H, "Jetzt voll", B_ASK_CAL_FULL);
-      button(8 + w + BTN_GAP, y, w, BTN_H, "Jetzt leer", B_ASK_CAL_EMPTY);
+      button(8, y, w, BTN_H, TR("Full now", "Jetzt voll", "Cheia agora"), B_ASK_CAL_FULL);
+      button(8 + w + BTN_GAP, y, w, BTN_H, TR("Empty now", "Jetzt leer", "Vazia agora"), B_ASK_CAL_EMPTY);
       y += BTN_H + BTN_GAP;
     }
     if (S.batCal) {
-      button(8, y, right0 - 8, BTN_H, "Kalibrierung loeschen", B_ASK_CAL_RESET, C_AMBER);
+      button(8, y, right0 - 8, BTN_H, TR("Clear calibration", "Kalibrierung loeschen", "Apagar calibracao"), B_ASK_CAL_RESET, C_AMBER);
       y += BTN_H + BTN_GAP;
     }
     y += 10 - BTN_GAP;
     g->drawFastHLine(8, y, right0 - 8, C_LINE);
   }
   y += 10;
-  button(8, y, right0 - 8, BTN_H, "Ausschalten", B_ASK_OFF, C_RED);
+  button(8, y, right0 - 8, BTN_H, TR("Switch off", "Ausschalten", "Desligar"), B_ASK_OFF, C_RED);
   rowY = y + BTN_H;
   contentEnd();
 }
@@ -2075,18 +2092,18 @@ static void drawConsoleDialog() {
   g->setTextDatum(lgfx::top_center);
   g->setFont(&fonts::DejaVu18);
   g->setTextColor(C_TEXT);
-  g->drawString("Fernkonsole", W / 2, y + 8);
+  g->drawString(TR("Remote console", "Fernkonsole", "Console remoto"), W / 2, y + 8);
   char text[112];
-  if (ask) snprintf(text, sizeof(text), "Die Leitstelle moechte %s fuer %u min bedienen. Erlauben?", S.conPort, S.conMinutes);
-  else snprintf(text, sizeof(text), "Die Leitstelle bedient %s, noch %s.", S.conPort, S.conLeft);
+  if (ask) snprintf(text, sizeof(text), TR("The control center wants to operate %s for %u min. Allow?", "Die Leitstelle moechte %s fuer %u min bedienen. Erlauben?", "A central quer operar %s por %u min. Permitir?"), S.conPort, S.conMinutes);
+  else snprintf(text, sizeof(text), TR("The control center is operating %s, %s left.", "Die Leitstelle bedient %s, noch %s.", "A central esta operando %s, restam %s."), S.conPort, S.conLeft);
   g->setFont(&fonts::DejaVu12);
   g->setTextColor(C_DIM);
   String lines[3];
   int n = wrap(text, w - 20, lines, 3);
   for (int i = 0; i < n; i++) g->drawString(lines[i].c_str(), W / 2, y + 38 + i * LINE_H);
   int bw = (w - 3 * BTN_GAP) / 2, by = y + h - BTN_H - 8;
-  button(x + BTN_GAP, by, bw, BTN_H, ask ? "Ablehnen" : "Zurueck", ask ? B_CON_DENY : B_CON_BACK);
-  button(x + 2 * BTN_GAP + bw, by, bw, BTN_H, ask ? "Erlauben" : "Beenden", ask ? B_CON_ALLOW : B_CON_END, ask ? C_GREEN : C_RED);
+  button(x + BTN_GAP, by, bw, BTN_H, ask ? TR("Refuse", "Ablehnen", "Recusar") : TR("Back", "Zurueck", "Voltar"), ask ? B_CON_DENY : B_CON_BACK);
+  button(x + 2 * BTN_GAP + bw, by, bw, BTN_H, ask ? TR("Allow", "Erlauben", "Permitir") : TR("End", "Beenden", "Encerrar"), ask ? B_CON_ALLOW : B_CON_END, ask ? C_GREEN : C_RED);
 }
 
 static void draw(uint32_t now) {
@@ -2102,11 +2119,11 @@ static void draw(uint32_t now) {
   } else switch (screen) {
     case S_TERM: screenTerm(); break;
     case S_WIFI:
-      screenQr("WIFI:T:WPA;S:" + qrEscape(S.apSsid) + ";P:" + qrEscape(S.apPass) + ";;", "WLAN", S.apSsid, "Passwort",
+      screenQr("WIFI:T:WPA;S:" + qrEscape(S.apSsid) + ";P:" + qrEscape(S.apPass) + ";;", TR("Wi-Fi", "WLAN", "Wi-Fi"), S.apSsid, TR("Password", "Passwort", "Senha"),
                S.apPass);
       break;
     case S_URL:
-      screenQr(String("http://") + S.apIp + "/", "Web-UI", S.apIp, S.staConnected ? "im LAN" : "Name",
+      screenQr(String("http://") + S.apIp + "/", TR("Web UI", "Web-UI", "Web UI"), S.apIp, S.staConnected ? TR("in the LAN", "im LAN", "na LAN") : TR("Name", "Name", "Nome"),
                S.staConnected ? String(S.staIp) : String(S.hostname) + ".local");
       break;
     case S_BT:   screenBt(); break;
@@ -2362,7 +2379,7 @@ void message(const char *line1, const char *line2, uint32_t ms) {
 // first - the panel, the backlight, the accelerometer, the card.
 void powerOff(const char *reason, uint32_t wakeAfterS) {
   Serial.printf("[PWR]  Ausschalten (%s), Akku %u mV. Einschalten: BOOT-Taste%s\n", reason, Power::mv(),
-                wakeAfterS ? " oder Zeitablauf" : "");
+                wakeAfterS ? TR(" or timer", " oder Zeitablauf", " ou temporizador") : "");
   Player::stop();
   Sd::end();
   if (ready) {

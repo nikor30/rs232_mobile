@@ -1,93 +1,96 @@
 <!doctype html>
-<html lang="de">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
-<title>RS232-Leitstelle</title>
+<title>RS232 Control Center</title>
 <link rel="stylesheet" href="/ui/xterm.css">
 <link rel="stylesheet" href="/ui/style.css">
 </head>
 <body>
 <header>
-  <a id="back" class="back" href="#geraete">Geräte</a>
-  <h1 id="title">RS232-Leitstelle</h1>
+  <a id="back" class="back" href="#devices">Devices</a>
+  <h1 id="title">RS232 Control Center</h1>
   <!-- One list of places, shown twice: in the bar on a wide screen, as a tab bar under the thumb on a narrow one. -->
-  <nav id="nav" aria-label="Bereiche" hidden>
-    <a href="#geraete" data-view="geraete">
+  <nav id="nav" aria-label="Sections" hidden>
+    <a href="#devices" data-view="devices">
       <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="11" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
-      <span>Geräte</span></a>
-    <a href="#benutzer" data-view="benutzer">
+      <span>Devices</span></a>
+    <a href="#users" data-view="users">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg>
-      <span>Benutzer</span></a>
-    <a href="#protokoll" data-view="protokoll">
+      <span>Users</span></a>
+    <a href="#audit" data-view="audit">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r=".6"/><circle cx="4" cy="12" r=".6"/><circle cx="4" cy="18" r=".6"/></svg>
-      <span>Protokoll</span></a>
+      <span>Audit log</span></a>
     <a href="#server" data-view="server">
       <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>
       <span>Server</span><i id="navMark" class="mark" hidden></i></a>
   </nav>
+  <select id="lang" aria-label="Language">
+    <option value="en">EN</option><option value="de">DE</option><option value="pt">PT</option>
+  </select>
   <span id="whoami" class="dim"></span>
-  <button id="logout" class="btn small" hidden>Abmelden</button>
+  <button id="logout" class="btn small" hidden>Sign out</button>
 </header>
 
 <main id="login" hidden>
   <form id="loginForm" class="card narrow">
-    <h2>Anmelden</h2>
-    <label>Benutzer
+    <h2>Sign in</h2>
+    <label>Users
       <input id="loginName" autocomplete="username" autocapitalize="none" required>
     </label>
-    <label>Passwort
+    <label>Password
       <input id="loginPass" type="password" autocomplete="current-password" required>
     </label>
-    <label>Code aus der Authenticator-App
+    <label>Code from the authenticator app
       <input id="loginCode" inputmode="numeric" autocomplete="one-time-code" maxlength="7" required>
     </label>
     <p id="loginErr" class="err" hidden></p>
     <div class="row left wrap">
-      <button class="btn primary" type="submit">Anmelden</button>
-      <a id="entraLogin" class="btn" href="/auth/entra/login" hidden>Mit Microsoft anmelden</a>
+      <button class="btn primary" type="submit">Sign in</button>
+      <a id="entraLogin" class="btn" href="/auth/entra/login" hidden>Sign in with Microsoft</a>
     </div>
   </form>
 
   <details id="setupBox" class="card narrow">
-    <summary>Konto einrichten</summary>
+    <summary>Set up an account</summary>
     <form id="setupForm">
-      <p class="dim">Für ein neues oder zurückgesetztes Konto. Den Einrichtungscode gibt es von einem Administrator; er gilt einen Tag.</p>
-      <label>Benutzer
+      <p class="dim">For a new account or one that was reset. An administrator hands out the setup code; it is valid for one day.</p>
+      <label>Users
         <input id="setupName" autocomplete="username" autocapitalize="none" required>
       </label>
-      <label>Einrichtungscode
+      <label>Setup code
         <input id="setupCode" autocomplete="off" autocapitalize="characters" required>
       </label>
-      <label>Neues Passwort (mindestens 12 Zeichen)
+      <label>New password (at least 12 characters)
         <input id="setupPass" type="password" autocomplete="new-password" minlength="12" required>
       </label>
-      <label>Passwort wiederholen
+      <label>Repeat the password
         <input id="setupPass2" type="password" autocomplete="new-password" minlength="12" required>
       </label>
-      <button class="btn primary" type="submit">Weiter</button>
+      <button class="btn primary" type="submit">Continue</button>
     </form>
     <form id="totpForm" hidden>
-      <p>Diesen Code mit einer Authenticator-App scannen (oder den Schlüssel von Hand eintragen), dann den sechsstelligen Code aus der App eintippen.</p>
+      <p>Scan this code with an authenticator app (or enter the key by hand), then type in the six-digit code from the app.</p>
       <canvas id="totpQr" width="10" height="10"></canvas>
-      <p>Schlüssel: <code id="totpSecret"></code></p>
-      <label>Code aus der App
+      <p>Key: <code id="totpSecret"></code></p>
+      <label>Code from the app
         <input id="totpCode" inputmode="numeric" autocomplete="one-time-code" maxlength="7" required>
       </label>
-      <button class="btn primary" type="submit">Konto aktivieren</button>
+      <button class="btn primary" type="submit">Activate the account</button>
     </form>
     <p id="setupErr" class="err" hidden></p>
   </details>
 
   <details id="tokenBox" class="card narrow" hidden>
-    <summary>Mit dem Admin-Token</summary>
+    <summary>With the admin token</summary>
     <form id="tokenForm">
-      <label>Admin-Token
+      <label>Admin token
         <input id="adminToken" type="password" autocomplete="off" required>
       </label>
-      <button class="btn" type="submit">Anmelden</button>
-      <p class="dim">Für das erste Konto und für Notfälle. Das Token bleibt nur in diesem Browser-Tab und wird mit jedem Aufruf an diesen Server geschickt.</p>
+      <button class="btn" type="submit">Sign in</button>
+      <p class="dim">For the first account and for emergencies. The token stays in this browser tab only and is sent to this server with every request.</p>
     </form>
   </details>
 </main>
@@ -95,75 +98,75 @@
 <main id="app" hidden>
   <p id="alert" class="banner bad" role="alert" hidden></p>
 
-  <div id="v-geraete" class="view split" hidden>
+  <div id="v-devices" class="view split" hidden>
     <section id="listCard" class="card">
       <div class="row">
-        <h2 class="dup">Geräte</h2>
-        <button id="invite" class="btn primary">Gerät einladen</button>
+        <h2 class="dup">Devices</h2>
+        <button id="invite" class="btn primary">Invite a device</button>
       </div>
       <div id="devices" class="list" role="list"></div>
-      <p id="noDevices" class="dim" hidden>Noch kein Gerät. Mit „Gerät einladen“ beginnt die Anmeldung.</p>
+      <p id="noDevices" class="dim" hidden>No device yet. “Invite a device” starts the enrollment.</p>
     </section>
 
-    <p id="pick" class="card dim empty">Ein Gerät aus der Liste wählen.</p>
+    <p id="pick" class="card dim empty">Pick a device from the list.</p>
 
     <section id="detail" class="card" hidden>
       <div class="row">
         <h2 id="dName"></h2>
         <span id="dState" class="badge"></span>
       </div>
-      <p id="dOldKey" class="banner warn" hidden>Dieses Gerät hat den neuen Serverschlüssel noch nicht bestätigt. Es bekommt ihn, sobald es sich meldet.</p>
+      <p id="dOldKey" class="banner warn" hidden>This device has not confirmed the new server key yet. It receives it as soon as it reports in.</p>
       <table class="kv">
-        <tr><th>Geräte-ID</th><td id="dId" class="mono"></td></tr>
-        <tr><th>Fingerabdruck</th><td id="dFp" class="mono"></td></tr>
-        <tr><th>Angemeldet</th><td id="dEnrolled"></td></tr>
-        <tr><th>Zuletzt gesehen</th><td id="dSeen"></td></tr>
-        <tr><th>Gerät</th><td id="dInfo"></td></tr>
-        <tr><th>Meldet</th><td id="dStatus"></td></tr>
+        <tr><th>Device ID</th><td id="dId" class="mono"></td></tr>
+        <tr><th>Fingerprint</th><td id="dFp" class="mono"></td></tr>
+        <tr><th>Enrolled</th><td id="dEnrolled"></td></tr>
+        <tr><th>Last seen</th><td id="dSeen"></td></tr>
+        <tr><th>Device</th><td id="dInfo"></td></tr>
+        <tr><th>Reports</th><td id="dStatus"></td></tr>
       </table>
 
       <form id="approveForm" hidden>
-        <h3>Bestätigen</h3>
-        <p>Das Gerät zeigt einen sechsstelligen Code – auf seinem Display (Seite Info) und in seiner Weboberfläche. Hier eintippen, was <b>dort</b> steht.</p>
+        <h3>Confirm</h3>
+        <p>The device shows a six-digit code – on its display (page Info) and in its web interface. Type in here what it says there.</p>
         <div class="row left wrap">
-          <input id="sas" class="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="000000" autocomplete="off" aria-label="Code vom Gerät" required>
-          <button class="btn primary" type="submit">Bestätigen</button>
+          <input id="sas" class="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="000000" autocomplete="off" aria-label="Code from the device" required>
+          <button class="btn primary" type="submit">Confirm</button>
         </div>
-        <p class="dim">Fünf falsche Eingaben verwerfen die Anmeldung.</p>
+        <p class="dim">Five wrong entries discard the enrollment.</p>
       </form>
 
       <div id="commands" hidden>
-        <h3>Aufträge</h3>
+        <h3>Commands</h3>
         <div class="row left wrap">
           <button class="btn" data-cmd="ping">Ping</button>
-          <button class="btn" data-cmd="status">Zustand</button>
-          <button class="btn" data-cmd="settings">Einstellungen</button>
-          <button class="btn" data-cmd="configs">Konfigurationen</button>
-          <button class="btn warn" data-cmd="reboot">Neustart</button>
+          <button class="btn" data-cmd="status">Status</button>
+          <button class="btn" data-cmd="settings">Settings</button>
+          <button class="btn" data-cmd="configs">Configurations</button>
+          <button class="btn warn" data-cmd="reboot">Restart</button>
         </div>
         <form id="playForm" class="row left wrap">
-          <label class="grow">Konfiguration abspielen
+          <label class="grow">Play a configuration
             <input id="playName" list="playNames" maxlength="48" placeholder="Name" required>
             <datalist id="playNames"></datalist>
           </label>
           <label>Port
             <select id="playPort"><option>1</option><option>2</option><option>3</option><option>4</option></select>
           </label>
-          <button class="btn warn" type="submit">Abspielen</button>
+          <button class="btn warn" type="submit">Play</button>
         </form>
-        <p class="dim">„Neustart“ und „Abspielen“ führt das Gerät nur aus, wenn das an ihm selbst erlaubt wurde (Menü → Netz → Leitstelle).</p>
+        <p class="dim">The device carries out “Restart” and “Play” only if that was allowed at the device itself (Menu → Network → Control center).</p>
       </div>
 
       <div id="console" hidden>
-        <h3>Fernkonsole</h3>
+        <h3>Remote console</h3>
         <form id="conForm" class="row left wrap">
           <label>Port
             <select id="conPort"><option>1</option><option>2</option><option>3</option><option>4</option></select>
           </label>
-          <label>Dauer
+          <label>Duration
             <select id="conMinutes"><option value="5">5 min</option><option value="15" selected>15 min</option><option value="30">30 min</option><option value="60">60 min</option></select>
           </label>
-          <button class="btn warn" type="submit">Konsole anfragen</button>
+          <button class="btn warn" type="submit">Request console</button>
         </form>
         <p id="conState" class="dim"></p>
         <div id="conBox" hidden>
@@ -172,52 +175,52 @@
             <span id="conInfo" class="dim"></span>
             <span class="acts">
               <button id="conBreak" class="btn">BREAK</button>
-              <button id="conClose" class="btn danger">Beenden</button>
+              <button id="conClose" class="btn danger">End</button>
             </span>
           </div>
         </div>
-        <p class="dim">Jede Sitzung muss am Gerät auf dem Touch-Display erlaubt werden und endet nach der angefragten Zeit von selbst. Wer am Gerät steht, kann sie jederzeit beenden. Dieser Server leitet die Zeichen durch und könnte sie mitlesen; aufgezeichnet wird nur, wann eine Sitzung lief und wie viele Zeichen durchgingen.</p>
+        <p class="dim">Every session has to be allowed on the device's touch display and ends by itself after the requested time. Whoever stands at the device can end it at any moment. This server passes the characters through and could read them; only when a session ran and how many characters passed is recorded.</p>
         <table id="conLog" class="stack" hidden>
-          <thead><tr><th>Nr.</th><th>Port</th><th>Beginn</th><th>Dauer</th><th>Ende</th><th>Zeichen hin / zurück</th></tr></thead>
+          <thead><tr><th>No.</th><th>Port</th><th>Start</th><th>Duration</th><th>End</th><th>Characters in / out</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
 
-      <h3 id="histTitle" hidden>Verlauf</h3>
+      <h3 id="histTitle" hidden>History</h3>
       <table id="history" class="stack" hidden>
-        <thead><tr><th>Nr.</th><th>Auftrag</th><th>Zustand</th><th>Wann</th><th>Antwort</th></tr></thead>
+        <thead><tr><th>No.</th><th>Command</th><th>Status</th><th>When</th><th>Answer</th></tr></thead>
         <tbody></tbody>
       </table>
 
       <div class="row end">
-        <button id="revoke" class="btn danger">Gerät sperren</button>
+        <button id="revoke" class="btn danger">Revoke device</button>
       </div>
     </section>
   </div>
 
-  <div id="v-benutzer" class="view" hidden>
+  <div id="v-users" class="view" hidden>
     <section class="card">
       <div class="row">
-        <h2 class="dup">Benutzer</h2>
-        <button id="addUser" class="btn primary">Benutzer anlegen</button>
+        <h2 class="dup">Users</h2>
+        <button id="addUser" class="btn primary">Add a user</button>
       </div>
       <table id="users" class="stack">
-        <thead><tr><th>Name</th><th>Anmeldung</th><th>Zustand</th><th>Zuletzt angemeldet</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th>Sign-in</th><th>Status</th><th>Last sign-in</th><th></th></tr></thead>
         <tbody></tbody>
       </table>
-      <p id="noUsers" class="dim" hidden>Noch kein Konto. Solange es keins gibt, kommt man nur mit dem Admin-Token herein.</p>
+      <p id="noUsers" class="dim" hidden>No account yet. As long as there is none, the admin token is the only way in.</p>
     </section>
   </div>
 
-  <div id="v-protokoll" class="view" hidden>
+  <div id="v-audit" class="view" hidden>
     <section class="card">
       <div class="row">
-        <h2 class="dup">Protokoll</h2>
-        <button id="auditReload" class="btn small">Aktualisieren</button>
+        <h2 class="dup">Audit log</h2>
+        <button id="auditReload" class="btn small">Refresh</button>
       </div>
-      <p class="dim">Wer was wann getan oder versucht hat – Anmeldungen und alles, was etwas verändert. Die letzten 200 Einträge.</p>
+      <p class="dim">Who did or tried what, and when – sign-ins and everything that changes something. The last 200 entries.</p>
       <table id="audit" class="stack">
-        <thead><tr><th>Wann</th><th>Wer</th><th>Von</th><th>Was</th><th>Ziel</th><th></th></tr></thead>
+        <thead><tr><th>When</th><th>Who</th><th>From</th><th>What</th><th>Target</th><th></th></tr></thead>
         <tbody></tbody>
       </table>
     </section>
@@ -226,41 +229,41 @@
   <div id="v-server" class="view" hidden>
     <section class="card">
       <div class="row">
-        <h2>Zustand</h2>
+        <h2>Status</h2>
         <span id="stState" class="badge"></span>
       </div>
       <p id="stError" class="err" hidden></p>
       <dl id="tiles" class="tiles">
-        <div><dt>Verbunden</dt><dd id="stActive">–</dd></div>
-        <div><dt>Warten auf Bestätigung</dt><dd id="stPending">–</dd></div>
-        <div><dt>Still</dt><dd id="stSilent">–</dd></div>
-        <div><dt>Gesperrt</dt><dd id="stRevoked">–</dd></div>
-        <div><dt>Fernkonsolen offen</dt><dd id="stConsoles">–</dd></div>
-        <div><dt>Angemeldete Browser</dt><dd id="stSignedIn">–</dd></div>
-        <div><dt>Abgewiesene Anfragen</dt><dd id="stDenied">–</dd></div>
-        <div><dt>Läuft seit</dt><dd id="stUptime">–</dd></div>
+        <div><dt>Connected</dt><dd id="stActive">–</dd></div>
+        <div><dt>Waiting for confirmation</dt><dd id="stPending">–</dd></div>
+        <div><dt>Silent</dt><dd id="stSilent">–</dd></div>
+        <div><dt>Revoked</dt><dd id="stRevoked">–</dd></div>
+        <div><dt>Remote consoles open</dt><dd id="stConsoles">–</dd></div>
+        <div><dt>Browsers signed in</dt><dd id="stSignedIn">–</dd></div>
+        <div><dt>Requests turned away</dt><dd id="stDenied">–</dd></div>
+        <div><dt>Running for</dt><dd id="stUptime">–</dd></div>
       </dl>
       <p id="stNote" class="dim"></p>
     </section>
 
     <section class="card">
-      <h2>Serverschlüssel</h2>
+      <h2>Server key</h2>
       <table class="kv">
-        <tr><th>Adresse für Geräte</th><td id="srvUrl" class="mono"></td></tr>
-        <tr><th>Fingerabdruck</th><td id="srvFp" class="mono"></td></tr>
+        <tr><th>Address for devices</th><td id="srvUrl" class="mono"></td></tr>
+        <tr><th>Fingerprint</th><td id="srvFp" class="mono"></td></tr>
       </table>
       <div id="keyChange" hidden>
-        <p class="banner warn"><b>Der Schlüssel wird gewechselt.</b> <span id="kcText"></span></p>
+        <p class="banner warn"><b>The key is being changed.</b> <span id="kcText"></span></p>
         <table class="kv">
-          <tr><th>Alter Fingerabdruck</th><td id="kcOld" class="mono"></td></tr>
-          <tr><th>Gilt noch bis</th><td id="kcUntil"></td></tr>
-          <tr><th>Warten noch</th><td id="kcWaiting"></td></tr>
+          <tr><th>Old fingerprint</th><td id="kcOld" class="mono"></td></tr>
+          <tr><th>Valid until</th><td id="kcUntil"></td></tr>
+          <tr><th>Still waiting</th><td id="kcWaiting"></td></tr>
         </table>
       </div>
-      <p class="dim">An diesem Schlüssel erkennen die Geräte den Server. Bei einem Wechsel erfährt jedes Gerät den neuen Schlüssel, sobald es sich meldet; bis dahin gilt für es der alte weiter.</p>
+      <p class="dim">Devices recognise the server by this key. When it changes, every device learns the new key as soon as it reports in; until then the old one still counts for it.</p>
       <div class="row end wrap">
-        <button id="kcEnd" class="btn danger" hidden>Wechsel jetzt beenden</button>
-        <button id="kcStart" class="btn warn">Schlüssel wechseln</button>
+        <button id="kcEnd" class="btn danger" hidden>End the change now</button>
+        <button id="kcStart" class="btn warn">Change key</button>
       </div>
     </section>
   </div>
@@ -270,85 +273,86 @@
   <h2 id="askTitle"></h2>
   <p id="askText" class="pre"></p>
   <div class="row end wrap">
-    <button id="askNo" class="btn">Abbrechen</button>
+    <button id="askNo" class="btn">Cancel</button>
     <button id="askYes" class="btn primary"></button>
   </div>
 </dialog>
 
 <dialog id="rotateDlg">
   <form id="rotateForm">
-    <h2>Serverschlüssel wechseln</h2>
-    <p>Der Server bekommt einen neuen Schlüssel. Jedes Gerät erfährt ihn bei seiner nächsten Meldung und wechselt von selbst.</p>
+    <h2>Change the server key</h2>
+    <p>The server gets a new key. Every device learns it the next time it reports in and switches by itself.</p>
     <ul>
-      <li>Geräte, die sich in der Frist nicht melden, müssen danach neu angemeldet werden.</li>
-      <li>Offene Einladungen verfallen.</li>
-      <li>Wurde der alte Schlüssel gestohlen, reicht das nicht: dann den Wechsel sofort beenden und alle Geräte neu anmelden.</li>
+      <li>Devices that do not report in within the period have to be enrolled again afterwards.</li>
+      <li>Open invitations become void.</li>
+      <li>If the old key was stolen, this is not enough: end the change at once and enroll every device again.</li>
     </ul>
-    <label>Der alte Schlüssel gilt noch
-      <select id="rotateDays"><option value="7">7 Tage</option><option value="30" selected>30 Tage</option><option value="90">90 Tage</option><option value="365">365 Tage</option></select>
+    <label>The old key stays valid for
+      <select id="rotateDays"><option value="7">7 days</option><option value="30" selected>30 days</option><option value="90">90 days</option><option value="365">365 days</option></select>
     </label>
     <p id="rotateErr" class="err" hidden></p>
     <div class="row end wrap">
-      <button id="rotateCancel" class="btn" type="button">Abbrechen</button>
-      <button class="btn primary danger" type="submit">Schlüssel wechseln</button>
+      <button id="rotateCancel" class="btn" type="button">Cancel</button>
+      <button class="btn primary danger" type="submit">Change key</button>
     </div>
   </form>
 </dialog>
 
 <dialog id="userDlg">
   <form id="userForm">
-    <h2>Benutzer anlegen</h2>
+    <h2>Add a user</h2>
     <label>Name
       <input id="userName" autocomplete="off" autocapitalize="none" required>
     </label>
-    <label>Anmeldung
+    <label>Sign-in
       <select id="userKind">
-        <option value="local">Passwort und Authenticator-App</option>
+        <option value="local">Password and authenticator app</option>
         <option value="entra">Microsoft Entra ID</option>
       </select>
     </label>
-    <label id="userEntraRow" hidden>Anmeldename bei Microsoft (name@firma.de) oder Objekt-ID
+    <label id="userEntraRow" hidden>Microsoft sign-in name (name@company.com) or object ID
       <input id="userEntra" autocomplete="off" autocapitalize="none">
     </label>
     <p id="userErr" class="err" hidden></p>
     <div class="row end wrap">
-      <button id="userCancel" class="btn" type="button">Abbrechen</button>
-      <button class="btn primary" type="submit">Anlegen</button>
+      <button id="userCancel" class="btn" type="button">Cancel</button>
+      <button class="btn primary" type="submit">Add</button>
     </div>
   </form>
 </dialog>
 
 <dialog id="codeDlg">
-  <h2>Einrichtungscode</h2>
-  <p>Für <b id="codeFor"></b>. Diesen Code auf sicherem Weg weitergeben; er gilt einen Tag und wird nur jetzt gezeigt.</p>
+  <p><span>Setup code for</span> <b id="codeFor"></b></p>
+  <p>Pass this code on by a safe route; it is valid for one day and is shown only now.</p>
   <p><code id="codeText" class="big"></code></p>
-  <p class="dim">Auf der Anmeldeseite unter „Konto einrichten“ wählt die Person damit ihr Passwort und verbindet ihre Authenticator-App.</p>
+  <p class="dim">On the sign-in page, under “Set up an account”, the person uses it to choose a password and connect an authenticator app.</p>
   <div class="row end">
-    <button id="codeClose" class="btn primary">Schließen</button>
+    <button id="codeClose" class="btn primary">Close</button>
   </div>
 </dialog>
 
 <dialog id="inviteDlg">
-  <h2>Gerät einladen</h2>
+  <h2>Invite a device</h2>
   <ol>
-    <li>Am Gerät den WLAN-Client verbinden – darüber erreicht es diesen Server.</li>
-    <li>Mit dem Handy in den Hotspot des Geräts gehen und den Code scannen. Die Weboberfläche des Geräts öffnet sich mit dem Token; dort „Anmelden“ tippen.</li>
-    <li>Das Gerät erscheint hier als „wartet“. Den Code von seinem Display eintippen.</li>
+    <li>Connect the device's Wi-Fi client – that is how it reaches this server.</li>
+    <li>Join the device's hotspot with a phone and scan the code. The device's web interface opens with the token; tap “Enroll” there.</li>
+    <li>The device shows up here as “waiting”. Type in the code from its display.</li>
   </ol>
   <canvas id="qr" width="10" height="10"></canvas>
-  <label>Oder das Token von Hand einfügen (Menü → Netz → Leitstelle)
+  <label>Or paste the token by hand (Menu → Network → Control center)
     <textarea id="tokenText" rows="4" readonly></textarea>
   </label>
   <div class="row wrap">
     <span id="tokenExp" class="dim"></span>
     <span class="acts">
-      <button id="copyToken" class="btn">Kopieren</button>
-      <button id="closeInvite" class="btn primary">Schließen</button>
+      <button id="copyToken" class="btn">Copy</button>
+      <button id="closeInvite" class="btn primary">Close</button>
     </span>
   </div>
 </dialog>
 
 <div id="toast" hidden></div>
+<script src="/ui/i18n.js"></script>
 <script src="/ui/qrcode.js"></script>
 <script src="/ui/xterm-csp.js"></script>
 <script src="/ui/xterm.js"></script>

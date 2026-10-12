@@ -184,7 +184,7 @@ func open(b backend, first *data) (*Store, error) {
 		for _, c := range d.Consoles {
 			if c.End == nil {
 				now := s.now()
-				c.End, c.Reason = &now, "Server neu gestartet"
+				c.End, c.Reason = &now, "server restarted"
 				s.ch.con(d.ID, c.ID)
 			}
 		}

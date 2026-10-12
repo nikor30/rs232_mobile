@@ -1,4 +1,5 @@
 #include "net.h"
+#include "lang.h"
 #include "config.h"
 #include "settings.h"
 #include "serial_bridge.h"
@@ -154,7 +155,7 @@ static void tcpQueue(uint8_t p, const uint8_t *d, size_t n) {
       if (millis() - tcpLostMs[p] > 5000) {
         tcpLostMs[p] = millis();
         Serial.printf("[TCP]  Port %u: Sendepuffer voll, %u Byte verworfen\n", p + 1, (unsigned)(n - i));
-        onMessage(Bridge::prefix(p) + "TCP-Verbindung zu langsam: " + String((unsigned)(n - i)) + " Byte verworfen");
+        onMessage(Bridge::prefix(p) + TR("TCP connection too slow: ", "TCP-Verbindung zu langsam: ", "Conexão TCP lenta demais: ") + String((unsigned)(n - i)) + TR(" bytes dropped", " Byte verworfen", " bytes descartados"));
       }
       return;
     }
@@ -230,14 +231,14 @@ static const char *authName(uint8_t a) {
 static String reasonText(uint8_t r) {
   const char *t;
   switch (r) {
-    case 1: t = "nicht angegeben"; break;
+    case 1: t = TR("not given", "nicht angegeben", "não informado"); break;
     case 2: t = "Authentifizierung abgelaufen"; break;
     case 4: t = "Verbindung abgelaufen"; break;
-    case 15: t = "Schlüsselaustausch fehlgeschlagen (Passwort falsch?)"; break;
-    case 16: t = "Gruppenschlüssel-Timeout"; break;
-    case 23: t = "802.1X abgelehnt (Zertifikat/Identität prüfen)"; break;
+    case 15: t = TR("Key exchange failed (wrong password?)", "Schlüsselaustausch fehlgeschlagen (Passwort falsch?)", "Falha na troca de chaves (senha errada?)"); break;
+    case 16: t = TR("Group key timeout", "Gruppenschlüssel-Timeout", "Tempo esgotado na chave de grupo"); break;
+    case 23: t = TR("802.1X refused (check certificate/identity)", "802.1X abgelehnt (Zertifikat/Identität prüfen)", "802.1X recusado (verifique certificado/identidade)"); break;
     case 24: t = "802.1X: Cipher abgelehnt"; break;
-    case 201: t = "Netz nicht gefunden"; break;
+    case 201: t = TR("Network not found", "Netz nicht gefunden", "Rede não encontrada"); break;
     case 202: t = "Anmeldung abgelehnt"; break;
     case 203: t = "Association abgelehnt"; break;
     case 204: t = "Handshake-Timeout"; break;
@@ -487,7 +488,7 @@ static bool validHostname(const String &h) {
 static void handlePostSettings() {
   if (!guard()) return;
   JsonDocument d;
-  if (deserializeJson(d, http.arg("plain"))) return sendJson(400, "{\"ok\":false,\"error\":\"JSON ungültig\"}");
+  if (deserializeJson(d, http.arg("plain"))) return sendJson(400, TR("{\"ok\":false,\"error\":\"invalid JSON\"}", "{\"ok\":false,\"error\":\"JSON ungültig\"}", "{\"ok\":false,\"error\":\"JSON inválido\"}"));
 
   Settings n = settings;
   if (d["apSsid"].is<const char *>()) n.apSsid = d["apSsid"].as<String>();
@@ -539,16 +540,16 @@ static void handlePostSettings() {
   if (n.batType != settings.batType || n.batDiv != settings.batDiv || n.batPin != settings.batPin) n.batEmptyMv = n.batFullMv = 0;
 
   const char *err = nullptr;
-  if (n.apSsid.isEmpty() || n.apSsid.length() > 32) err = "AP-SSID: 1-32 Zeichen";
-  else if (n.apPass.length() < 8 || n.apPass.length() > 63) err = "AP-Passwort: 8-63 Zeichen";
-  else if (n.staSsid.length() > 32) err = "WLAN-SSID zu lang";
-  else if (n.staAuth == 0 && n.staPass.length() > 63) err = "WLAN-Passwort zu lang";
-  else if (n.staAuth == 0 && n.staPass.length() && n.staPass.length() < 8) err = "WLAN-Passwort: 8-63 Zeichen";
-  else if (n.staIdentity.length() > 64 || n.staUser.length() > 64) err = "Identität/Benutzer: max. 64 Zeichen";
-  else if (n.staAuth > 1 && n.staUser.isEmpty() && n.staSsid.length()) err = "Benutzername fehlt (PEAP/TTLS)";
-  else if (n.staAuth > 1 && n.staPass.isEmpty() && n.staSsid.length()) err = "Passwort fehlt (PEAP/TTLS)";
+  if (n.apSsid.isEmpty() || n.apSsid.length() > 32) err = TR("AP SSID: 1-32 characters", "AP-SSID: 1-32 Zeichen", "SSID do AP: 1-32 caracteres");
+  else if (n.apPass.length() < 8 || n.apPass.length() > 63) err = TR("AP password: 8-63 characters", "AP-Passwort: 8-63 Zeichen", "Senha do AP: 8-63 caracteres");
+  else if (n.staSsid.length() > 32) err = TR("Wi-Fi SSID too long", "WLAN-SSID zu lang", "SSID do Wi-Fi longo demais");
+  else if (n.staAuth == 0 && n.staPass.length() > 63) err = TR("Wi-Fi password too long", "WLAN-Passwort zu lang", "Senha do Wi-Fi longa demais");
+  else if (n.staAuth == 0 && n.staPass.length() && n.staPass.length() < 8) err = TR("Wi-Fi password: 8-63 characters", "WLAN-Passwort: 8-63 Zeichen", "Senha do Wi-Fi: 8-63 caracteres");
+  else if (n.staIdentity.length() > 64 || n.staUser.length() > 64) err = TR("Identity/user: max. 64 characters", "Identität/Benutzer: max. 64 Zeichen", "Identidade/usuário: máx. 64 caracteres");
+  else if (n.staAuth > 1 && n.staUser.isEmpty() && n.staSsid.length()) err = TR("User name missing (PEAP/TTLS)", "Benutzername fehlt (PEAP/TTLS)", "Falta o nome de usuário (PEAP/TTLS)");
+  else if (n.staAuth > 1 && n.staPass.isEmpty() && n.staSsid.length()) err = TR("Password missing (PEAP/TTLS)", "Passwort fehlt (PEAP/TTLS)", "Falta a senha (PEAP/TTLS)");
   else if (n.staAuth == 1 && n.staSsid.length() && !Certs::ready(Certs::CLIENT))
-    err = "EAP-TLS: erst ein Client-Zertifikat mit Schlüssel hochladen (Tab Netz)";
+    err = TR("EAP-TLS: upload a client certificate with its key first (tab Network)", "EAP-TLS: erst ein Client-Zertifikat mit Schlüssel hochladen (Tab Netz)", "EAP-TLS: envie primeiro um certificado de cliente com a chave (aba Rede)");
   else if (!validHostname(n.hostname)) err = "Hostname: a-z, 0-9, '-' (max. 31)";
   else err = Store::checkPins(n);
   if (err) return sendJson(400, String("{\"ok\":false,\"error\":\"") + err + "\"}");
@@ -556,7 +557,7 @@ static void handlePostSettings() {
   settings = n;
   Store::save();
   sendJson(200, "{\"ok\":true,\"reboot\":true}");
-  Display::message("Einstellungen", "Neustart ...", 3000);
+  Display::message("Einstellungen", TR("Restarting ...", "Neustart ...", "Reiniciando ..."), 3000);
   rebootAt = millis() + 1500;
 }
 
@@ -566,14 +567,14 @@ static void handlePostSettings() {
 static void handleBatCal() {
   if (!guard()) return;
   JsonDocument d;
-  if (deserializeJson(d, http.arg("plain"))) return sendJson(400, "{\"ok\":false,\"error\":\"JSON ungültig\"}");
+  if (deserializeJson(d, http.arg("plain"))) return sendJson(400, TR("{\"ok\":false,\"error\":\"invalid JSON\"}", "{\"ok\":false,\"error\":\"JSON ungültig\"}", "{\"ok\":false,\"error\":\"JSON inválido\"}"));
   const char *point = d["point"] | "";
   const char *err;
   if (!strcmp(point, "full")) err = Power::calibrateNow(true);
   else if (!strcmp(point, "empty")) err = Power::calibrateNow(false);
   else if (d["empty"].is<int>() && d["full"].is<int>())
     err = Power::setCal(constrain(d["empty"].as<int>(), 0, 65535), constrain(d["full"].as<int>(), 0, 65535));
-  else err = "point oder empty/full fehlt";
+  else err = TR("point or empty/full missing", "point oder empty/full fehlt", "falta point ou empty/full");
   if (err) return sendJson(400, String("{\"ok\":false,\"error\":\"") + err + "\"}");
   sendJson(200, String("{\"ok\":true,\"mv\":") + Power::mv() + ",\"pct\":" + Power::pct() + ",\"calEmpty\":" + Power::calEmptyMv() +
                     ",\"calFull\":" + Power::calFullMv() + "}");
@@ -615,7 +616,7 @@ static void handleC2Get() {
 static void handleC2Enroll() {
   if (!guard()) return;
   JsonDocument d;
-  if (deserializeJson(d, http.arg("plain"))) return sendJson(400, "{\"ok\":false,\"error\":\"JSON ungültig\"}");
+  if (deserializeJson(d, http.arg("plain"))) return sendJson(400, TR("{\"ok\":false,\"error\":\"invalid JSON\"}", "{\"ok\":false,\"error\":\"JSON ungültig\"}", "{\"ok\":false,\"error\":\"JSON inválido\"}"));
   const char *err = C2::enroll(d["token"] | "");
   if (err) return sendJson(400, String("{\"ok\":false,\"error\":\"") + err + "\"}");
   sendJson(200, "{\"ok\":true}");
@@ -626,7 +627,7 @@ static void handleOtaDone() {
   bool ok = otaOk && !Update.hasError();
   if (ok) {
     sendJson(200, "{\"ok\":true}");
-    Display::message("Firmware OK", "Neustart ...", 3000);
+    Display::message("Firmware OK", TR("Restarting ...", "Neustart ...", "Reiniciando ..."), 3000);
     rebootAt = millis() + 1500;
   } else {
     sendJson(500, String("{\"ok\":false,\"error\":\"") + (otaErr.length() ? otaErr : String("Update fehlgeschlagen")) + "\"}");
@@ -640,7 +641,7 @@ static void handleOtaUpload() {
   if (up.status == UPLOAD_FILE_START) {
     otaOk = false;
     otaErr = "";
-    Display::message("Firmware", "wird geschrieben", 60000);
+    Display::message("Firmware", TR("writing", "wird geschrieben", "gravando"), 60000);
     if (!Update.begin(UPDATE_SIZE_UNKNOWN)) otaErr = Update.errorString();
   } else if (up.status == UPLOAD_FILE_WRITE) {
     if (otaErr.isEmpty() && Update.write(up.buf, up.currentSize) != up.currentSize) otaErr = Update.errorString();
@@ -651,7 +652,7 @@ static void handleOtaUpload() {
     }
   } else if (up.status == UPLOAD_FILE_ABORTED) {
     Update.abort();
-    otaErr = "Upload abgebrochen";
+    otaErr = TR("Upload cancelled", "Upload abgebrochen", "Envio cancelado");
   }
 }
 
@@ -664,7 +665,7 @@ static void handleConfigs() {
 static void handleConfigGet() {
   if (!guard()) return;
   String text;
-  if (!Configs::read(http.arg("name"), text)) return sendJson(404, "{\"ok\":false,\"error\":\"nicht gefunden\"}");
+  if (!Configs::read(http.arg("name"), text)) return sendJson(404, TR("{\"ok\":false,\"error\":\"not found\"}", "{\"ok\":false,\"error\":\"nicht gefunden\"}", "{\"ok\":false,\"error\":\"não encontrado\"}"));
   http.sendHeader("Cache-Control", "no-store");
   http.send(200, "text/plain; charset=utf-8", text);
 }
@@ -674,7 +675,7 @@ static void handleConfigSave() {
   if (!guard()) return;
   // too little RAM for the body -> "plain" arrives empty/short: never store that
   if ((int)http.arg("plain").length() != http.clientContentLength())
-    return sendJson(400, "{\"ok\":false,\"error\":\"Text nicht vollständig angekommen (zu wenig Speicher?)\"}");
+    return sendJson(400, TR("{\"ok\":false,\"error\":\"The text did not arrive completely (not enough memory?)\"}", "{\"ok\":false,\"error\":\"Text nicht vollständig angekommen (zu wenig Speicher?)\"}", "{\"ok\":false,\"error\":\"O texto não chegou completo (memória insuficiente?)\"}"));
   const char *err = Configs::save(http.arg("name"), http.arg("plain"), http.arg("old"));
   if (err) return sendJson(400, String("{\"ok\":false,\"error\":\"") + err + "\"}");
   sendJson(200, "{\"ok\":true}");
@@ -685,7 +686,7 @@ static void handleConfigDelete() {
   JsonDocument d;
   deserializeJson(d, http.arg("plain"));
   bool ok = Configs::remove(d["name"] | "");
-  sendJson(ok ? 200 : 404, ok ? "{\"ok\":true}" : "{\"ok\":false,\"error\":\"nicht gefunden\"}");
+  sendJson(ok ? 200 : 404, ok ? "{\"ok\":true}" : TR("{\"ok\":false,\"error\":\"not found\"}", "{\"ok\":false,\"error\":\"nicht gefunden\"}", "{\"ok\":false,\"error\":\"não encontrado\"}"));
 }
 
 // ---- certificates (tab "Netz") ----
@@ -734,7 +735,7 @@ static void handleTlsUploadDone() {
   bool ok = false;
   Certs::Slot slot = slotFromName(http.arg("slot"));
   if (!tlsBuf || tlsTooBig) {
-    msg = tlsBuf ? "Datei zu groß (max. 24 kB)" : "Zu wenig Speicher";
+    msg = tlsBuf ? TR("File too large (max. 24 kB)", "Datei zu groß (max. 24 kB)", "Arquivo grande demais (máx. 24 kB)") : TR("Not enough memory", "Zu wenig Speicher", "Memória insuficiente");
   } else {
     ok = Certs::upload(slot, tlsBuf, tlsLen, http.arg("pass"), msg);
   }
@@ -742,7 +743,7 @@ static void handleTlsUploadDone() {
   // the WLAN supplicant keeps the certificates it got at boot
   bool needReboot = ok && settings.staAuth > 0 && settings.staSsid.length() &&
                     (slot == Certs::CLIENT || slot == Certs::CA);
-  if (needReboot) msg += ". Neustart nötig, damit sich das WLAN damit anmeldet";
+  if (needReboot) msg += TR(". A restart is needed for the Wi-Fi to sign in with it", ". Neustart nötig, damit sich das WLAN damit anmeldet", ". É preciso reiniciar para o Wi-Fi usar isso");
   JsonDocument d;
   d["ok"] = ok;
   d["reboot"] = needReboot;
@@ -765,7 +766,7 @@ static void handleTlsDownload() {
     Certs::copy(s, pem, key);                        // certificates only, never a private key
     name = what + ".crt";
   }
-  if (pem.isEmpty()) return sendJson(404, "{\"ok\":false,\"error\":\"nicht vorhanden\"}");
+  if (pem.isEmpty()) return sendJson(404, TR("{\"ok\":false,\"error\":\"does not exist\"}", "{\"ok\":false,\"error\":\"nicht vorhanden\"}", "{\"ok\":false,\"error\":\"não existe\"}"));
   http.sendHeader("Content-Disposition", "attachment; filename=\"" + name + "\"");
   http.sendHeader("Cache-Control", "no-store");
   http.send(200, "application/x-pem-file", pem);
@@ -817,7 +818,7 @@ static void setupHttp() {
   http.on("/api/tls/csr", HTTP_POST, []() {
     if (!guard()) return;
     JsonDocument d;
-    if (deserializeJson(d, http.arg("plain"))) return sendJson(400, "{\"ok\":false,\"error\":\"JSON ungültig\"}");
+    if (deserializeJson(d, http.arg("plain"))) return sendJson(400, TR("{\"ok\":false,\"error\":\"invalid JSON\"}", "{\"ok\":false,\"error\":\"JSON ungültig\"}", "{\"ok\":false,\"error\":\"JSON inválido\"}"));
     String err;
     bool ok = Certs::csrStart(d["subject"] | "", d["san"] | "", d["rsa"] | true, err);
     sendJson(ok ? 200 : 400, ok ? "{\"ok\":true}" : String("{\"ok\":false,\"error\":\"") + err + "\"}");
@@ -830,7 +831,7 @@ static void setupHttp() {
   http.on("/api/c2/control", HTTP_POST, []() {   // may the server change things? Decided here, at the device.
     if (!guard()) return;
     JsonDocument d;
-    if (deserializeJson(d, http.arg("plain")) || !d["allow"].is<bool>()) return sendJson(400, "{\"ok\":false,\"error\":\"JSON ungültig\"}");
+    if (deserializeJson(d, http.arg("plain")) || !d["allow"].is<bool>()) return sendJson(400, TR("{\"ok\":false,\"error\":\"invalid JSON\"}", "{\"ok\":false,\"error\":\"JSON ungültig\"}", "{\"ok\":false,\"error\":\"JSON inválido\"}"));
     settings.c2Control = d["allow"];
     Store::save();
     sendJson(200, "{\"ok\":true}");
@@ -856,7 +857,7 @@ static void setupHttp() {
     Store::factoryReset();
     Certs::wipe();
     sendJson(200, "{\"ok\":true}");
-    Display::message("Werksreset", "Neustart ...", 3000);
+    Display::message("Werksreset", TR("Restarting ...", "Neustart ...", "Reiniciando ..."), 3000);
     rebootAt = millis() + 1000;
   });
   http.on("/update", HTTP_POST, handleOtaDone, handleOtaUpload);
@@ -945,7 +946,7 @@ static void handleCommand(uint8_t num, uint8_t *payload, size_t len) {
     c.stop = d["stop"] | c.stop;
     c.swap = d["swap"] | c.swap;
     if (Store::validSerial(c)) Bridge::apply(port, c);
-    else sendText(num, "{\"type\":\"msg\",\"text\":\"Ungültige serielle Einstellung\"}");
+    else sendText(num, TR("{\"type\":\"msg\",\"text\":\"Invalid serial setting\"}", "{\"type\":\"msg\",\"text\":\"Ungültige serielle Einstellung\"}", "{\"type\":\"msg\",\"text\":\"Configuração serial inválida\"}"));
     dirty = true;
   } else if (!strcmp(cmd, "autobaud")) {
     Bridge::startAutobaud(port);
@@ -972,7 +973,7 @@ static void handleCommand(uint8_t num, uint8_t *payload, size_t len) {
     }
     dirty = true;
   } else if (!strcmp(cmd, "xferAbort")) {
-    Xfer::abort("abgebrochen");
+    Xfer::abort(TR("cancelled", "abgebrochen", "cancelado"));
   } else if (!strcmp(cmd, "xferResume")) {
     if (!Xfer::resume(num, d["id"] | 0u)) sendText(num, "{\"type\":\"xfer\",\"state\":\"idle\"}");
   }

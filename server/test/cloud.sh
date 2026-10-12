@@ -127,7 +127,7 @@ T=$(( $(date +%s) - T0 )); [ $T -ge 18 ] && [ $T -le 25 ] || fail "the wait took
 echo "ok   it took $T s"
 expect "close" "$(admin POST $CON/$SESS/close | tail -1)" 200
 for i in $(seq 1 20); do [ "$(admin GET $CON | head -n -1 | json 'd["sessions"][-1].get("reason")')" != None ] && break; sleep 1; done
-expect "session on record" "$(admin GET $CON | head -n -1 | json '(d["sessions"][-1]["reason"], d["sessions"][-1]["bytes_in"])')" "('vom Administrator beendet', 5)"
+expect "session on record" "$(admin GET $CON | head -n -1 | json '(d["sessions"][-1]["reason"], d["sessions"][-1]["bytes_in"])')" "('closed by the administrator', 5)"
 docker rm -f ${COMPOSE_PROJECT_NAME}-sim >/dev/null
 
 step "an account, signed in through Caddy"

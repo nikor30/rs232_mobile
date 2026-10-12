@@ -117,7 +117,7 @@ func fill(t *testing.T, s *Store, c *clock) (active string) {
 	_, err = s.ConsoleOpen(active, con.ID, time.Minute)
 	must(t, err)
 	c.now = c.now.Add(time.Minute)
-	must(t, s.ConsoleClose(active, con.ID, "vom Administrator beendet", 12, 3456))
+	must(t, s.ConsoleClose(active, con.ID, "closed by the administrator", 12, 3456))
 	bad, err := s.Enqueue(active, "status", nil)
 	must(t, err)
 	_, _, err = s.Poll(active, nil, nil)
@@ -199,7 +199,7 @@ func TestOpenConsoleEndsWithRestart(t *testing.T) {
 		s = openT(t, dir, c)
 		d, err := s.Device(id)
 		must(t, err)
-		if len(d.Consoles) != 1 || d.Consoles[0].End == nil || d.Consoles[0].Reason != "Server neu gestartet" {
+		if len(d.Consoles) != 1 || d.Consoles[0].End == nil || d.Consoles[0].Reason != "server restarted" {
 			t.Fatalf("start %d: console %+v", i, d.Consoles)
 		}
 		must(t, s.Close())

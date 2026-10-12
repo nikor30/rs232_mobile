@@ -1,4 +1,5 @@
 #include "player.h"
+#include "lang.h"
 #include "configs.h"
 #include "serial_bridge.h"
 #include "net.h"
@@ -44,7 +45,7 @@ static void finish(State s) {
   st = s;
   text = String();
   pending = String();
-  Net::onMessage(String("Konfiguration ") + cfgName + ": " + res);
+  Net::onMessage(String(TR("Configuration ", "Konfiguration ", "Configuração ")) + cfgName + ": " + res);
   Net::markDirty();
 }
 
@@ -108,22 +109,22 @@ static void resetTail() {
 }
 
 bool start(const String &cfg, uint8_t port) {
-  if (st == RUNNING) { setResult("laeuft schon"); return false; }
+  if (st == RUNNING) { setResult(TR("is running already", "laeuft schon", "já está em execução")); return false; }
   strlcpy(cfgName, cfg.c_str(), sizeof(cfgName));
   prt = port;
   lineNo = lineCount = 0;
-  if (port >= MAX_PORTS || !Bridge::enabled(port)) { setResult("Port ist aus"); st = FAILED; return false; }
-  if (!Configs::read(cfg, text)) { setResult("nicht gefunden"); st = FAILED; return false; }
+  if (port >= MAX_PORTS || !Bridge::enabled(port)) { setResult(TR("port is off", "Port ist aus", "a porta está desligada")); st = FAILED; return false; }
+  if (!Configs::read(cfg, text)) { setResult(TR("not found", "nicht gefunden", "não encontrada")); st = FAILED; return false; }
   if (text.indexOf("{{") >= 0) {
     text = String();
-    setResult("hat {{Variablen}}: nur im Web");
+    setResult(TR("has {{variables}}: web only", "hat {{Variablen}}: nur im Web", "tem {{variáveis}}: só pela web"));
     st = FAILED;
     return false;
   }
   text.replace("\r\n", "\n");
   text.replace('\r', '\n');
   while (text.endsWith("\n")) text.remove(text.length() - 1);
-  if (!text.length()) { setResult("ist leer"); st = FAILED; return false; }
+  if (!text.length()) { setResult(TR("is empty", "ist leer", "está vazia")); st = FAILED; return false; }
   lineCount = 1;
   for (size_t i = 0; i < text.length(); i++)
     if (text[i] == '\n') lineCount++;
@@ -142,7 +143,7 @@ bool start(const String &cfg, uint8_t port) {
 
 void stop() {
   if (st != RUNNING) return;
-  setResult("abgebrochen in Zeile %u", lineNo);
+  setResult(TR("stopped in line %u", "abgebrochen in Zeile %u", "interrompido na linha %u"), lineNo);
   finish(FAILED);
 }
 
@@ -153,8 +154,8 @@ static void sendLine(const String &l) {
 
 static void nextLine() {
   if (pos > text.length()) {
-    if (errors) setResult("fertig, %u Fehlermeldungen", errors);
-    else setResult("fertig, %u Zeilen", lineCount);
+    if (errors) setResult(TR("done, %u error messages", "fertig, %u Fehlermeldungen", "concluído, %u mensagens de erro"), errors);
+    else setResult(TR("done, %u lines", "fertig, %u Zeilen", "concluído, %u linhas"), lineCount);
     finish(DONE);
     return;
   }
@@ -188,7 +189,7 @@ static void nextLine() {
       float s = arg.toFloat();
       timeoutMs = (uint32_t)((s >= 1 ? s : 30) * 1000);
     } else {
-      setResult("unbekannte Zeile @%s (%u)", cmd.c_str(), lineNo);
+      setResult(TR("unknown line @%s (%u)", "unbekannte Zeile @%s (%u)", "linha desconhecida @%s (%u)"), cmd.c_str(), lineNo);
       finish(FAILED);
     }
     return;
@@ -199,7 +200,7 @@ static void nextLine() {
 
 void loop() {
   if (st != RUNNING) return;
-  if (!Bridge::enabled(prt)) { setResult("Port wurde abgeschaltet"); finish(FAILED); return; }
+  if (!Bridge::enabled(prt)) { setResult(TR("the port was switched off", "Port wurde abgeschaltet", "a porta foi desligada")); finish(FAILED); return; }
   drain();
   uint32_t now = millis();
   switch (phase) {
@@ -220,7 +221,7 @@ void loop() {
     case WAIT_EXPECT:
       if (containsNoCase(tail, expect.c_str())) { resetTail(); phase = NEXT; }
       else if (now - phaseStart > timeoutMs) {
-        setResult("\"%.20s\" kam nicht (Zeile %u)", expect.c_str(), lineNo);
+        setResult(TR("\"%.20s\" did not come (line %u)", "\"%.20s\" kam nicht (Zeile %u)", "\"%.20s\" não veio (linha %u)"), expect.c_str(), lineNo);
         finish(FAILED);
       }
       break;
@@ -229,7 +230,7 @@ void loop() {
       if (got && endsWithMore()) {
         if (!moreAnswered) { Bridge::write(prt, (const uint8_t *)" ", 1); moreAnswered = true; }
         else if (quiet > 300) moreAnswered = false;      // the next page has its own --More--
-        if (now - phaseStart > timeoutMs) { setResult("haengt bei --More-- (Zeile %u)", lineNo); finish(FAILED); }
+        if (now - phaseStart > timeoutMs) { setResult(TR("stuck at --More-- (line %u)", "haengt bei --More-- (Zeile %u)", "parado em --More-- (linha %u)"), lineNo); finish(FAILED); }
         break;
       }
       bool done = (got && quiet >= 120 && atPrompt()) || (quiet >= 2000 && now - phaseStart >= 2000) ||
@@ -237,7 +238,7 @@ void loop() {
       if (!done) break;
       if (looksLikeError()) {
         errors++;
-        setResult("Fehlermeldung bei Zeile %u", lineNo);
+        setResult(TR("error message at line %u", "Fehlermeldung bei Zeile %u", "mensagem de erro na linha %u"), lineNo);
         finish(FAILED);
         break;
       }

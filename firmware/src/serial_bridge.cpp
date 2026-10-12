@@ -1,4 +1,5 @@
 #include "serial_bridge.h"
+#include "lang.h"
 #include "xfer.h"
 #include <SoftwareSerial.h>
 #include <driver/uart.h>
@@ -243,19 +244,19 @@ static void abFinish(bool found) {
     settings.port[p].serial = c;
     Store::saveSerial(p);
     openPort(p, c);
-    msg(prefix(p) + "Auto-Baud: " + Store::serialLabel(c) + " erkannt");
+    msg(prefix(p) + "Auto-Baud: " + Store::serialLabel(c) + TR(" detected", " erkannt", " detectado"));
     uint8_t cr = '\r';                // fresh prompt
     portWrite(p, &cr, 1);
   } else {
     openPort(p, ab.orig);
     if (!ab.bestN) {
       // not a single edge on the line: nothing ever answered our CR
-      msg(prefix(p) + "Auto-Baud: Leitung stumm - kein einziges Byte. Kreuzung (Pin 2/3), "
-                      "GND (Pin 5) und Gegenstelle pruefen");
+      msg(prefix(p) + TR("Auto-baud: line silent - not a single byte. Check crossover (pin 2/3), ", "Auto-Baud: Leitung stumm - kein einziges Byte. Kreuzung (Pin 2/3), ", "Auto-baud: linha muda - nenhum byte. Verifique o cruzamento (pinos 2/3), ")
+                      TR("GND (pin 5) and the other end", "GND (Pin 5) und Gegenstelle pruefen", "GND (pino 5) e o equipamento remoto"));
     } else {
       // bytes did arrive, they just never looked like text -> framing, not wiring
-      msg(prefix(p) + "Auto-Baud: nur unlesbare Zeichen (max. " + String((unsigned)ab.bestN) + " Byte bei " +
-          String(ab.bestRate) + " Baud) - Verdrahtung stimmt, Datenbits/Paritaet oder Stoerung pruefen");
+      msg(prefix(p) + TR("Auto-baud: unreadable characters only (max. ", "Auto-Baud: nur unlesbare Zeichen (max. ", "Auto-baud: só caracteres ilegíveis (máx. ") + String((unsigned)ab.bestN) + TR(" bytes at ", " Byte bei ", " bytes a ") +
+          String(ab.bestRate) + TR(" baud) - the wiring is right, check data bits/parity or interference", " Baud) - Verdrahtung stimmt, Datenbits/Paritaet oder Stoerung pruefen", " baud) - a fiação está certa, verifique bits de dados/paridade ou interferência"));
     }
   }
 }
@@ -296,7 +297,7 @@ void startAutobaud(uint8_t p) {
   ab.bestRate = 0;
   ab.orig = ports[p].cfg;
   while (ab.idx < AB_COUNT && AB_RATES[ab.idx] > maxBaud(p)) ab.idx++;
-  msg(prefix(p) + "Auto-Baud: läuft ...");
+  msg(prefix(p) + TR("Auto-baud: running ...", "Auto-Baud: läuft ...", "Auto-baud: em andamento ..."));
   abTry();
 }
 
@@ -332,18 +333,18 @@ void begin(DataSink onData, MsgSink onMsg) {
 void apply(uint8_t p, const SerialCfg &cfg) {
   if (!enabled(p) || Xfer::on(p)) return;
   if (cfg.baud > maxBaud(p)) {
-    msg(prefix(p) + "Software-UART: max. " + String(SW_MAX_BAUD) + " Baud");
+    msg(prefix(p) + TR("Software UART: max. ", "Software-UART: max. ", "UART por software: máx. ") + String(SW_MAX_BAUD) + " Baud");
     return;
   }
   if (cfg.swap && !swapOk(p)) {
-    msg(prefix(p) + "RX/TX tauschen geht nicht: GPIO" + String(settings.port[p].rx) + " kann nicht senden");
+    msg(prefix(p) + TR("Cannot swap RX/TX: GPIO", "RX/TX tauschen geht nicht: GPIO", "Não é possível trocar RX/TX: GPIO") + String(settings.port[p].rx) + TR(" cannot send", " kann nicht senden", " não pode transmitir"));
     return;
   }
   flushPending(p);
   settings.port[p].serial = cfg;
   Store::saveSerial(p);
   openPort(p, cfg);
-  msg(prefix(p) + "Seriell: " + Store::serialLabel(cfg));
+  msg(prefix(p) + TR("Serial: ", "Seriell: ", "Serial: ") + Store::serialLabel(cfg));
 }
 
 size_t write(uint8_t p, const uint8_t *data, size_t len) {
@@ -377,7 +378,7 @@ void sendBreak(uint8_t p, uint16_t ms) {
     delay(ms);
     digitalWrite(pt.tx, HIGH);
   }
-  msg(prefix(p) + "BREAK: " + String(ms) + " ms gesendet");
+  msg(prefix(p) + "BREAK: " + String(ms) + TR(" ms sent", " ms gesendet", " ms enviado"));
 }
 
 void loop() {

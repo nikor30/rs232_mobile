@@ -6,6 +6,7 @@ Run by ui.sh in stages, because a simulated device has to act in between:
   server    the server's state; change the server key and end the change
   command   send commands and read their answers from the page, use the remote console
   accounts  create an account, set it up as its owner, sign in with password and code
+  language  German and Portuguese: the page, what the script builds, what the server answers
   phone     the same pages on a phone: nothing wider than the screen, one thing at a time
   revoke    lock the device out
 """
@@ -59,9 +60,9 @@ with sync_playwright() as p:
     page.fill("#adminToken", admin)
     page.click("#tokenForm button")
     expect(page.locator("#app")).to_be_visible()
-    expect(page.locator("#whoami")).to_have_text("Admin-Token")
-    expect(page.locator("#title")).to_have_text("Geräte")
-    expect(page.locator("#nav a[aria-current]")).to_have_text("Geräte")
+    expect(page.locator("#whoami")).to_have_text("Admin token")
+    expect(page.locator("#title")).to_have_text("Devices")
+    expect(page.locator("#nav a[aria-current]")).to_have_text("Devices")
 
     if stage == "invite":
         expect(page.locator("#noDevices")).to_be_visible()
@@ -69,7 +70,7 @@ with sync_playwright() as p:
         expect(page.locator("#inviteDlg")).to_be_visible()
         token = page.input_value("#tokenText")
         assert token.startswith("c2e1:"), token
-        expect(page.locator("#tokenExp")).to_contain_text("gilt noch")
+        expect(page.locator("#tokenExp")).to_contain_text("valid for another")
         # the QR code must be a real picture: read it back and compare
         size = page.evaluate("document.querySelector('#qr').width")
         assert size > 100, size
@@ -80,10 +81,10 @@ with sync_playwright() as p:
     elif stage == "approve":
         expect(page.locator("#pick")).to_be_visible()    # nothing picked yet, and the page says so
         row = page.locator("#devices .dev", has_text=arg.split(":")[0])
-        expect(row).to_contain_text("wartet auf Bestätigung")
+        expect(row).to_contain_text("waiting for confirmation")
         row.click()
         expect(row).to_have_attribute("aria-current", "true")
-        assert page.url.endswith("#geraete/" + row.get_attribute("data-id")), page.url
+        assert page.url.endswith("#devices/" + row.get_attribute("data-id")), page.url
         expect(page.locator("#approveForm")).to_be_visible()
         expect(page.locator("#commands")).to_be_hidden()
         code = arg.split(":")[1]
@@ -91,17 +92,17 @@ with sync_playwright() as p:
         wrong = "%06d" % ((int(code) + 1) % 1000000)
         page.fill("#sas", wrong)
         page.click("#approveForm button")
-        expect(page.locator("#toast")).to_contain_text("stimmt nicht")
+        expect(page.locator("#toast")).to_contain_text("does not match")
         errors.clear()                               # the browser logs the 403, as intended
         page.fill("#sas", code)
         page.click("#approveForm button")
-        expect(page.locator("#dState")).to_have_text("verbunden")
+        expect(page.locator("#dState")).to_have_text("connected")
         expect(page.locator("#commands")).to_be_visible()
         shot(path="/out/ui-approved.png")
 
     elif stage == "server":
         go("server")
-        expect(page.locator("#stState")).to_have_text("in Ordnung")
+        expect(page.locator("#stState")).to_have_text("all right")
         expect(page.locator("#stActive")).to_have_text("1")
         expect(page.locator("#alert")).to_be_hidden()
         expect(page.locator("#keyChange")).to_be_hidden()
@@ -112,7 +113,7 @@ with sync_playwright() as p:
         # a new key: the page says what that means before it happens
         page.click("#kcStart")
         expect(page.locator("#rotateDlg")).to_be_visible()
-        expect(page.locator("#rotateDlg")).to_contain_text("neu angemeldet")
+        expect(page.locator("#rotateDlg")).to_contain_text("enrolled again")
         page.select_option("#rotateDays", "7")
         shot(path="/out/ui-rotate.png")
         page.click("#rotateCancel")
@@ -127,20 +128,20 @@ with sync_playwright() as p:
         expect(page.locator("#navMark")).to_be_visible()
         expect(page.locator("#kcStart")).to_be_hidden()  # one change at a time
         # the simulated device hears of the key with its next poll and confirms it
-        expect(page.locator("#kcWaiting")).to_have_text("kein Gerät", timeout=20000)
+        expect(page.locator("#kcWaiting")).to_have_text("no device", timeout=20000)
         shot(path="/out/ui-keychange.png", full_page=True)
         page.click("#kcEnd")
-        yes("Alle Geräte haben den neuen schon")
+        yes("All devices have the new one already")
         expect(page.locator("#keyChange")).to_be_hidden()
         expect(page.locator("#navMark")).to_be_hidden()
         expect(page.locator("#kcStart")).to_be_visible()
-        go("protokoll")
-        expect(page.locator("#audit tbody")).to_contain_text("Serverschlüssel gewechselt")
-        expect(page.locator("#audit tbody")).to_contain_text("Schlüsselwechsel beendet")
-        go("geraete")
+        go("audit")
+        expect(page.locator("#audit tbody")).to_contain_text("Server key changed")
+        expect(page.locator("#audit tbody")).to_contain_text("Key change ended")
+        go("devices")
         row = page.locator("#devices .dev", has_text="Labor")
-        expect(row).to_contain_text("verbunden")
-        expect(row).not_to_contain_text("alter Serverschlüssel")
+        expect(row).to_contain_text("connected")
+        expect(row).not_to_contain_text("old server key")
 
     elif stage == "command":
         page.locator("#devices .dev", has_text=arg).click()
@@ -149,17 +150,17 @@ with sync_playwright() as p:
         expect(hist).to_contain_text("pong", timeout=20000)
         page.click("button[data-cmd=configs]")
         expect(hist).to_contain_text("Uplink", timeout=20000)
-        # the names offered for "Abspielen" come from that answer
+        # the names offered for "Play" come from that answer
         assert page.locator("#playNames option").count() == 2
         page.fill("#playName", "Demo")
         page.select_option("#playPort", "2")
         page.click("#playForm button")
-        yes("auf Port 2 abspielen")
-        expect(hist).to_contain_text("fertig", timeout=20000)
-        expect(hist.locator("tr", has_text="Abspielen").first).to_contain_text('"port":2')
+        yes("on port 2")
+        expect(hist).to_contain_text("\"result\": \"done\"", timeout=20000)
+        expect(hist.locator("tr", has_text="Play").first).to_contain_text('"port":2')
         page.click("button[data-cmd=reboot]")
-        yes("neu starten")
-        expect(hist.locator("tr", has_text="Neustart").first).to_contain_text("erledigt", timeout=20000)
+        yes("Restart the device")
+        expect(hist.locator("tr", has_text="Restart").first).to_contain_text("done", timeout=20000)
         # device data is shown as text, never run: the simulated device is called <img src=x onerror=...>
         assert page.evaluate("window.pwned === undefined"), "markup from a device name was executed"
         assert page.locator("#devices img").count() == 0
@@ -167,7 +168,7 @@ with sync_playwright() as p:
         # remote console: ask, the (simulated) device agrees, type, read, BREAK, close
         page.select_option("#conMinutes", "5")
         page.click("#conForm button")
-        expect(page.locator("#conState")).to_contain_text("Offen auf Port 1", timeout=20000)
+        expect(page.locator("#conState")).to_contain_text("Open on port 1", timeout=20000)
         term = page.locator("#term .xterm-rows")
         expect(term).to_contain_text("Switch>", timeout=20000)
         page.locator("#term .xterm-helper-textarea").focus()
@@ -176,16 +177,51 @@ with sync_playwright() as p:
         expect(term).to_contain_text("GigabitEthernet0/40 is up", timeout=20000)
         page.click("#conBreak")
         expect(term).to_contain_text("[BREAK]", timeout=20000)
-        expect(page.locator("#conInfo")).to_contain_text("noch")
+        expect(page.locator("#conInfo")).to_contain_text("min left")
         expect(page.locator("#conForm")).to_be_hidden()
         # not full_page: with the terminal focused that leaves the page scrolled somewhere
         # else than the browser believes, and the next click misses its button
         page.locator("#console").scroll_into_view_if_needed()
         shot(path="/out/ui-console.png")
         page.click("#conClose")
-        expect(term).to_contain_text("vom Administrator beendet", timeout=20000)
-        expect(page.locator("#conLog tbody tr").first).to_contain_text("vom Administrator beendet", timeout=20000)
+        expect(term).to_contain_text("closed by the administrator", timeout=20000)
+        expect(page.locator("#conLog tbody tr").first).to_contain_text("closed by the administrator", timeout=20000)
         expect(page.locator("#conForm")).to_be_visible()
+
+    elif stage == "language":
+        # English unless somebody chose otherwise - also when the browser asks for German (locale de-DE)
+        expect(page.locator("#lang")).to_have_value("en")
+        assert page.evaluate("document.documentElement.lang") == "en"
+        page.locator("#devices .dev", has_text=arg).click()
+        expect(page.locator("#conLog tbody tr").first).to_contain_text("closed by the administrator")
+        for lang, title, state, nav, reason, good, ask in (
+                ("de", "Geräte", "verbunden", "Protokoll", "vom Administrator beendet", "in Ordnung", "Gerät neu starten?"),
+                ("pt", "Dispositivos", "conectado", "Registro", "encerrado pelo administrador", "em ordem", "Reiniciar o dispositivo?")):
+            page.select_option("#lang", lang)            # the page loads again in that language
+            expect(page.locator("#title")).to_have_text(title)
+            expect(page.locator("#lang")).to_have_value(lang)
+            page.locator("#devices .dev", has_text=arg).click()
+            assert page.evaluate("document.documentElement.lang") == lang
+            expect(page.locator("#dState")).to_have_text(state)
+            expect(page.locator("#nav a[data-view=audit]")).to_have_text(nav)
+            # what the server says in English arrives in the chosen language
+            expect(page.locator("#conLog tbody tr").first).to_contain_text(reason)
+            page.click("button[data-cmd=reboot]")
+            expect(page.locator("#askTitle")).to_have_text(ask)
+            page.click("#askNo")
+            shot(path="/out/lang-%s-device.png" % lang, full_page=True)
+            go("server")
+            expect(page.locator("#stState")).to_have_text(good)
+            shot(path="/out/lang-%s-server.png" % lang)
+            go("devices")
+        # the choice is kept: a new visit starts in it, the login page included
+        page.reload()
+        expect(page.locator("#title")).to_have_text("Dispositivos")
+        page.click("#logout")
+        expect(page.locator("#loginForm button[type=submit]")).to_have_text("Entrar")
+        shot(path="/out/lang-pt-login.png")
+        page.select_option("#lang", "en")
+        expect(page.locator("#loginForm button[type=submit]")).to_have_text("Sign in")
 
     elif stage == "revoke":
         page.locator("#devices .dev", has_text=arg).click()
@@ -193,10 +229,10 @@ with sync_playwright() as p:
         expect(page.locator("#askNo")).to_be_focused()   # Enter is not the dangerous answer
         page.keyboard.press("Escape")
         expect(page.locator("#askDlg")).to_be_hidden()
-        expect(page.locator("#dState")).to_have_text("verbunden")
+        expect(page.locator("#dState")).to_have_text("connected")
         page.click("#revoke")
-        yes("sofort und endgültig")
-        expect(page.locator("#dState")).to_have_text("gesperrt")
+        yes("at once and for good")
+        expect(page.locator("#dState")).to_have_text("revoked")
         expect(page.locator("#commands")).to_be_hidden()
 
     elif stage == "phone":
@@ -226,9 +262,9 @@ with sync_playwright() as p:
         page.go_back()                               # the browser's own way back leads to the device again
         expect(page.locator("#detail")).to_be_visible()
         page.click("#back")
-        for view in ("benutzer", "protokoll", "server"):
+        for view in ("users", "audit", "server"):
             go(view)
-            expect(page.locator("#title")).to_have_text({"benutzer": "Benutzer", "protokoll": "Protokoll", "server": "Server"}[view])
+            expect(page.locator("#title")).to_have_text({"users": "Users", "audit": "Audit log", "server": "Server"}[view])
             fits(view); targets(view)
             shot(path="/out/phone-%s.png" % view, full_page=True)
         # a dialog comes up from the bottom edge, as wide as the screen
@@ -240,7 +276,7 @@ with sync_playwright() as p:
         targets("the dialog")
         shot(path="/out/phone-dialog.png")
         page.click("#rotateCancel")
-        go("geraete")
+        go("devices")
         page.click("#invite")
         expect(page.locator("#inviteDlg")).to_be_visible()
         page.wait_for_timeout(500)
@@ -257,7 +293,7 @@ with sync_playwright() as p:
     elif stage == "accounts":
         SLOW = 30000    # a password costs the server 600 000 rounds of hashing: seconds on a busy Raspberry Pi
         # the administrator creates the account and gets a setup code, shown once
-        go("benutzer")
+        go("users")
         expect(page.locator("#noUsers")).to_be_visible()
         page.click("#addUser")
         page.fill("#userName", "Anna")
@@ -267,7 +303,7 @@ with sync_playwright() as p:
         assert len(setup) == 19 and setup.count("-") == 3, setup
         page.click("#codeClose")
         row = page.locator("#users tbody tr", has_text="anna")
-        expect(row).to_contain_text("wartet auf Einrichtung")
+        expect(row).to_contain_text("waiting to be set up")
         assert setup not in page.content(), "the setup code stays on the page"
         page.click("#logout")
         expect(page.locator("#login")).to_be_visible()
@@ -279,11 +315,11 @@ with sync_playwright() as p:
         page.fill("#setupPass", "ein langes Passwort 1")
         page.fill("#setupPass2", "ein langes Passwort 1")
         page.click("#setupForm button")
-        expect(page.locator("#setupErr")).to_contain_text("stimmt nicht", timeout=SLOW)
+        expect(page.locator("#setupErr")).to_contain_text("setup code is wrong", timeout=SLOW)
         page.fill("#setupCode", setup.lower())           # typed as somebody would
         page.fill("#setupPass2", "ein anderes Passwort")
         page.click("#setupForm button")
-        expect(page.locator("#setupErr")).to_contain_text("nicht gleich")
+        expect(page.locator("#setupErr")).to_contain_text("not the same")
         page.fill("#setupPass2", "ein langes Passwort 1")
         page.click("#setupForm button")
         expect(page.locator("#totpForm")).to_be_visible(timeout=SLOW)
@@ -291,28 +327,28 @@ with sync_playwright() as p:
         assert page.evaluate("document.querySelector('#totpQr').width") > 100
         page.fill("#totpCode", "000000" if totp(secret) != "000000" else "111111")
         page.click("#totpForm button")
-        expect(page.locator("#setupErr")).to_contain_text("Code stimmt nicht", timeout=SLOW)
+        expect(page.locator("#setupErr")).to_contain_text("code does not match", timeout=SLOW)
         page.fill("#totpCode", totp(secret))
         page.click("#totpForm button")
         expect(page.locator("#app")).to_be_visible(timeout=SLOW)
         expect(page.locator("#whoami")).to_have_text("anna")
         errors.clear()                               # the refusals above were the point
-        expect(page.locator("#title")).to_have_text("Benutzer")   # back where she was
-        expect(page.locator("#users tbody tr", has_text="anna")).to_contain_text("aktiv")
+        expect(page.locator("#title")).to_have_text("Users")   # back where she was
+        expect(page.locator("#users tbody tr", has_text="anna")).to_contain_text("active")
         shot(path="/out/ui-accounts.png", full_page=True)
-        go("protokoll")
+        go("audit")
         audit = page.locator("#audit tbody")
-        expect(audit).to_contain_text("Konto einrichten")
-        expect(audit).to_contain_text("Benutzer angelegt")
-        expect(audit.locator("tr.failed").first).to_contain_text("abgelehnt")
+        expect(audit).to_contain_text("Account set up")
+        expect(audit).to_contain_text("User added")
+        expect(audit.locator("tr.failed").first).to_contain_text("refused")
         shot(path="/out/ui-audit.png", full_page=True)
 
         # the session is a cookie: it survives a reload, and changing things works with it
         page.reload()
         expect(page.locator("#app")).to_be_visible()
         expect(page.locator("#whoami")).to_have_text("anna")
-        expect(page.locator("#title")).to_have_text("Protokoll")   # a reload stays where one was
-        go("geraete")
+        expect(page.locator("#title")).to_have_text("Audit log")   # a reload stays where one was
+        go("devices")
         page.click("#invite")
         expect(page.locator("#inviteDlg")).to_be_visible()
         assert page.input_value("#tokenText").startswith("c2e1:")
@@ -331,19 +367,19 @@ with sync_playwright() as p:
         page.fill("#loginPass", "das falsche Passwort!")
         page.fill("#loginCode", totp(secret, 1))
         page.click("#loginForm button")
-        expect(page.locator("#loginErr")).to_have_text("Anmeldung fehlgeschlagen", timeout=SLOW)
+        expect(page.locator("#loginErr")).to_have_text("sign-in failed", timeout=SLOW)
         errors.clear()
         page.fill("#loginPass", "ein langes Passwort 1")
         page.fill("#loginCode", totp(secret, 1))
         page.click("#loginForm button")
         expect(page.locator("#app")).to_be_visible(timeout=SLOW)
-        go("protokoll")
-        expect(page.locator("#audit tbody tr").first).to_contain_text("Anmeldung")
+        go("audit")
+        expect(page.locator("#audit tbody tr").first).to_contain_text("Sign-in")
         # she cannot lock herself out
-        go("benutzer")
-        page.locator("#users tbody tr", has_text="anna").get_by_text("Löschen").click()
-        yes("löschen")
-        expect(page.locator("#toast")).to_contain_text("eigene Konto")
+        go("users")
+        page.locator("#users tbody tr", has_text="anna").get_by_text("Delete").click()
+        yes("Delete the account")
+        expect(page.locator("#toast")).to_contain_text("own account")
         errors.clear()
         page.click("#logout")
 
