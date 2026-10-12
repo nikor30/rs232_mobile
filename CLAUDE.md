@@ -20,7 +20,7 @@ cd firmware
 pio run -e waveshare-s3-lcd2 -t upload   # einzige Umgebung, Arduino-Core 2.0.17
 ```
 
-Auf dem Raspberry Pi liegt PlatformIO in `/root/.local/share/pio-venv/bin/pio`; das Waveshare-Board hängt dort an `/dev/ttyACM0` (nach einem Aus-/Einschalten auch `ttyACM1`; `lcd_debug.py` sucht den Port selbst).
+Das Waveshare-Board meldet sich am USB-Kabel als `/dev/ttyACM0` (nach einem Aus-/Einschalten auch `ttyACM1`; `lcd_debug.py` sucht den Port selbst). `lcd_debug.py` braucht `pyserial` — mit dem Python aus PlatformIOs eigener Umgebung starten, wenn das System-Python es nicht hat.
 
 `src/web_assets.h` wird vor jedem Build von `tools/embed_web.py` aus `web/` erzeugt — nicht von Hand ändern. Pins und Defaults stehen in `src/config.h`.
 
@@ -62,13 +62,33 @@ Alle drei Oberflächen — Admin-Seite der Leitstelle (`server/internal/server/w
 - Was hereinkommt, geht auf demselben Weg wieder: Das Einstellungsblatt der Geräteseite fährt von unten herein und dorthin zurück, als Transition (`#panel.open`), damit es sich mitten im Schließen wieder öffnen lässt; `hidden` wird erst gesetzt, wenn es draußen ist.
 - Ziele für den Daumen mindestens 44 px hoch; Zustände nie nur als Farbe, immer mit Wort.
 - `prefers-reduced-motion`, `prefers-reduced-transparency` und `prefers-contrast` sind in beiden Stylesheets bedient — bei neuen Animationen mitpflegen.
-- Die Geräteseite lässt sich ohne Board ansehen: `tools/mock_device.js` (braucht `npm install ws`; Port 8080 ist auf dem Pi belegt, also `HTTP_PORT=18090 WS_PORT=18091`).
+- Die Geräteseite lässt sich ohne Board ansehen: `tools/mock_device.js` (braucht `npm install ws`; ist Port 8080 belegt: `HTTP_PORT=18090 WS_PORT=18091`).
 
 Geprüft per Screenshot: Admin-Seite über `server/test/ui.sh`, Geräteseite im Simulator und vom echten Board (Chromium, Handy-Format), Display über `lcd_debug.py shot`. Nicht geprüft: echte Handys, Safari, heller Modus der Admin-Seite im Browser, die Medienabfragen für weniger Bewegung/Transparenz/mehr Kontrast, und wie sich das Drücken unter einem echten Finger anfühlt.
 
+## Übergabe auf einen neuen Entwicklungsrechner (12. Oktober 2026)
+
+Bis hierher wurde auf einem Raspberry Pi entwickelt; der ist aufgeräumt (kein Checkout, kein PlatformIO, keine Container mehr). Der Stand ist die Vorabversion `v1.8.0-dev.20261012` auf GitHub. Angaben in den Dokumenten wie „auf dem Pi“, `192.168.10.232` (der Pi) und `192.168.10.163` (das Board im WLAN) beschreiben den alten Testplatz, nicht den neuen.
+
+**Einrichten:** PlatformIO (Firmware), Docker mit Compose (Server; Go muss nicht installiert sein), dazu `curl`, `openssl`, `python3`, `g++` für die Tests. Erster Lauf zum Prüfen der Umgebung: `tests/` nach `tests/README.md`, dann `server/test/e2e.sh`, `tests/c2/run.sh`, `server/test/pg.sh`, `server/test/cloud.sh`; `server/test/ui.sh` zieht ein 3-GB-Image und war auf dem Pi langsam und wackelig (Zeitüberschreitungen) — auf einem größeren Rechner neu beurteilen.
+
+**Das Board:** trägt die Firmware dieses Stands (neue Gestaltung, Fernkonsole), ist bei keiner Leitstelle angemeldet und kennt nur das WLAN des alten Testplatzes — am neuen Platz über den Hotspot `RS232-FE0C` und `http://192.168.4.1` neu einrichten.
+
+**Als Nächstes** (Phase 5 zu Ende): Sicherung der Datenbank, Wechsel des Serverschlüssels, Überwachung; danach ein Lauf mit echtem Zertifikat (öffentlicher Name nötig). Vorher gehört der Server nicht ins Internet.
+
+**Entscheidungen des Besitzers, die gelten:**
+- Speicher PostgreSQL, TLS über Caddy, zweiter Faktor TOTP, dazu Anmeldung über Microsoft Entra ID als Möglichkeit.
+- Die strenge Content-Security-Policy bleibt (`style-src 'self'`, kein `unsafe-inline`).
+- Die Werkzeuge bleiben in Python (kein Umschreiben nach Rust).
+- Kein Firmware-Update über die Leitstelle ohne Signaturprüfung.
+- Committen und pushen nur auf Ansage. Commit-Nachrichten deutsch, im Stil „Leitstelle Phase N: …“; Dokumentation deutsch, Code-Kommentare englisch.
+
+**Ungeklärt aus der letzten Phase:** Das Board meldete sich in einem Browserlauf rund 50 s nicht (Funk danach in Ordnung). Über Caddy dauerte sein Handshake 6,3 s statt gut einer Sekunde — vermutet wird der Sparmodus bei 80 MHz, nachgeprüft ist es nicht. Entra ist nie gegen einen echten Mandanten gelaufen, TOTP nie mit einer echten Authenticator-App.
+
 ## Offene Punkte (Priorität)
 
-0. Fernkonsole (Phase 4): Ausgabe des Ports am Board prüfen, sobald der MAX3232 dran ist
+0. Leitstelle Phase 5 abschließen: Sicherung, Wechsel des Serverschlüssels, Überwachung (siehe Übergabe)
+0. Fernkonsole (Phase 4): Ausgabe des Ports am Board prüfen, sobald der MAX3232 dran ist; Fernkonsole am Board über Caddy
 1. Waveshare: MAX3232 anschließen, echter Konsolenzugriff; SD-Karte; Akkubetrieb — Liste in `firmware/WAVESHARE.md` („Offen“)
 2. 802.1X gegen echten RADIUS, danach PKCS#12 und CSR
 3. Gehäuse für das Waveshare-Board (es gibt noch keins)
