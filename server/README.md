@@ -32,10 +32,46 @@ docker compose -f docker-compose.cloud.yml up -d --build
 - `C2_DOMAIN` ist der Name, unter dem der Server erreichbar ist; sein DNS-Eintrag muss auf diesen Rechner zeigen und die Ports 80 und 443 müssen von außen ankommen, sonst bekommt Caddy kein Zertifikat. `C2_CADDY_TLS` ist die E-Mail-Adresse für Let's Encrypt — oder `internal`, dann stellt Caddy das Zertifikat mit einer eigenen Zertifizierungsstelle aus (für einen Test ohne Internet; der Browser warnt).
 - **Umzug von der Datei:** Findet der Server beim ersten Start mit leerer Datenbank eine `state.json` im Volume `c2data`, übernimmt er sie — Serverschlüssel, Geräte, Aufträge, Konten, Protokoll — und benennt sie in `state.json.imported` um. Wer beide Compose-Dateien im selben Verzeichnis startet, hat dasselbe Volume; die Geräte merken vom Umzug nichts, solange `C2_PUBLIC_URL` gleich bleibt. Die umbenannte Datei enthält weiter den Serverschlüssel: sicher verwahren oder löschen.
 - **Ein Serverprozess je Datenbank.** Der Server rechnet im Speicher und schreibt jede Änderung in einer Transaktion in die Datenbank; ein zweiter Prozess an derselben Datenbank verweigert den Start.
-- Die Datenbank enthält den privaten Serverschlüssel, die Passwort-Hashes und die TOTP-Geheimnisse. Wer das Volume `pgdata` verliert, muss alle Geräte neu anmelden. Eine Sicherung gibt es noch nicht eingebaut (KONZEPT.md §6); von Hand: `docker compose -f docker-compose.cloud.yml exec db pg_dump -U c2 c2 > sicherung.sql`.
+- Die Datenbank enthält den privaten Serverschlüssel, die Passwort-Hashes und die TOTP-Geheimnisse. Wer das Volume `pgdata` verliert, muss alle Geräte neu anmelden. Dagegen gibt es die Sicherung (nächster Abschnitt).
 - Hineinsehen: `docker compose -f docker-compose.cloud.yml exec db psql -U c2 c2` — Tabellen `devices`, `commands`, `consoles`, `users`, `audit`, `tokens`, `server`. Das Protokoll behält dort 200 000 Einträge; die Weboberfläche zeigt die neuesten.
 
-**Stand:** auf dem Raspberry Pi mit `C2_CADDY_TLS=internal` getestet (`test/cloud.sh`, und mit dem Waveshare-Board im lokalen Netz), nicht mit einem echten Zertifikat und nicht im Internet. Sicherung, Wechsel des Serverschlüssels und Überwachung fehlen noch — die Warnung oben gilt weiter.
+**Stand:** auf dem Raspberry Pi mit `C2_CADDY_TLS=internal` getestet (`test/cloud.sh`, und mit dem Waveshare-Board im lokalen Netz), nicht mit einem echten Zertifikat und nicht im Internet. Wechsel des Serverschlüssels und Überwachung fehlen noch — die Warnung oben gilt weiter.
+
+### Sicherung und Wiederherstellung
+
+Zum Aufbau gehört der Dienst `backup` (`backup.sh`): Er schreibt alle 24 Stunden eine Sicherung der ganzen Datenbank (`pg_dump`, ein Schnappschuss, der Server läuft dabei weiter) ins Volume `backups` und behält die neuesten 14 (`C2_BACKUP_EVERY_H`, `C2_BACKUP_KEEP` in `.env`). Scheitert eine, versucht er es nach fünf Minuten wieder; gibt es zwei Abstände lang keine, meldet `docker compose ps` den Dienst als `unhealthy`.
+
+```bash
+C="docker compose -f docker-compose.cloud.yml"
+$C exec backup /bin/sh /backup.sh list                 # was da ist
+$C exec backup /bin/sh /backup.sh once                 # jetzt eine, z. B. vor einem Umbau
+$C cp backup:/backups/c2-20261012T030000Z.dump .       # vom Rechner herunterholen
+```
+
+- **Die Sicherungen liegen auf demselben Rechner wie die Datenbank.** Gegen einen kaputten Rechner hilft nur eine Kopie woanders — das Herunterholen und Wegbringen ist nicht eingebaut. `docker compose down -v` löscht auch das Volume `backups`.
+- **Eine Sicherung ist so geheim wie die Datenbank** (privater Serverschlüssel, Passwort-Hashes, TOTP-Geheimnisse) und **nicht verschlüsselt**. Vor dem Wegbringen verschlüsseln, zum Beispiel mit `age` oder `gpg`.
+- Zur Sicherung gehört die `.env` (Name, Einstellungen); das Datenbankpasswort darf nach einem Verlust ein neues sein. Caddys Zertifikate braucht man nicht — er holt neue.
+
+**Zurückspielen** — der Server muss dabei stehen, sonst schreibt er seinen Stand aus dem Speicher darüber (`restore` weigert sich, solange er läuft):
+
+```bash
+$C stop c2server
+$C exec backup /bin/sh /backup.sh restore c2-20261012T030000Z.dump
+$C start c2server
+```
+
+Nach dem Verlust des Rechners oder aller Volumes — den Server erst starten, wenn die Sicherung drin ist, sonst macht er sich einen neuen Schlüssel:
+
+```bash
+$C up -d db backup
+$C cp c2-20261012T030000Z.dump backup:/backups/
+$C exec backup /bin/sh /backup.sh restore c2-20261012T030000Z.dump
+$C up -d
+```
+
+Zurückgespielt wird alles oder nichts; eine kaputte Datei lässt die Datenbank, wie sie war. **Was nach der Sicherung geschah, ist danach weg:** Später angemeldete Geräte kennt der Server nicht mehr (neu anmelden), und ein später **gesperrtes Gerät ist wieder aktiv** — nach dem Zurückspielen die Geräteliste durchgehen und erneut sperren. Dasselbe gilt für gesperrte oder zurückgesetzte Konten.
+
+**Stand:** `test/backup.sh` (von selbst geschriebene Sicherung, Zurückspielen über einen späteren Stand, Verlust aller Volumes, Aufräumen). Nicht geprüft: eine Sicherung aus einem älteren Schema in einen neueren Server (es gibt erst ein Schema), große Datenbanken, und ob jemand nach einem echten Ausfall mit dieser Anleitung zurechtkommt.
 
 ## Ein simuliertes Gerät anmelden
 
@@ -110,6 +146,7 @@ Auf der Anmeldeseite erscheint dann „Mit Microsoft anmelden“. Den zweiten Fa
 | `C2_ENTRA_TENANT`, `C2_ENTRA_CLIENT_ID`, `C2_ENTRA_CLIENT_SECRET` | leer | Anmeldung über Microsoft Entra ID (siehe oben); alle drei oder keine |
 | `C2_DATABASE_URL` | leer | `postgres://benutzer:passwort@host:5432/datenbank?sslmode=…`: Zustand in PostgreSQL statt in `state.json`. Die Cloud-Compose-Datei setzt das selbst aus `C2_DB_PASSWORD` |
 | `C2_DOMAIN`, `C2_CADDY_TLS`, `C2_DB_PASSWORD` | – | nur `docker-compose.cloud.yml` (siehe oben); dort auch `C2_HTTP_PORT`, `C2_HTTPS_PORT` (Vorgabe 80, 443) |
+| `C2_BACKUP_EVERY_H`, `C2_BACKUP_KEEP` | `24`, `14` | nur `docker-compose.cloud.yml`: Abstand der Sicherungen in Stunden und wie viele bleiben |
 | `C2_TRUST_PROXY` | leer | `1`: Absenderadresse aus `X-Forwarded-For` nehmen (für Anfragerate und Protokoll). Nur hinter einem Proxy, der diesen Kopf setzt |
 | `C2_PUBLIC_URL` | `https://c2server:8443` (Compose) | Adresse, unter der Geräte den Server erreichen; steht im Einladungs-Token |
 | `C2_TLS` | `selfsigned` | `selfsigned`, `files` (`C2_TLS_CERT`, `C2_TLS_KEY`) oder `off` (hinter einem Proxy, der TLS beendet) |
@@ -119,7 +156,7 @@ Auf der Anmeldeseite erscheint dann „Mit Microsoft anmelden“. Den zweiten Fa
 | `C2_DATA_DIR` | `/data` | Zustand: `state.json` (enthält den privaten Serverschlüssel), TLS-Zertifikat. Mit `C2_DATABASE_URL` wird hier nur einmal eine `state.json` zum Übernehmen gesucht |
 | `C2_POLL_S` | `30` | Abstand, in dem Geräte sich melden sollen |
 
-Wer das Datenverzeichnis (mit PostgreSQL: die Datenbank) verliert, verliert den Serverschlüssel — alle Geräte müssten neu angemeldet werden.
+Wer das Datenverzeichnis (mit PostgreSQL: die Datenbank und ihre Sicherungen) verliert, verliert den Serverschlüssel — alle Geräte müssten neu angemeldet werden. Für den Betrieb mit der Datei gibt es keine eingebaute Sicherung: `state.json` bei gestopptem Server kopieren.
 
 ## Tests
 
@@ -128,6 +165,7 @@ Wer das Datenverzeichnis (mit PostgreSQL: die Datenbank) verliert, verliert den 
 ./test/ui.sh                        # die Weboberfläche in einem Browser ohne Bildschirm (Playwright-Image, 3 GB)
 ./test/pg.sh                        # die Unit-Tests noch einmal, mit dem Zustand in einem echten PostgreSQL
 ./test/cloud.sh                     # Caddy + Server + PostgreSQL: Umzug von der Datei, Zertifikat, Konto, Neustart
+./test/backup.sh                    # Sicherung der Datenbank und Zurückspielen, auch nach dem Verlust aller Volumes
 ../tests/c2/run.sh                  # der Protokollcode der Firmware auf dem PC gegen diesen Server
 docker build --target test .        # nur Formatierung, go vet und Unit-Tests
 ```
@@ -152,7 +190,9 @@ internal/store/      Zustand: store.go, users.go rechnen im Speicher; backend.go
                      postgres.go die Datenbank (Schema als Liste von Migrationen; Treiber pgx, das einzige fremde Paket)
 docker-compose.yml   lokal: der Server allein, selbstsigniert, Zustand in der Datei
 docker-compose.cloud.yml, Caddyfile, .env.example   Caddy davor, PostgreSQL dahinter
+backup.sh            Sicherung der Datenbank (Dienst backup) und Zurückspielen
 test/e2e.sh          Ende-zu-Ende-Test gegen den Container
 test/ui.sh, ui_test.py   Browsertest der Weboberfläche
 test/pg.sh, cloud.sh     Zustand in PostgreSQL; der ganze Aufbau mit Caddy
+test/backup.sh           Sicherung und Wiederherstellung
 ```

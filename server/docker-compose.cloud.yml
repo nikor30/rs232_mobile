@@ -66,6 +66,30 @@ services:
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
 
+  backup:
+    image: postgres:17-alpine    # for pg_dump; no database runs here
+    entrypoint: ["/bin/sh", "/backup.sh"]
+    command: ["loop"]
+    environment:
+      PGPASSWORD: ${C2_DB_PASSWORD:?set C2_DB_PASSWORD in .env}
+      C2_BACKUP_EVERY_H: ${C2_BACKUP_EVERY_H:-24}
+      C2_BACKUP_KEEP: ${C2_BACKUP_KEEP:-14}
+    volumes:
+      - ./backup.sh:/backup.sh:ro
+      - backups:/backups         # as secret as the database itself; copy it off this machine (README.md)
+    networks: [back]
+    depends_on:
+      db: { condition: service_healthy }
+    healthcheck:                 # unhealthy: no backup for two intervals
+      test: ["CMD", "/bin/sh", "/backup.sh", "check"]
+      interval: 5m
+      timeout: 10s
+      start_period: 2m
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+
 networks:
   front:
   back:
@@ -74,5 +98,6 @@ networks:
 volumes:
   c2data:
   pgdata:
+  backups:
   caddydata:
   caddyconfig:
