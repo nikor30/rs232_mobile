@@ -99,4 +99,21 @@ docker logs $P-console >"$LOG" 2>&1
 expect "the device's side" "$(tr '\n' ' ' <"$LOG")" "CONSOLE $CON open CLOSED vom Administrator beendet TYPED 73686f770d BRK 1 "
 expect "session log" "$(admin GET /admin/v1/devices/$ID/console | json '[(s["reason"],s["bytes_in"],s["bytes_out"]) for s in d["sessions"]][-1]')" "('vom Administrator beendet', 5, 2012)"
 
+echo "== the server changes its key"
+OLDFP=$(admin GET /admin/v1/server | json 'd["fingerprint"]')
+NEWFP=$(admin POST /admin/v1/server/rotate-key '{"days":1}' | json 'd["fingerprint"]')
+[ "$NEWFP" != "$OLDFP" ] && [ ${#NEWFP} = 64 ] || fail "rotate-key: $NEWFP"
+old() { admin GET /admin/v1/devices | json "[x.get('old_key', False) for x in d if x['id']=='$ID'][0]"; }
+expect "the server waits for the device" "$(old)" True
+# the tag of a key: the first eight bytes of its fingerprint
+expect "first poll: the new key is announced on the old one" "$(host /build/c2host poll /build/device.bin | tr '\n' ' ')" "STATE active KEY announced ${NEWFP:0:16} "
+expect "the server still waits" "$(old)" True
+expect "second poll: the device says it has the key" "$(host /build/c2host poll /build/device.bin | tr '\n' ' ')" "STATE active "
+expect "the server takes the device for changed" "$(old)" False
+CMD=$(admin POST /admin/v1/devices/$ID/commands '{"type":"ping"}' | json 'd["id"]')
+expect "third poll: the old key fails, the new one is pinned" "$(host /build/c2host poll /build/device.bin | tr '\n' ' ')" "KEY changed ${NEWFP:0:16} STATE active CMD $CMD ping "
+expect "fourth poll: nothing left to do" "$(host /build/c2host poll /build/device.bin | tr '\n' ' ')" "STATE active "
+expect "end of the change" "$(admin POST /admin/v1/server/rotate-key/end | json 'd["key_change"]')" None
+expect "the device stays" "$(host /build/c2host poll /build/device.bin | tr '\n' ' ')" "STATE active "
+
 printf '\nFIRMWARE PROTOCOL CODE INTEROPERATES WITH THE SERVER\n'

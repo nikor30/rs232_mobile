@@ -52,6 +52,7 @@ const (
 var (
 	ErrNotFound = errors.New("not found")
 	ErrState    = errors.New("not possible in this state")
+	ErrArgs     = errors.New("bad arguments")
 	ErrSAS      = errors.New("code does not match")
 	ErrToken    = errors.New("enrollment token unknown, used or expired")
 	ErrFull     = errors.New("command queue is full")
@@ -98,13 +99,16 @@ type Device struct {
 	SASAttempts int             `json:"sas_attempts,omitempty"`
 	Enrolled    time.Time       `json:"enrolled"`
 	LastSeen    *time.Time      `json:"last_seen,omitempty"`
-	Status      json.RawMessage `json:"status,omitempty"` // last status the device reported
+	Status      json.RawMessage `json:"status,omitempty"`  // last status the device reported
+	OldKey      bool            `json:"old_key,omitempty"` // has not confirmed the server's new key yet (key change)
 	Commands    []*Command      `json:"commands,omitempty"`
 	Consoles    []*ConsoleLog   `json:"consoles,omitempty"`
 }
 
 type data struct {
 	ServerKey []byte             `json:"server_key"`
+	OldKey    []byte             `json:"old_key,omitempty"`   // the previous server key, during a key change
+	OldUntil  *time.Time         `json:"old_until,omitempty"` // and how long it still counts
 	Tokens    map[string]*Token  `json:"tokens"`
 	Devices   map[string]*Device `json:"devices"`
 	NextCmd   uint64             `json:"next_cmd"`
@@ -118,6 +122,7 @@ type Store struct {
 	d   data
 	ch  changes // what the backend has not been given yet
 	key *proto.StaticKey
+	old *proto.StaticKey // during a key change
 	now func() time.Time
 	// "last seen" and the reported status change with every poll of every
 	// device. They are written with the next real change, or after seenFlush.
@@ -167,6 +172,12 @@ func open(b backend, first *data) (*Store, error) {
 		b.close()
 		return nil, err
 	}
+	if s.d.OldKey != nil {
+		if s.old, err = proto.ParseStatic(s.d.OldKey); err != nil {
+			b.close()
+			return nil, err
+		}
+	}
 	// Console sessions live in memory: one that was open when the server
 	// stopped ended there, whatever the backend says.
 	for _, d := range s.d.Devices {
@@ -197,7 +208,136 @@ func (s *Store) Close() error {
 // SetClock replaces the time source (tests).
 func (s *Store) SetClock(now func() time.Time) { s.now = now }
 
-func (s *Store) ServerKey() *proto.StaticKey { return s.key }
+// ServerKey is the key devices enroll with. A device that enrolled before a
+// key change may still be on the previous one: KeyFor.
+func (s *Store) ServerKey() *proto.StaticKey {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.key
+}
+
+// ---------------------------------------------------------------- key change
+
+// A new server key reaches the devices through the channel the old one
+// authenticates (KONZEPT.md §4.6). Until a device has confirmed that it holds
+// the new key, the server answers it with the old one, which it keeps for a
+// limited time.
+
+const (
+	KeepOldKeyDefault = 30 * 24 * time.Hour
+	KeepOldKeyMax     = 365 * 24 * time.Hour
+)
+
+// KeyTag names a server key in the messages of a device.
+func KeyTag(pub []byte) string {
+	fp := proto.Fingerprint(pub)
+	return hex.EncodeToString(fp[:8])
+}
+
+// endKeyChange forgets the old key if its time is up, and the key itself with
+// it. Callers hold the lock and save.
+func (s *Store) endKeyChange(force bool) bool {
+	if s.d.OldKey == nil || (!force && s.d.OldUntil != nil && !s.now().After(*s.d.OldUntil)) {
+		return false
+	}
+	s.d.OldKey, s.d.OldUntil, s.old = nil, nil, nil
+	s.ch.meta = true
+	return true
+}
+
+// RotateKey gives the server a new key. Every device known so far stays on the
+// old one until it confirms the new, for keep at most; the invitations that
+// are still open name the old key and are void.
+func (s *Store) RotateKey(keep time.Duration) error {
+	if keep <= 0 || keep > KeepOldKeyMax {
+		return ErrArgs
+	}
+	k, err := proto.GenerateStatic()
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.endKeyChange(false)
+	if s.d.OldKey != nil {
+		return ErrState // one change at a time: a device holds one old and one new key
+	}
+	until := s.now().Add(keep)
+	s.d.OldKey, s.d.OldUntil, s.old = s.d.ServerKey, &until, s.key
+	s.d.ServerKey, s.key = k.Marshal(), k
+	s.ch.meta = true
+	for id, d := range s.d.Devices {
+		if d.State != StateRevoked {
+			d.OldKey = true
+			s.ch.device(id)
+		}
+	}
+	for id := range s.d.Tokens {
+		delete(s.d.Tokens, id)
+		s.ch.token(id)
+	}
+	return s.save()
+}
+
+// EndKeyChange forgets the old key now. Devices that have not confirmed the
+// new one have to be enrolled again.
+func (s *Store) EndKeyChange() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.endKeyChange(true) {
+		return ErrState
+	}
+	return s.save()
+}
+
+// KeyChange describes a key change in progress: the old key, until when it
+// counts, and how many devices have not confirmed the new one. old is nil if
+// there is none.
+func (s *Store) KeyChange() (old []byte, until time.Time, waiting int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, d := range s.d.Devices {
+		if d.OldKey && d.State != StateRevoked {
+			waiting++
+		}
+	}
+	if s.old == nil || s.now().After(*s.d.OldUntil) {
+		return nil, time.Time{}, waiting
+	}
+	return s.old.Public(), *s.d.OldUntil, waiting
+}
+
+// KeyFor is the server key a known device expects in a handshake, and whether
+// that is the old one. ErrState: the device missed the key change.
+func (s *Store) KeyFor(id string) (key *proto.StaticKey, old bool, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d := s.d.Devices[id]
+	if d == nil {
+		return nil, false, ErrNotFound
+	}
+	if !d.OldKey {
+		return s.key, false, nil
+	}
+	if s.old == nil || s.now().After(*s.d.OldUntil) {
+		return nil, true, ErrState
+	}
+	return s.old, true, nil
+}
+
+// ConfirmKey notes that a device holds the server's current key; tag is what
+// the device sent (KeyTag). From now on it is answered with that key.
+func (s *Store) ConfirmKey(id, tag string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d := s.d.Devices[id]
+	if d == nil || !d.OldKey || tag != KeyTag(s.key.Public()) {
+		return nil
+	}
+	d.OldKey = false
+	s.ch.device(id)
+	return s.save()
+}
 
 // save hands the changes to the backend. If that fails they stay noted and go
 // out with the next save. Callers hold the lock.
@@ -233,6 +373,9 @@ func (s *Store) Check() error {
 	failed := !s.failing.IsZero()
 	if err := s.note(s.b.check()); err != nil {
 		return err
+	}
+	if s.endKeyChange(false) {
+		return s.save()
 	}
 	if !s.ch.empty() && (failed || s.now().Sub(s.lastSave) > seenFlush) {
 		return s.save()
@@ -362,6 +505,7 @@ func (s *Store) Enroll(tokenID string, pub []byte, name string, info json.RawMes
 	s.ch.token(tokenID)
 	s.ch.device(id)
 	d.Name, d.Info, d.State, d.SAS, d.SASAttempts, d.Enrolled = name, info, StatePending, sas, 0, s.now()
+	d.OldKey = false // it enrolled with the current key
 	return s.save()
 }
 

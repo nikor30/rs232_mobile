@@ -127,6 +127,11 @@ static bool big(const std::function<void()> &fn) {
 static uint8_t priv[C2Proto::PRIV_SIZE];
 static bool haveKey = false;
 static uint8_t *serverPub = nullptr;     // PUB_SIZE bytes once enrolled
+// Change of the server key: the announced key waits in the NVS ("spub2") until
+// a handshake needs it; the tag names the newest key held, for the polls.
+static bool haveNext = false;
+static char skTag[C2Proto::KEY_TAG_SIZE] = "";
+static bool confirmFailed = false;       // the last handshake: the server did not prove the pinned key
 static std::string serverUrl;
 static State state = OFF;
 static C2Proto::Session session;
@@ -173,6 +178,14 @@ static void loadStored() {
       serverUrl = url.c_str();
       state = st == ACTIVE ? ACTIVE : PENDING;
       publish("", sas.c_str());
+      C2Proto::keyTag(serverPub, skTag);
+      uint8_t *next = (uint8_t *)malloc(C2Proto::PUB_SIZE);
+      if (next && p.getBytes("spub2", next, C2Proto::PUB_SIZE) == C2Proto::PUB_SIZE &&
+          memcmp(next, serverPub, C2Proto::PUB_SIZE) != 0) {
+        haveNext = true;
+        C2Proto::keyTag(next, skTag);
+      }
+      free(next);
     }
   }
   p.end();
@@ -194,7 +207,8 @@ static void forgetAll() {
     p.end();
   }
   memset(priv, 0, sizeof(priv));
-  haveKey = haveSession = false;
+  haveKey = haveSession = haveNext = false;
+  skTag[0] = 0;
   session.clear();
   free(serverPub);
   serverPub = nullptr;
@@ -372,7 +386,7 @@ static Ex fromHttp(int code) {
 }
 
 static Ex handshake(C2Proto::Kind kind, const C2Proto::Token *tok) {
-  haveSession = false;
+  haveSession = confirmFailed = false;
   uint8_t *req = (uint8_t *)malloc(C2Proto::REQ_ENROLL), *resp = (uint8_t *)malloc(C2Proto::RESP_SIZE);
   C2Proto::Handshake hs;
   size_t n = 0, got = 0;
@@ -392,6 +406,7 @@ static Ex handshake(C2Proto::Kind kind, const C2Proto::Token *tok) {
       if (r == C2Proto::OK) haveSession = true;
       else {
         ex = EX_BAD;
+        confirmFailed = r == C2Proto::ERR_CONFIRM;
         publish(r == C2Proto::ERR_CONFIRM ? "Server hat seinen Schluessel nicht bewiesen"
                 : r == C2Proto::ERR_CRYPTO ? "zu wenig Speicher fuer den Handshake" : "Handshake: Antwort unbrauchbar");
       }
@@ -405,6 +420,71 @@ static Ex handshake(C2Proto::Kind kind, const C2Proto::Token *tok) {
     shared.cryptoMs = crypto;
   }
   return ex;
+}
+
+// A handshake with the pinned server key. If the server cannot prove that one
+// and has announced another, that one is tried - and pinned if it works: the
+// server has changed its key.
+static Ex sessionHandshake() {
+  Ex ex = handshake(C2Proto::KIND_SESSION, nullptr);
+  if (ex != EX_BAD || !confirmFailed || !haveNext) return ex;
+  uint8_t *next = (uint8_t *)malloc(C2Proto::PUB_SIZE);
+  bool ok = false;
+  {
+    Preferences p;
+    if (next && p.begin(NVS, true)) {
+      ok = p.getBytes("spub2", next, C2Proto::PUB_SIZE) == C2Proto::PUB_SIZE;
+      p.end();
+    }
+  }
+  if (!ok) {
+    free(next);
+    return ex;
+  }
+  uint8_t *pinned = serverPub;
+  serverPub = next;
+  Ex ex2 = handshake(C2Proto::KIND_SESSION, nullptr);
+  if (ex2 != EX_OK) {                    // not that one either: nothing changes
+    serverPub = pinned;
+    free(next);
+    return ex2 == EX_BAD ? ex : ex2;
+  }
+  free(pinned);
+  haveNext = false;
+  C2Proto::keyTag(serverPub, skTag);
+  Preferences p;
+  if (p.begin(NVS, false)) {
+    p.putBytes("spub", serverPub, C2Proto::PUB_SIZE);
+    p.remove("spub2");
+    p.end();
+  }
+  Serial.printf("[C2]   Serverschluessel gewechselt (%s)\n", skTag);
+  return EX_OK;
+}
+
+// What a poll's answer says about a new server key: kept for the handshake
+// that will need it. True if this is news.
+static bool noteNewKey(const char *b64) {
+  uint8_t *next = (uint8_t *)malloc(C2Proto::PUB_SIZE);
+  char tag[C2Proto::KEY_TAG_SIZE];
+  bool news = false;
+  if (next && serverPub && C2Proto::announcedKey(b64, serverPub, next)) {
+    C2Proto::keyTag(next, tag);
+    if (!haveNext || strcmp(tag, skTag)) {
+      Preferences p;
+      if (p.begin(NVS, false)) {
+        news = p.putBytes("spub2", next, C2Proto::PUB_SIZE) == C2Proto::PUB_SIZE;
+        p.end();
+      }
+      if (news) {
+        haveNext = true;
+        strlcpy(skTag, tag, sizeof(skTag));
+        Serial.printf("[C2]   neuer Serverschluessel angekuendigt (%s)\n", skTag);
+      }
+    }
+  }
+  free(next);
+  return news;
 }
 
 // Sends one message and reads the answer on the current session. With
@@ -526,6 +606,8 @@ static void doEnroll(const String &text) {
   free(serverPub);
   serverPub = key;
   serverUrl = tok.url;
+  haveNext = false;
+  C2Proto::keyTag(serverPub, skTag);
   results.clear();
   publishId();
 
@@ -542,6 +624,7 @@ static void doEnroll(const String &text) {
     free(serverPub);
     serverPub = nullptr;
     serverUrl.clear();
+    skTag[0] = 0;
     state = OFF;
     err = ex == EX_REFUSED ? "Token abgelehnt (verbraucht oder abgelaufen)" : ex == EX_NET ? "Server nicht erreichbar" : "Anmeldung gescheitert";
     Serial.printf("[C2]   Anmeldung gescheitert: %s\n", err);
@@ -549,6 +632,7 @@ static void doEnroll(const String &text) {
     if (p.begin(NVS, false)) {
       p.remove("url");
       p.remove("spub");
+      p.remove("spub2");
       p.remove("st");
       p.remove("sas");
       p.end();
@@ -561,6 +645,7 @@ static void doEnroll(const String &text) {
     p.putBytes("key", priv, sizeof(priv));
     p.putString("url", serverUrl.c_str());
     p.putBytes("spub", serverPub, C2Proto::PUB_SIZE);
+    p.remove("spub2");
     p.putUChar("st", state);
     p.putString("sas", session.sas);
     p.end();
@@ -584,12 +669,13 @@ static void doPoll() {
   JsonDocument msg, reply;
   for (int attempt = 0; attempt < 2; attempt++) {
     if (!haveSession) {
-      ex = handshake(C2Proto::KIND_SESSION, nullptr);
+      ex = sessionHandshake();
       if (ex != EX_OK) break;
     }
     collectJobResults();
     msg.clear();
     msg["t"] = "poll";
+    if (skTag[0]) msg["sk"] = skTag;     // the newest server key this device holds
     fillStatus(msg["status"].to<JsonObject>());
     if (results.is<JsonArray>() && results.size()) msg["results"] = results;
     ex = exchange(msg, reply);
@@ -623,6 +709,8 @@ static void doPoll() {
   pollS = constrain((int)(reply["poll_s"] | 30), 5, 3600);
   // answers go back at once, not a poll interval later
   nextPollAt = millis() + (results.size() ? 500 : pollS * 1000UL);
+  const char *rekey = reply["rekey"] | "";
+  if (rekey[0] && noteNewKey(rekey)) nextPollAt = millis() + 500;   // tell the server that it is here
   {
     Lock l;
     shared.lastOkMs = millis();
@@ -670,7 +758,7 @@ static void conStep() {
   keepAlive = true;
   Ex ex = haveSession ? exchange(msg, reply, true) : EX_REHANDSHAKE;
   if (ex == EX_REHANDSHAKE) {            // an hour has passed, or the server was restarted
-    ex = handshake(C2Proto::KIND_SESSION, nullptr);
+    ex = sessionHandshake();
     if (ex == EX_OK) return;             // next round, on the new session
   }
   if (ex == EX_REFUSED) {

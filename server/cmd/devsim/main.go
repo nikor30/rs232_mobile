@@ -6,6 +6,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -79,7 +80,16 @@ func main() {
 		var conMinutes int
 		for i := 0; ; i++ {
 			status := map[string]any{"uptime_s": int(time.Since(start).Seconds()), "polls": i}
+			pinned, next := c.State.ServerPub, c.State.NextPub
 			r, err := c.Poll(status, results)
+			// a key change of the server: what the device has to remember
+			if !bytes.Equal(pinned, c.State.ServerPub) {
+				save()
+				fmt.Printf("KEY changed to %s\n", c.KeyTag())
+			} else if !bytes.Equal(next, c.State.NextPub) {
+				save()
+				fmt.Printf("KEY %s announced\n", c.KeyTag())
+			}
 			if errors.Is(err, device.ErrRefused) {
 				log.Fatal("refused by the server (revoked or unknown)")
 			}

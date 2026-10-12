@@ -55,6 +55,7 @@ type session struct {
 	tokenID  string // enrollment handshakes only
 	enroll   bool   // still waiting for the "enroll" message
 	authed   bool   // the device has proved its key with a valid record
+	oldKey   bool   // made with the server's previous key: the device has to be told the new one
 	expires  time.Time
 }
 
@@ -192,6 +193,8 @@ func (sv *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /admin/v1/audit", sv.admin(sv.auditLog))
 	mux.HandleFunc("GET /admin/v1/server", sv.admin(sv.serverInfo))
 	mux.HandleFunc("GET /admin/v1/status", sv.admin(sv.status))
+	mux.HandleFunc("POST /admin/v1/server/rotate-key", sv.admin(sv.rotateKey))
+	mux.HandleFunc("POST /admin/v1/server/rotate-key/end", sv.admin(sv.endKeyChange))
 	mux.HandleFunc("POST /admin/v1/enroll-tokens", sv.admin(sv.newToken))
 	mux.HandleFunc("GET /admin/v1/devices", sv.admin(sv.listDevices))
 	mux.HandleFunc("POST /admin/v1/devices/{id}/approve", sv.admin(sv.approve))
@@ -246,6 +249,7 @@ func (sv *Server) handshake(w http.ResponseWriter, r *http.Request) {
 	}
 	e := &session{deviceID: proto.IDString(h.DeviceID)}
 	var devPub, psk []byte
+	key := sv.st.ServerKey()
 	if h.Kind == proto.KindEnroll {
 		e.enroll, e.tokenID = true, hex.EncodeToString(h.TokenID[:])
 		devPub = h.DevicePub
@@ -258,13 +262,16 @@ func (sv *Server) handshake(w http.ResponseWriter, r *http.Request) {
 				err = store.ErrState
 			}
 		}
+		if err == nil { // during a key change: the key this device still expects
+			key, e.oldKey, err = sv.st.KeyFor(e.deviceID)
+		}
 	}
 	if err != nil {
 		log.Printf("handshake %s refused: %v", e.deviceID, err)
 		http.Error(w, "", http.StatusForbidden)
 		return
 	}
-	resp, s, err := proto.ServerHandshake(sv.st.ServerKey(), req, devPub, psk)
+	resp, s, err := proto.ServerHandshake(key, req, devPub, psk)
 	if err != nil {
 		http.Error(w, "", http.StatusBadRequest)
 		return
@@ -299,6 +306,7 @@ type deviceMsg struct {
 	Info    json.RawMessage `json:"info,omitempty"`
 	Status  json.RawMessage `json:"status,omitempty"`
 	Results []store.Result  `json:"results,omitempty"`
+	SK      string          `json:"sk,omitempty"` // "poll": the server key the device holds (store.KeyTag)
 	conMsg                  // "con": the remote console
 }
 
@@ -312,6 +320,7 @@ type serverMsg struct {
 	State string      `json:"state"`
 	Cmds  []serverCmd `json:"cmds,omitempty"`
 	PollS int         `json:"poll_s"`
+	Rekey []byte      `json:"rekey,omitempty"` // the server's new public key (base64), to a device that is still on the old one
 }
 
 func (sv *Server) drop(id [proto.IDSize]byte) {
@@ -376,6 +385,20 @@ func (sv *Server) msg(w http.ResponseWriter, r *http.Request) {
 		out.State = store.StatePending
 		log.Printf("device %s (%q) enrolled, waiting for approval", e.deviceID, m.Name)
 	case !e.enroll && m.T == "poll":
+		if e.oldKey {
+			// This session was made with the old server key, so the device can
+			// believe what it is told here about the new one. Once it says it
+			// has it, the server answers its handshakes with the new key.
+			out.Rekey = sv.st.ServerKey().Public()
+			if m.SK != "" {
+				if err := sv.st.ConfirmKey(e.deviceID, m.SK); err != nil {
+					log.Printf("key change of %s: %v", e.deviceID, err)
+				} else if m.SK == store.KeyTag(out.Rekey) {
+					log.Printf("device %s has the new server key", e.deviceID)
+					e.oldKey, out.Rekey = false, nil
+				}
+			}
+		}
 		state, cmds, err := sv.st.Poll(e.deviceID, m.Status, m.Results)
 		if err != nil || state == store.StateRevoked {
 			sv.drop(sid)
@@ -464,7 +487,62 @@ func (sv *Server) serverInfo(w http.ResponseWriter, _ *http.Request) {
 		"public_url":  sv.cfg.PublicURL,
 		"commands":    sv.cfg.Commands,
 		"poll_s":      sv.cfg.PollS,
+		"key_change":  sv.keyChange(),
 	})
+}
+
+// keyChange is what an administrator sees of a change of the server key:
+// nil if none is going on.
+func (sv *Server) keyChange() map[string]any {
+	old, until, waiting := sv.st.KeyChange()
+	if old == nil {
+		return nil
+	}
+	fp := proto.Fingerprint(old)
+	return map[string]any{"old_fingerprint": hex.EncodeToString(fp[:]), "old_until": until, "devices_waiting": waiting}
+}
+
+// rotateKey gives the server a new key (KONZEPT.md §4.6).
+func (sv *Server) rotateKey(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Days int `json:"days"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil && err != io.EOF {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad JSON"})
+		return
+	}
+	keep := store.KeepOldKeyDefault
+	if in.Days != 0 {
+		keep = time.Duration(in.Days) * 24 * time.Hour
+	}
+	switch err := sv.st.RotateKey(keep); {
+	case errors.Is(err, store.ErrArgs):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "days: 1 to 365"})
+	case errors.Is(err, store.ErrState):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "a key change is still going on"})
+	case err != nil:
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "cannot save"})
+	default:
+		// Every device shakes hands again, with the key it knows, and hears
+		// about the new one in that session.
+		sv.mu.Lock()
+		clear(sv.sess)
+		sv.mu.Unlock()
+		log.Print("the server has a new key; devices are told as they come")
+		sv.serverInfo(w, r)
+	}
+}
+
+// endKeyChange forgets the old key before its time is up.
+func (sv *Server) endKeyChange(w http.ResponseWriter, r *http.Request) {
+	switch err := sv.st.EndKeyChange(); {
+	case errors.Is(err, store.ErrState):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "no key change is going on"})
+	case err != nil:
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "cannot save"})
+	default:
+		sv.serverInfo(w, r)
+	}
 }
 
 // ---------------------------------------------------------------- monitoring
@@ -501,9 +579,12 @@ func (sv *Server) silentAfter() time.Duration {
 
 func (sv *Server) status(w http.ResponseWriter, _ *http.Request) {
 	now := sv.now()
-	devices := map[string]int{store.StatePending: 0, store.StateActive: 0, store.StateRevoked: 0, "silent": 0}
+	devices := map[string]int{store.StatePending: 0, store.StateActive: 0, store.StateRevoked: 0, "silent": 0, "old_key": 0}
 	for _, d := range sv.st.Devices() {
 		devices[d.State]++
+		if d.OldKey && d.State != store.StateRevoked {
+			devices["old_key"]++
+		}
 		if d.State == store.StateActive && (d.LastSeen == nil || now.Sub(*d.LastSeen) > sv.silentAfter()) {
 			devices["silent"]++
 		}
@@ -579,6 +660,7 @@ type deviceView struct {
 	LastSeen    *time.Time      `json:"last_seen,omitempty"`
 	Status      json.RawMessage `json:"status,omitempty"`
 	Open        int             `json:"open_commands"`
+	OldKey      bool            `json:"old_key,omitempty"` // has not confirmed the server's new key yet
 }
 
 func (sv *Server) listDevices(w http.ResponseWriter, _ *http.Request) {
@@ -586,7 +668,7 @@ func (sv *Server) listDevices(w http.ResponseWriter, _ *http.Request) {
 	for _, d := range sv.st.Devices() {
 		fp := proto.Fingerprint(d.Pub)
 		v := deviceView{ID: d.ID, Fingerprint: hex.EncodeToString(fp[:]), Name: d.Name, State: d.State,
-			Info: d.Info, Enrolled: d.Enrolled, LastSeen: d.LastSeen, Status: d.Status}
+			Info: d.Info, Enrolled: d.Enrolled, LastSeen: d.LastSeen, Status: d.Status, OldKey: d.OldKey && d.State != store.StateRevoked}
 		for _, c := range d.Commands {
 			if c.State == store.CmdQueued || c.State == store.CmdSent {
 				v.Open++

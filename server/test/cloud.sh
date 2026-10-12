@@ -180,6 +180,18 @@ if OUT=$($CLOUD run --rm --no-deps c2server 2>&1); then fail "a second server st
 echo "$OUT" | grep -q "another server process is using this database" || fail "second server: $OUT"
 echo "ok   a second server still refuses to start"
 
+step "the server changes its key"
+NEWKEY=$(admin POST /admin/v1/server/rotate-key '{"days":30}' | head -n -1 | json 'd["fingerprint"]')
+[ "$NEWKEY" != "$KEY" ] || fail "the key is the same"
+expect "the old key still counts, two devices wait" "$(admin GET /admin/v1/server | head -n -1 | json '(d["key_change"]["old_fingerprint"]=="'$KEY'", d["key_change"]["devices_waiting"])')" "(True, 2)"
+expect "it is in the audit log" "$(admin GET '/admin/v1/audit?n=5' | head -n -1 | json "[e['ok'] for e in d if e['action'].endswith('rotate-key')]")" "[True]"
+RUN=$(devsim run -n 2 -interval 1s | tr '\n' ' ')
+expect "old device: told on the old key, then confirms" "$RUN" "KEY ${NEWKEY:0:16} announced STATE active STATE active "
+expect "old device: next handshake on the new key" "$(devsim run -n 1 | tr '\n' ' ')" "KEY changed to ${NEWKEY:0:16} STATE active "
+expect "one device still waits" "$(admin GET /admin/v1/server | head -n -1 | json 'd["key_change"]["devices_waiting"]')" 1
+expect "both keys are in the database" "$($CLOUD exec -T db psql -U c2 -d c2 -Atc 'SELECT old_key IS NOT NULL, old_until > now(), (SELECT count(*) FROM devices WHERE old_key) FROM server')" "t|t|1"
+# the device that has not come yet finds its old key still there after the restart below
+
 step "restart without the admin token: accounts only"
 $CLOUD down 2>&1 | tail -1
 SAVED=$C2_ADMIN_TOKEN
@@ -193,7 +205,7 @@ expect "sign in" "$(post /auth/login "{\"name\":\"anna\",\"password\":\"ein lang
 DEVS=$(c -b "$TMP/jar" "$API/admin/v1/devices")
 expect "both devices survived" "$(echo "$DEVS" | json "sorted((x['name'],x['state']) for x in d)")" "[('altes-geraet', 'active'), ('neues-geraet', 'active')]"
 expect "old device" "$(devsim run -n 1 | head -1)" "STATE active"
-expect "new device" "$(DEVVOL=${COMPOSE_PROJECT_NAME}_dev2 devsim run -n 1 | head -1)" "STATE active"
+expect "new device: the old key survived the restart" "$(DEVVOL=${COMPOSE_PROJECT_NAME}_dev2 devsim run -n 1 | tr '\n' ' ')" "KEY ${NEWKEY:0:16} announced STATE active "
 expect "revoke with the account" "$(c -b "$TMP/jar" -X POST -H 'X-C2: 1' -o /dev/null -w '%{http_code}' "$API/admin/v1/devices/$NEW/revoke")" 200
 expect "who did it is in the database" "$($CLOUD exec -T db psql -U c2 -d c2 -Atc "SELECT who, ok FROM audit WHERE action LIKE '%revoke' ORDER BY seq DESC LIMIT 1")" "anna|t"
 

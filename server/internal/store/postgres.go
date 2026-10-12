@@ -94,6 +94,11 @@ var migrations = [][]string{{
 		detail text NOT NULL,
 		ok     boolean NOT NULL)`,
 	`CREATE INDEX audit_time ON audit (time)`,
+}, {
+	// change of the server key: the previous key and how long it still counts,
+	// and which devices have not confirmed the new one
+	`ALTER TABLE server ADD COLUMN old_key bytea, ADD COLUMN old_until timestamptz`,
+	`ALTER TABLE devices ADD COLUMN old_key boolean NOT NULL DEFAULT false`,
 }}
 
 const (
@@ -312,12 +317,14 @@ func (p *pg) load() (*data, error) {
 	defer tx.Rollback()
 	d := &data{Tokens: map[string]*Token{}, Devices: map[string]*Device{}, Users: map[string]*User{}}
 
-	err = tx.QueryRowContext(ctx, `SELECT server_key, next_cmd FROM server`).Scan(&d.ServerKey, &d.NextCmd)
+	var oldUntil sql.NullTime
+	err = tx.QueryRowContext(ctx, `SELECT server_key, next_cmd, old_key, old_until FROM server`).Scan(&d.ServerKey, &d.NextCmd, &d.OldKey, &oldUntil)
 	if errors.Is(err, sql.ErrNoRows) {
 		return d, nil // a new database
 	} else if err != nil {
 		return nil, err
 	}
+	d.OldUntil = tp(oldUntil)
 
 	each := func(query string, row func(*sql.Rows) error) error {
 		rows, err := tx.QueryContext(ctx, query)
@@ -346,11 +353,11 @@ func (p *pg) load() (*data, error) {
 		return nil, err
 	}
 
-	err = each(`SELECT id, pub, name, info, state, sas, sas_attempts, enrolled, last_seen, status FROM devices`, func(r *sql.Rows) error {
+	err = each(`SELECT id, pub, name, info, state, sas, sas_attempts, enrolled, last_seen, status, old_key FROM devices`, func(r *sql.Rows) error {
 		v := &Device{}
 		var info, status []byte
 		var seen sql.NullTime
-		if err := r.Scan(&v.ID, &v.Pub, &v.Name, &info, &v.State, &v.SAS, &v.SASAttempts, &v.Enrolled, &seen, &status); err != nil {
+		if err := r.Scan(&v.ID, &v.Pub, &v.Name, &info, &v.State, &v.SAS, &v.SASAttempts, &v.Enrolled, &seen, &status, &v.OldKey); err != nil {
 			return err
 		}
 		v.Info, v.Status, v.Enrolled, v.LastSeen = raw(info), raw(status), v.Enrolled.UTC(), tp(seen)
@@ -461,9 +468,10 @@ func (p *pg) save(d *data, ch *changes) error {
 	w := &writer{ctx: ctx, tx: tx}
 
 	if ch.meta {
-		w.exec(`INSERT INTO server (server_key, next_cmd) VALUES ($1, $2)
-		        ON CONFLICT (only_row) DO UPDATE SET server_key = excluded.server_key, next_cmd = excluded.next_cmd`,
-			d.ServerKey, int64(d.NextCmd))
+		w.exec(`INSERT INTO server (server_key, next_cmd, old_key, old_until) VALUES ($1, $2, $3, $4)
+		        ON CONFLICT (only_row) DO UPDATE SET server_key = excluded.server_key, next_cmd = excluded.next_cmd,
+		          old_key = excluded.old_key, old_until = excluded.old_until`,
+			d.ServerKey, int64(d.NextCmd), d.OldKey, d.OldUntil)
 	}
 	for id := range ch.tokens {
 		t := d.Tokens[id]
@@ -483,12 +491,13 @@ func (p *pg) save(d *data, ch *changes) error {
 		}
 		// The row first, also when only a command changed: on an import, and
 		// after a save that failed, it may not be there yet.
-		w.exec(`INSERT INTO devices (id, pub, name, info, state, sas, sas_attempts, enrolled, last_seen, status)
-		        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		w.exec(`INSERT INTO devices (id, pub, name, info, state, sas, sas_attempts, enrolled, last_seen, status, old_key)
+		        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		        ON CONFLICT (id) DO UPDATE SET pub = excluded.pub, name = excluded.name, info = excluded.info,
 		          state = excluded.state, sas = excluded.sas, sas_attempts = excluded.sas_attempts,
-		          enrolled = excluded.enrolled, last_seen = excluded.last_seen, status = excluded.status`,
-			v.ID, v.Pub, txt(v.Name), js(v.Info), v.State, v.SAS, v.SASAttempts, v.Enrolled, v.LastSeen, js(v.Status))
+		          enrolled = excluded.enrolled, last_seen = excluded.last_seen, status = excluded.status,
+		          old_key = excluded.old_key`,
+			v.ID, v.Pub, txt(v.Name), js(v.Info), v.State, v.SAS, v.SASAttempts, v.Enrolled, v.LastSeen, js(v.Status), v.OldKey)
 		if len(dc.cmds) > 0 {
 			for _, c := range v.Commands {
 				if !dc.cmds[c.ID] {

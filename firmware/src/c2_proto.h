@@ -44,6 +44,15 @@ struct Token {
 bool parseToken(const char *text, Token &t);
 bool tokenPinsServer(const Token &t, const uint8_t serverPub[PUB_SIZE]);
 
+// Change of the server key (server/KONZEPT.md §4.6). The server announces its
+// new public key in the answer to a poll, on a session the pinned key
+// authenticated; the device keeps it next to the pinned one and names the
+// newest key it holds in its polls ("sk").
+constexpr size_t KEY_TAG_SIZE = 17;         // 16 hex digits + NUL
+void keyTag(const uint8_t pub[PUB_SIZE], char out[KEY_TAG_SIZE]);
+// Decodes an announced key (base64). False if it is not a key, or the pinned one.
+bool announcedKey(const char *b64, const uint8_t pinned[PUB_SIZE], uint8_t out[PUB_SIZE]);
+
 // One end of an established channel.
 class Session {
  public:

@@ -35,7 +35,7 @@ docker compose -f docker-compose.cloud.yml up -d --build
 - Die Datenbank enthält den privaten Serverschlüssel, die Passwort-Hashes und die TOTP-Geheimnisse. Wer das Volume `pgdata` verliert, muss alle Geräte neu anmelden. Dagegen gibt es die Sicherung (nächster Abschnitt).
 - Hineinsehen: `docker compose -f docker-compose.cloud.yml exec db psql -U c2 c2` — Tabellen `devices`, `commands`, `consoles`, `users`, `audit`, `tokens`, `server`. Das Protokoll behält dort 200 000 Einträge; die Weboberfläche zeigt die neuesten.
 
-**Stand:** auf dem Raspberry Pi mit `C2_CADDY_TLS=internal` getestet (`test/cloud.sh`, und mit dem Waveshare-Board im lokalen Netz), nicht mit einem echten Zertifikat und nicht im Internet. Der Wechsel des Serverschlüssels fehlt noch — die Warnung oben gilt weiter.
+**Stand:** auf dem Raspberry Pi mit `C2_CADDY_TLS=internal` getestet (`test/cloud.sh`, und mit dem Waveshare-Board im lokalen Netz), nicht mit einem echten Zertifikat und nicht im Internet. Sicherung, Überwachung und Wechsel des Serverschlüssels stehen weiter unten; der Lauf mit echtem Zertifikat fehlt noch — die Warnung oben gilt weiter.
 
 ### Sicherung und Wiederherstellung
 
@@ -72,6 +72,25 @@ $C up -d
 Zurückgespielt wird alles oder nichts; eine kaputte Datei lässt die Datenbank, wie sie war. **Was nach der Sicherung geschah, ist danach weg:** Später angemeldete Geräte kennt der Server nicht mehr (neu anmelden), und ein später **gesperrtes Gerät ist wieder aktiv** — nach dem Zurückspielen die Geräteliste durchgehen und erneut sperren. Dasselbe gilt für gesperrte oder zurückgesetzte Konten.
 
 **Stand:** `test/backup.sh` (von selbst geschriebene Sicherung, Zurückspielen über einen späteren Stand, Verlust aller Volumes, Aufräumen). Nicht geprüft: eine Sicherung aus einem älteren Schema in einen neueren Server (es gibt erst ein Schema), große Datenbanken, und ob jemand nach einem echten Ausfall mit dieser Anleitung zurechtkommt.
+
+### Serverschlüssel wechseln
+
+Der Server bekommt einen neuen Langzeitschlüssel, und die Geräte ziehen von selbst nach (KONZEPT.md §4.6): Jedes Gerät erfährt den neuen Schlüssel bei seiner nächsten Meldung über den Kanal, den der alte beweist, bestätigt ihn und nimmt ihn ab dem nächsten Handshake.
+
+```bash
+curl -s -X POST $S/admin/v1/server/rotate-key -H "$A" -d '{"days":30}'   # neuer Fingerabdruck, key_change
+curl -s $S/admin/v1/server -H "$A"                                        # devices_waiting: wer noch fehlt
+curl -s $S/admin/v1/devices -H "$A"                                       # "old_key": true bei denen
+curl -s -X POST $S/admin/v1/server/rotate-key/end -H "$A"                 # vorzeitig beenden
+```
+
+- Vorher eine Sicherung machen (`backup.sh once`) — und wissen: Sie enthält den alten Schlüssel; nach dem Wechsel zurückgespielt, erkennen Geräte, die schon gewechselt haben, den Server nicht mehr.
+- Offene Einladungen verfallen mit dem Wechsel; neue ausstellen.
+- Die Frist so wählen, dass jedes Gerät in ihr einmal eingeschaltet am Netz ist. Wer sie verpasst, wird abgewiesen und muss mit Token und Code neu angemeldet werden. Ein Wechsel zur Zeit.
+- **Nach einem Diebstahl des Schlüssels** reicht das nicht: Der Dieb kann den Geräten genauso einen Schlüssel ankündigen. Dann den Wechsel sofort beenden (`…/end`) und alle Geräte neu anmelden.
+- Braucht Firmware ab diesem Stand; ältere Geräte kennen die Ankündigung nicht und fallen nach der Frist heraus.
+
+**Stand:** Go-Tests, `test/cloud.sh` und der Protokollcode der Firmware auf dem PC (`tests/c2/run.sh`). **Nicht am Board geprüft**, und die Weboberfläche hat dafür noch keinen Knopf — nur die Schnittstelle.
 
 ### Überwachung
 
@@ -122,7 +141,7 @@ Alle Aufrufe mit `Authorization: Bearer <C2_ADMIN_TOKEN>` oder mit dem Cookie ei
 | Aufruf | Wirkung |
 |---|---|
 | `POST /admin/v1/enroll-tokens` `{"ttl_s":600,"note":""}` | Einladungs-Token, einmal verwendbar |
-| `GET /admin/v1/devices` | Geräte mit Zustand (`pending`, `active`, `revoked`), zuletzt gesehen, letzter Status |
+| `GET /admin/v1/devices` | Geräte mit Zustand (`pending`, `active`, `revoked`), zuletzt gesehen, letzter Status; `old_key`, wenn ein Gerät den neuen Serverschlüssel noch nicht bestätigt hat |
 | `POST /admin/v1/devices/{id}/approve` `{"sas":"123456"}` | bestätigen mit dem Code vom Gerätedisplay; fünf falsche Eingaben verwerfen die Anmeldung |
 | `POST /admin/v1/devices/{id}/revoke` | sperren, sofort und endgültig |
 | `POST /admin/v1/devices/{id}/commands` `{"type":"play","args":{"name":"Demo","port":1}}` | Auftrag einreihen. Arten: `ping`, `status`, `settings`, `configs` (lesen), `play`, `reboot` (nur mit Freigabe am Gerät) — KONZEPT.md §4.3 |
@@ -137,7 +156,9 @@ Alle Aufrufe mit `Authorization: Bearer <C2_ADMIN_TOKEN>` oder mit dem Cookie ei
 | `POST /admin/v1/users/{name}/disable` `{"disabled":true}` | sperren oder freigeben; Sperren beendet die Sitzungen |
 | `DELETE /admin/v1/users/{name}` | Konto löschen (nicht das eigene) |
 | `GET /admin/v1/audit?n=200` | Protokoll, neueste zuerst |
-| `GET /admin/v1/server` | Fingerabdruck des Serverschlüssels, öffentliche Adresse, Auftragsarten |
+| `GET /admin/v1/server` | Fingerabdruck des Serverschlüssels, öffentliche Adresse, Auftragsarten; während eines Schlüsselwechsels `key_change`: alter Fingerabdruck, Frist, wie viele Geräte noch warten |
+| `POST /admin/v1/server/rotate-key` `{"days":30}` | neuer Serverschlüssel; der alte gilt noch so viele Tage für Geräte, die den neuen nicht bestätigt haben (1 bis 365, Vorgabe 30). 409, solange ein Wechsel läuft |
+| `POST /admin/v1/server/rotate-key/end` | den alten Schlüssel sofort vergessen; wer nicht gewechselt hat, muss neu angemeldet werden |
 | `GET /admin/v1/status` | Überwachung: Laufzeit, ob der Zustand gespeichert werden kann (sonst Fehler und seit wann), Geräte je Zustand und wie viele aktive still sind, offene Fernkonsolen, angemeldete Browser, abgewiesene Anfragen (429) seit dem Start |
 | `GET /admin/v1/devices/{id}/commands` | Aufträge mit Zustand (`queued`, `sent`, `done`, `failed`, `expired`) und Ergebnis |
 
@@ -176,7 +197,7 @@ Wer das Datenverzeichnis (mit PostgreSQL: die Datenbank und ihre Sicherungen) ve
 ./test/e2e.sh                       # alles: Unit-Tests, Image, Ende-zu-Ende im Container
 ./test/ui.sh                        # die Weboberfläche in einem Browser ohne Bildschirm (Playwright-Image, 3 GB)
 ./test/pg.sh                        # die Unit-Tests noch einmal, mit dem Zustand in einem echten PostgreSQL
-./test/cloud.sh                     # Caddy + Server + PostgreSQL: Umzug von der Datei, Zertifikat, Konto, Ausfall der Datenbank, Neustart
+./test/cloud.sh                     # Caddy + Server + PostgreSQL: Umzug von der Datei, Zertifikat, Konto, Ausfall der Datenbank, Schlüsselwechsel, Neustart
 ./test/backup.sh                    # Sicherung der Datenbank und Zurückspielen, auch nach dem Verlust aller Volumes
 ../tests/c2/run.sh                  # der Protokollcode der Firmware auf dem PC gegen diesen Server
 docker build --target test .        # nur Formatierung, go vet und Unit-Tests

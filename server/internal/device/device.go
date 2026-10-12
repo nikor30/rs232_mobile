@@ -5,6 +5,7 @@ package device
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,6 +30,10 @@ type State struct {
 	Key       []byte `json:"key"`        // own static private key (proto.StaticKey.Marshal)
 	URL       string `json:"url"`        // server, from the enrollment token
 	ServerPub []byte `json:"server_pub"` // pinned when enrolling
+	// A new key the server announced on a session the pinned key
+	// authenticated. It takes the place of ServerPub with the first handshake
+	// that only it can finish.
+	NextPub []byte `json:"next_pub,omitempty"`
 }
 
 type Command struct {
@@ -47,6 +52,7 @@ type Reply struct {
 	State string    `json:"state"`
 	Cmds  []Command `json:"cmds"`
 	PollS int       `json:"poll_s"`
+	Rekey []byte    `json:"rekey,omitempty"`
 }
 
 type Client struct {
@@ -157,7 +163,7 @@ type ConReply struct {
 // Console sends one console message on the current session.
 func (c *Client) Console(m ConMsg) (*ConReply, error) {
 	if c.sess == nil {
-		if err := c.handshake(proto.KindSession, [proto.TokenIDSize]byte{}, nil); err != nil {
+		if err := c.sessionHandshake(); err != nil {
 			return nil, err
 		}
 	}
@@ -190,7 +196,7 @@ func (c *Client) Enroll(token, name string, info any) (sas string, err error) {
 	if !t.PinsServer(pub) {
 		return "", ErrServerKey
 	}
-	c.State.URL, c.State.ServerPub = t.URL, pub
+	c.State.URL, c.State.ServerPub, c.State.NextPub = t.URL, pub, nil
 	var tid [proto.TokenIDSize]byte
 	copy(tid[:], t.ID)
 	if err := c.handshake(proto.KindEnroll, tid, t.Secret); err != nil {
@@ -207,13 +213,15 @@ func (c *Client) Poll(status any, results []Result) (*Reply, error) {
 	if c.State.ServerPub == nil {
 		return nil, errors.New("device is not enrolled")
 	}
-	msg := map[string]any{"t": "poll", "status": status, "results": results}
 	for attempt := 0; ; attempt++ {
 		if c.sess == nil {
-			if err := c.handshake(proto.KindSession, [proto.TokenIDSize]byte{}, nil); err != nil {
+			if err := c.sessionHandshake(); err != nil {
 				return nil, err
 			}
 		}
+		// "sk" tells the server which of its keys this device holds: the
+		// announced one, once it is stored.
+		msg := map[string]any{"t": "poll", "status": status, "results": results, "sk": c.KeyTag()}
 		r, err := c.exchange(msg)
 		if errors.Is(err, ErrRehandshake) && attempt == 0 {
 			c.sess = nil
@@ -221,7 +229,39 @@ func (c *Client) Poll(status any, results []Result) (*Reply, error) {
 		}
 		if err != nil {
 			c.sess = nil
+			return r, err
 		}
-		return r, err
+		if len(r.Rekey) > 0 && !bytes.Equal(r.Rekey, c.State.ServerPub) && proto.CheckPublic(r.Rekey) == nil {
+			c.State.NextPub = r.Rekey
+		}
+		return r, nil
 	}
+}
+
+// KeyTag names the newest server key the device holds (store.KeyTag at the server).
+func (c *Client) KeyTag() string {
+	pub := c.State.ServerPub
+	if c.State.NextPub != nil {
+		pub = c.State.NextPub
+	}
+	fp := proto.Fingerprint(pub)
+	return hex.EncodeToString(fp[:8])
+}
+
+// sessionHandshake shakes hands with the pinned server key. If the server
+// cannot prove that one and it has announced another, that one is tried - and
+// pinned if it works: the key change is done.
+func (c *Client) sessionHandshake() error {
+	err := c.handshake(proto.KindSession, [proto.TokenIDSize]byte{}, nil)
+	if !errors.Is(err, proto.ErrConfirm) || c.State.NextPub == nil {
+		return err
+	}
+	pinned := c.State.ServerPub
+	c.State.ServerPub = c.State.NextPub
+	if err2 := c.handshake(proto.KindSession, [proto.TokenIDSize]byte{}, nil); err2 != nil {
+		c.State.ServerPub = pinned
+		return err
+	}
+	c.State.NextPub = nil
+	return nil
 }

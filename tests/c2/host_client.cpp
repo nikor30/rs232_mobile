@@ -3,7 +3,9 @@
 //
 //   c2host selftest
 //   c2host enroll STATEFILE TOKEN      -> "ID <hex>", "CODE <six digits>"
-//   c2host poll STATEFILE              -> "STATE <state>", "CMD <id> <type>" ...
+//   c2host poll STATEFILE              -> "STATE <state>", "CMD <id> <type>" ...; with a change of
+//                                      the server key also "KEY announced <tag>" (the new key is
+//                                      kept) and "KEY changed <tag>" (it is the pinned one now)
 //   c2host console STATEFILE           says yes to a request for the remote console and plays the
 //                                      serial port -> "CONSOLE <id> open", "CLOSED <reason>",
 //                                      "TYPED <hex>", "BRK <count>"
@@ -74,23 +76,56 @@ static int http(const std::string &url, const char *method, const std::string &p
 struct Device {
   uint8_t priv[C2Proto::PRIV_SIZE];
   uint8_t serverPub[C2Proto::PUB_SIZE];
+  uint8_t nextPub[C2Proto::PUB_SIZE];   // announced by the server (key change), if haveNext
+  bool haveNext = false;
   std::string url;
 };
 
 static void save(const char *file, const Device &d) {
   std::ofstream f(file, std::ios::binary);
-  f.write((const char *)d.priv, sizeof(d.priv)).write((const char *)d.serverPub, sizeof(d.serverPub)) << d.url;
+  f.write((const char *)d.priv, sizeof(d.priv)).write((const char *)d.serverPub, sizeof(d.serverPub));
+  f.put(d.haveNext ? 1 : 0).write((const char *)d.nextPub, sizeof(d.nextPub)) << d.url;
 }
 
 static Device load(const char *file) {
   std::ifstream f(file, std::ios::binary);
   Device d;
   if (!f.read((char *)d.priv, sizeof(d.priv)).read((char *)d.serverPub, sizeof(d.serverPub))) die(std::string("cannot read ") + file);
+  d.haveNext = f.get() == 1;
+  if (!f.read((char *)d.nextPub, sizeof(d.nextPub))) die(std::string("cannot read ") + file);
   std::getline(f, d.url, '\0');
   return d;
 }
 
+// False: the server did not prove the pinned key.
+static bool tryHandshake(const Device &d, C2Proto::Kind kind, const C2Proto::Token *tok, C2Proto::Session &s);
+
 static C2Proto::Session handshake(const Device &d, C2Proto::Kind kind, const C2Proto::Token *tok) {
+  C2Proto::Session s;
+  if (!tryHandshake(d, kind, tok, s)) die("handshake: the server did not prove its key");
+  return s;
+}
+
+// The handshake of a device that is enrolled, as c2.cpp does it: with the
+// pinned key, and if the server cannot prove that one, with the key it has
+// announced - which is the pinned one from then on.
+static C2Proto::Session sessionHandshake(Device &d, const char *file) {
+  C2Proto::Session s;
+  if (tryHandshake(d, C2Proto::KIND_SESSION, nullptr, s)) return s;
+  if (!d.haveNext) die("handshake: the server did not prove its key");
+  Device with = d;
+  memcpy(with.serverPub, d.nextPub, C2Proto::PUB_SIZE);
+  with.haveNext = false;
+  if (!tryHandshake(with, C2Proto::KIND_SESSION, nullptr, s)) die("handshake: the server proved neither the pinned key nor the announced one");
+  d = with;
+  save(file, d);
+  char tag[C2Proto::KEY_TAG_SIZE];
+  C2Proto::keyTag(d.serverPub, tag);
+  printf("KEY changed %s\n", tag);
+  return s;
+}
+
+static bool tryHandshake(const Device &d, C2Proto::Kind kind, const C2Proto::Token *tok, C2Proto::Session &s) {
   C2Proto::Handshake hs;
   Bytes req(C2Proto::REQ_ENROLL), resp;
   size_t n = 0;
@@ -99,11 +134,10 @@ static C2Proto::Session handshake(const Device &d, C2Proto::Kind kind, const C2P
   req.resize(n);
   int code = http(d.url, "POST", "/v1/handshake", req, resp);
   if (code != 200) die("handshake: HTTP " + std::to_string(code));
-  C2Proto::Session s;
   C2Proto::Result r = hs.finish(resp.data(), resp.size(), s);
-  if (r == C2Proto::ERR_CONFIRM) die("handshake: the server did not prove its key");
+  if (r == C2Proto::ERR_CONFIRM) return false;
   if (r != C2Proto::OK) die("handshake: bad answer");
-  return s;
+  return true;
 }
 
 static JsonDocument exchange(const Device &d, C2Proto::Session &s, JsonDocument &msg) {
@@ -157,12 +191,24 @@ int main(int argc, char **argv) {
   }
   if (cmd == "poll" && argc == 3) {
     Device d = load(argv[2]);
-    C2Proto::Session s = handshake(d, C2Proto::KIND_SESSION, nullptr);
+    C2Proto::Session s = sessionHandshake(d, argv[2]);
+    char tag[C2Proto::KEY_TAG_SIZE];
+    C2Proto::keyTag(d.haveNext ? d.nextPub : d.serverPub, tag);
     JsonDocument msg;
     msg["t"] = "poll";
+    msg["sk"] = tag;
     msg["status"]["uptime_s"] = 1;
     JsonDocument reply = exchange(d, s, msg);
     printf("STATE %s\n", reply["state"] | "?");
+    uint8_t announced[C2Proto::PUB_SIZE];
+    if (C2Proto::announcedKey(reply["rekey"] | "", d.serverPub, announced) &&
+        !(d.haveNext && !memcmp(announced, d.nextPub, C2Proto::PUB_SIZE))) {
+      memcpy(d.nextPub, announced, C2Proto::PUB_SIZE);
+      d.haveNext = true;
+      save(argv[2], d);
+      C2Proto::keyTag(d.nextPub, tag);
+      printf("KEY announced %s\n", tag);
+    }
     JsonDocument next;
     next["t"] = "poll";
     JsonArray results = next["results"].to<JsonArray>();
@@ -178,7 +224,7 @@ int main(int argc, char **argv) {
   }
   if (cmd == "console" && argc == 3) {
     Device d = load(argv[2]);
-    C2Proto::Session s = handshake(d, C2Proto::KIND_SESSION, nullptr);
+    C2Proto::Session s = sessionHandshake(d, argv[2]);
     time_t start = time(nullptr);
     // the request, and the yes that a tap on the display gives on the device
     uint32_t id = 0;

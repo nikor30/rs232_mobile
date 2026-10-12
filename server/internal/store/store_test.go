@@ -57,7 +57,7 @@ func snapshot(t *testing.T, s *Store) string {
 		toks = append(toks, k)
 	}
 	sort.Slice(toks, func(i, j int) bool { return toks[i].ID < toks[j].ID })
-	b, err := json.MarshalIndent(map[string]any{"key": s.d.ServerKey, "next": s.d.NextCmd,
+	b, err := json.MarshalIndent(map[string]any{"key": s.d.ServerKey, "next": s.d.NextCmd, "old": s.d.OldKey, "until": s.d.OldUntil,
 		"tokens": toks, "devices": devs, "users": users, "audit": s.d.Audit}, "", " ")
 	if err != nil {
 		t.Fatal(err)
@@ -456,5 +456,90 @@ func TestPostgresStopsWritingWhenAnotherServerTookOver(t *testing.T) {
 	}
 	if _, err := s2.NewToken(time.Hour, "y"); err != nil {
 		t.Fatalf("the second server: %v", err)
+	}
+}
+
+func TestKeyChangeIsKept(t *testing.T) {
+	dir, c := t.TempDir(), &clock{now: t0}
+	s := openT(t, dir, c)
+	first := s.ServerKey().Public()
+	a, b := enroll(t, s, "a", "eins"), enroll(t, s, "b", "zwei")
+	_, err := s.NewToken(time.Hour, "offen")
+	must(t, err)
+	must(t, s.RotateKey(48*time.Hour))
+	if bytes.Equal(first, s.ServerKey().Public()) {
+		t.Fatal("the key is the same")
+	}
+	if err := s.RotateKey(time.Hour); !errors.Is(err, ErrState) {
+		t.Fatalf("a second change on top: %v", err)
+	}
+	must(t, s.ConfirmKey(a, "0000000000000000")) // not the new key: does not count
+	must(t, s.ConfirmKey(b, KeyTag(s.ServerKey().Public())))
+	before := snapshot(t, s)
+	must(t, s.Close())
+
+	s = openT(t, dir, c)
+	if after := snapshot(t, s); after != before {
+		t.Fatalf("the key change did not survive:\n%s\n---\n%s", before, after)
+	}
+	if k, old, err := s.KeyFor(a); err != nil || !old || !bytes.Equal(k.Public(), first) {
+		t.Fatalf("a device on the old key: old=%v %v", old, err)
+	}
+	if k, old, err := s.KeyFor(b); err != nil || old || !bytes.Equal(k.Public(), s.ServerKey().Public()) {
+		t.Fatalf("a device on the new key: old=%v %v", old, err)
+	}
+	if old, until, waiting := s.KeyChange(); !bytes.Equal(old, first) || !until.Equal(t0.Add(48*time.Hour)) || waiting != 1 {
+		t.Fatalf("key change: until %v, %d waiting", until, waiting)
+	}
+
+	// When the time is up the old private key leaves the backend too.
+	c.now = c.now.Add(49 * time.Hour)
+	if _, _, err := s.KeyFor(a); !errors.Is(err, ErrState) {
+		t.Fatalf("after the time is up: %v", err)
+	}
+	must(t, s.Check())
+	must(t, s.Close())
+	s = openT(t, dir, c)
+	s.mu.Lock()
+	gone := s.d.OldKey == nil && s.d.OldUntil == nil && s.old == nil
+	s.mu.Unlock()
+	if !gone {
+		t.Fatal("the old key is still kept")
+	}
+	if _, _, err := s.KeyFor(a); !errors.Is(err, ErrState) {
+		t.Fatalf("after the restart: %v", err)
+	}
+	must(t, s.RotateKey(time.Hour)) // and the next change can begin
+}
+
+// A database from before the key change (schema 1) is brought up to date, and
+// what it held is still there.
+func TestPostgresMigratesFromTheFirstSchema(t *testing.T) {
+	onPostgres(t)
+	dir, c := t.TempDir(), &clock{now: t0}
+	s := openT(t, dir, c)
+	id := enroll(t, s, "a", "eins")
+	key := s.ServerKey().Public()
+	p := s.b.(*pg)
+	for _, q := range []string{
+		`ALTER TABLE server DROP COLUMN old_key, DROP COLUMN old_until`,
+		`ALTER TABLE devices DROP COLUMN old_key`,
+		`DELETE FROM schema_version WHERE version > 1`,
+	} {
+		_, err := p.db.Exec(q)
+		must(t, err)
+	}
+	must(t, s.Close())
+
+	s = openT(t, dir, c)
+	if !bytes.Equal(s.ServerKey().Public(), key) {
+		t.Fatal("the server key changed")
+	}
+	if _, old, err := s.KeyFor(id); err != nil || old {
+		t.Fatalf("the device: old=%v %v", old, err)
+	}
+	must(t, s.RotateKey(time.Hour))
+	if _, old, err := s.KeyFor(id); err != nil || !old {
+		t.Fatalf("after a key change: old=%v %v", old, err)
 	}
 }

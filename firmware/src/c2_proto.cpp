@@ -226,6 +226,19 @@ bool parseToken(const char *text, Token &t) {
          field(d, "id", t.id, TOKEN_ID_SIZE) && field(d, "s", t.secret, PSK_SIZE);
 }
 
+void keyTag(const uint8_t pub[PUB_SIZE], char out[KEY_TAG_SIZE]) {
+  uint8_t fp[32];
+  fingerprint(pub, fp);
+  for (int i = 0; i < 8; i++) snprintf(out + 2 * i, 3, "%02x", fp[i]);
+}
+
+bool announcedKey(const char *b64, const uint8_t pinned[PUB_SIZE], uint8_t out[PUB_SIZE]) {
+  size_t len = strlen(b64);
+  // exactly one key: PUB_SIZE bytes are 1624 characters with padding
+  if (len != (PUB_SIZE + 2) / 3 * 4 || b64decode(b64, len, out, PUB_SIZE) != (int)PUB_SIZE) return false;
+  return memcmp(out, pinned, PUB_SIZE) != 0;
+}
+
 bool tokenPinsServer(const Token &t, const uint8_t serverPub[PUB_SIZE]) {
   uint8_t fp[32], diff = 0;
   fingerprint(serverPub, fp);

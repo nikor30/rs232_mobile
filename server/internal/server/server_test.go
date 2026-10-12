@@ -584,3 +584,193 @@ func TestHealthAndStatus(t *testing.T) {
 		t.Fatalf("status after the repair: %+v", st.State)
 	}
 }
+
+func TestKeyChange(t *testing.T) {
+	e := newEnv(t)
+	type info struct {
+		Fingerprint string
+		KeyChange   *struct {
+			OldFingerprint string    `json:"old_fingerprint"`
+			OldUntil       time.Time `json:"old_until"`
+			DevicesWaiting int       `json:"devices_waiting"`
+		} `json:"key_change"`
+	}
+	var before, during, after info
+	e.admin("GET", "/admin/v1/server", nil, &before)
+	if before.KeyChange != nil {
+		t.Fatalf("a key change before there was one: %+v", before.KeyChange)
+	}
+	a, b, away := e.enrolled(), e.enrolled(), e.enrolled()
+	for _, c := range []*device.Client{a, b, away} {
+		if _, err := c.Poll(nil, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	openToken := e.token()
+
+	if code := e.admin("POST", "/admin/v1/server/rotate-key", map[string]int{"days": 400}, nil); code != 400 {
+		t.Fatalf("400 days: HTTP %d", code)
+	}
+	if code := e.admin("POST", "/admin/v1/server/rotate-key/end", nil, nil); code != 409 {
+		t.Fatalf("end without a change: HTTP %d", code)
+	}
+	if code := e.admin("POST", "/admin/v1/server/rotate-key", map[string]int{"days": 7}, &during); code != 200 {
+		t.Fatalf("rotate: HTTP %d", code)
+	}
+	if during.Fingerprint == before.Fingerprint || during.KeyChange == nil || during.KeyChange.OldFingerprint != before.Fingerprint ||
+		during.KeyChange.DevicesWaiting != 3 || !during.KeyChange.OldUntil.Equal(e.now.Add(7*24*time.Hour)) {
+		t.Fatalf("after rotate: %+v %+v", during, during.KeyChange)
+	}
+	if code := e.admin("POST", "/admin/v1/server/rotate-key", nil, nil); code != 409 {
+		t.Fatalf("a second change on top: HTTP %d", code)
+	}
+	// the key is what /v1/server-key hands out, and what new invitations name
+	if !bytes.Equal(mustGet(t, e.ts.URL+"/v1/server-key"), e.sv.st.ServerKey().Public()) {
+		t.Fatal("server-key is not the new key")
+	}
+	if _, err := e.device().Enroll(openToken, "zu spaet", nil); err == nil {
+		t.Fatal("an invitation from before the change still works")
+	}
+	fresh := e.enrolled()
+	if fresh.State.NextPub != nil || !bytes.Equal(fresh.State.ServerPub, e.sv.st.ServerKey().Public()) {
+		t.Fatal("a device enrolled after the change is not on the new key")
+	}
+
+	// First poll: the old session is gone, the device shakes hands with the
+	// key it knows and is told the new one.
+	old := a.State.ServerPub
+	r, err := a.Poll(nil, nil)
+	if err != nil || r.State != "active" {
+		t.Fatalf("poll after the change: %v %+v", err, r)
+	}
+	if !bytes.Equal(a.State.NextPub, e.sv.st.ServerKey().Public()) || !bytes.Equal(a.State.ServerPub, old) {
+		t.Fatal("the new key was not announced, or pinned too early")
+	}
+	if !e.old(a.ID()) {
+		t.Fatal("the server takes the device for changed before it said so")
+	}
+	// Second poll: the device says that it has the key.
+	if r, err = a.Poll(nil, nil); err != nil || len(r.Rekey) != 0 {
+		t.Fatalf("poll with the confirmation: %v", err)
+	}
+	if e.old(a.ID()) {
+		t.Fatal("the confirmation did not count")
+	}
+	// The session goes on. The next handshake is answered with the new key:
+	// the pinned one fails, the announced one works and is pinned.
+	e.now = e.now.Add(2 * time.Hour)
+	if r, err = a.Poll(nil, nil); err != nil || r.State != "active" {
+		t.Fatalf("poll on the new key: %v", err)
+	}
+	if a.State.NextPub != nil || !bytes.Equal(a.State.ServerPub, e.sv.st.ServerKey().Public()) {
+		t.Fatal("the new key was not pinned")
+	}
+	// commands still arrive, old device or new
+	var cmd struct{ ID uint64 }
+	e.admin("POST", "/admin/v1/devices/"+a.ID()+"/commands", map[string]string{"type": "ping"}, &cmd)
+	if r, err = a.Poll(nil, nil); err != nil || len(r.Cmds) != 1 || r.Cmds[0].ID != cmd.ID {
+		t.Fatalf("command after the change: %v %+v", err, r)
+	}
+
+	// b hears of the key, confirms, and the answer to that is lost: the server
+	// counts it as changed, the device finds out with its next handshake.
+	if _, err := b.Poll(nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.sv.st.ConfirmKey(b.ID(), b.KeyTag()); err != nil || e.old(b.ID()) {
+		t.Fatalf("confirm: %v", err)
+	}
+	e.sv.drop(sessionOf(e, b.ID()))
+	if r, err = b.Poll(nil, nil); err != nil || r.State != "active" || b.State.NextPub != nil {
+		t.Fatalf("poll after a lost answer: %v", err)
+	}
+
+	e.admin("GET", "/admin/v1/server", nil, &during)
+	if during.KeyChange == nil || during.KeyChange.DevicesWaiting != 1 {
+		t.Fatalf("one device should be waiting: %+v", during.KeyChange)
+	}
+	var st struct{ Devices map[string]int }
+	e.admin("GET", "/admin/v1/status", nil, &st)
+	if st.Devices["old_key"] != 1 {
+		t.Fatalf("status: %+v", st.Devices)
+	}
+
+	// The time is up: the old key is forgotten, and who was away is out.
+	e.now = e.now.Add(8 * 24 * time.Hour)
+	if err := e.sv.st.Check(); err != nil {
+		t.Fatal(err)
+	}
+	e.admin("GET", "/admin/v1/server", nil, &after)
+	if after.KeyChange != nil || after.Fingerprint != during.Fingerprint {
+		t.Fatalf("after the end: %+v", after.KeyChange)
+	}
+	if _, err := away.Poll(nil, nil); !errors.Is(err, device.ErrRefused) {
+		t.Fatalf("a device that missed the change: %v", err)
+	}
+	if !e.old(away.ID()) {
+		t.Fatal("the device that missed the change is not marked")
+	}
+	// it comes back the way it came the first time
+	sas, err := away.Enroll(e.token(), "wieder da", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code := e.admin("POST", "/admin/v1/devices/"+away.ID()+"/approve", map[string]string{"sas": sas}, nil); code != 200 {
+		t.Fatalf("approve: HTTP %d", code)
+	}
+	if r, err = away.Poll(nil, nil); err != nil || r.State != "active" || e.old(away.ID()) {
+		t.Fatalf("after enrolling again: %v", err)
+	}
+	for _, c := range []*device.Client{a, b, fresh} {
+		if r, err = c.Poll(nil, nil); err != nil || r.State != "active" {
+			t.Fatalf("after the end of the change: %v", err)
+		}
+	}
+	// and a second change can begin
+	if code := e.admin("POST", "/admin/v1/server/rotate-key", nil, nil); code != 200 {
+		t.Fatalf("second change: HTTP %d", code)
+	}
+	if code := e.admin("POST", "/admin/v1/server/rotate-key/end", nil, &after); code != 200 || after.KeyChange != nil {
+		t.Fatalf("end: HTTP %d", code)
+	}
+	if _, err := a.Poll(nil, nil); !errors.Is(err, device.ErrRefused) {
+		t.Fatalf("after a change that was ended at once: %v", err)
+	}
+}
+
+// old says whether the server still takes a device to be on the previous key.
+func (e *env) old(id string) bool {
+	e.t.Helper()
+	var list []deviceView
+	e.admin("GET", "/admin/v1/devices", nil, &list)
+	for _, d := range list {
+		if d.ID == id {
+			return d.OldKey
+		}
+	}
+	e.t.Fatalf("no device %s", id)
+	return false
+}
+
+func sessionOf(e *env, deviceID string) (id [proto.IDSize]byte) {
+	e.sv.mu.Lock()
+	defer e.sv.mu.Unlock()
+	for sid, s := range e.sv.sess {
+		if s.deviceID == deviceID {
+			return sid
+		}
+	}
+	e.t.Fatalf("no session of %s", deviceID)
+	return id
+}
+
+func mustGet(t *testing.T, url string) []byte {
+	t.Helper()
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return b
+}
