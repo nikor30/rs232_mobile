@@ -5,8 +5,13 @@
 // 240x320, CST816D touch, QMI8658 accelerometer). It implements the Display
 // interface from display.h.
 //
-//   swipe / arrows   change the screen: Status, Terminal, WLAN, Web-UI, Bluetooth, Info
-//   drag up / down   scrolls a page that is longer than the screen
+//   swipe / arrows   change the screen: Status, Terminal, Skripte, WLAN, Web-UI, Bluetooth, ...
+//                    While the finger drags sideways, the name of the page it leads
+//                    to comes in from that edge and follows it.
+//   title            opens the overview: every page as a tile, one tap away
+//   drag up / down   scrolls a page that is longer than the screen. The page keeps
+//                    the finger's speed when it lets go, gives a little at its ends
+//                    and settles back; a touch stops it where it is.
 //   Terminal         live view of the serial line plus a few keys
 //   accelerometer    turns the picture to whichever edge is up, wakes it on movement
 //
@@ -211,7 +216,7 @@ static volatile bool reqWake = false, reqOff = false, reqNext = false, reqBright
 static volatile int16_t reqTapX = -1, reqTapY = -1, reqShotFrom = 0, reqShotTo = 999;
 static volatile int8_t reqScreen = -1, reqRot = -1;
 static volatile int16_t reqDrag[4];                // simulated finger: from x,y to x,y
-static volatile bool reqDragGo = false;
+static volatile bool reqDragGo = false, reqDragHold = false, reqLift = false;   // hold: the finger stays down at the end
 static volatile bool reqHalt = false, uiHalted = false;   // power-off: the UI task puts panel and sensor to sleep, then stops
 
 // UI task -> main loop (what it currently shows)
@@ -226,6 +231,8 @@ static volatile uint32_t statLoopGapMax = 0, statUiGapMax = 0, statTouchMsMax = 
 static volatile uint16_t recentLoopMs = 0, recentDrawMs = 0;   // the same, per second, for the System page
 static volatile uint32_t loopBeat = 0, uiBeat = 0;
 static volatile int16_t lastTouchX = -1, lastTouchY = -1;
+static volatile int16_t statScroll = 0, statScrollMax = 0, statScrollMin = 0, statScrollPeak = 0;   // where the page is, and how far it went
+static volatile bool statMenu = false;
 static volatile int16_t imuX = 0, imuY = 0, imuZ = 0;
 static volatile uint16_t litAt = 0xFFFF;           // backlight level the panel has now (0xFFFF: unknown, set it)
 static bool imuFound = false;
@@ -250,6 +257,7 @@ enum Cmd : uint8_t {
   // handled in the UI task
   B_PREV, B_NEXT, B_PORT, B_BACK, B_LIST_PREV, B_LIST_NEXT, B_CFG_ROW, B_CFG_CANCEL, B_PLAY_ACK, B_NET_OPEN, B_NET_ROW,
   B_ASK_FORGET, B_ASK_OFF, B_ASK_CAL_FULL, B_ASK_CAL_EMPTY, B_ASK_CAL_RESET, B_CONFIRM, B_CON_MENU, B_CON_BACK,
+  B_MENU, B_GOTO,
   K_CHAR, K_SHIFT, K_SYM, K_BKSP, K_OK,
   // carried out by the main loop
   B_BAUD, B_AUTO, B_BREAK, B_ENTER, B_CTRLC, B_REC, B_BT, B_SD, B_PLAY, B_STOP, B_SCAN, B_JOIN, B_FORGET,
@@ -646,6 +654,9 @@ static void printStatus() {
   Serial.printf("[DIAG] Touch: %lu Beruehrungen, letzte %d,%d, Abfrage max %lu ms | Lage %s x=%d y=%d z=%d\n",
                 (unsigned long)statTouches, lastTouchX, lastTouchY, (unsigned long)statTouchMsMax,
                 imuFound ? "ok" : "fehlt", imuX, imuY, imuZ);
+  Serial.printf("[DIAG] Blaettern: Stand %d von %d, seit der letzten Abfrage %d bis %d | Uebersicht %s\n", statScroll, statScrollMax,
+                statScrollMin, statScrollPeak, statMenu ? "offen" : "zu");
+  statScrollMin = statScrollPeak = statScroll;
   Serial.printf("[DIAG] SD: %s | %s\n", Sd::typeName(), Sd::history().c_str());
   Serial.printf("[DIAG] CPU %u%% / %u%%, Chip %d C, Skript-Zustand %d (%s)\n", cpuLoad[0], cpuLoad[1], chipTemp,
                 (int)Player::state(), Player::result());
@@ -699,10 +710,12 @@ static void console() {
                         : "full, empty, reset oder zwei Werte in mV";
       Serial.printf("[DIAG] Akku-Kalibrierung: %s | %s\n", err ? err : "gespeichert", Power::diag().c_str());
     }
-    else if (sscanf(line, "drag %d %d %d %d", &a, &b, &a2, &b2) == 4) {
+    else if (sscanf(line, "drag %d %d %d %d", &a, &b, &a2, &b2) == 4 || sscanf(line, "hold %d %d %d %d", &a, &b, &a2, &b2) == 4) {
       reqDrag[0] = a; reqDrag[1] = b; reqDrag[2] = a2; reqDrag[3] = b2;
+      reqDragHold = line[0] == 'h';                  // "hold": the finger stays where it arrived, until "lift"
       reqDragGo = true;
     }
+    else if (!strcmp(line, "lift")) reqLift = true;
     else if (sscanf(line, "saver %d", &a) == 1) Power::forceSaver(a < 0 ? -1 : a ? 1 : 0);
     else if (!strncmp(line, "poweroff", 8)) powerOff("Debug-Konsole", sscanf(line, "poweroff %d", &a) == 1 ? a : 0);
     else if (!strcmp(line, "wake")) reqWake = true;
@@ -741,6 +754,7 @@ static bool modal() { return screen == S_SETUP && setupMode != SETUP_MAIN; }
 static bool conMenu = false;             // "close the remote console?" is on the screen
 // A question about the remote console lies over the page: nothing else reacts.
 static bool overlay() { return S.conState == 1 || (S.conState == 2 && conMenu); }
+static bool menu = false;                // the overview of all pages is on the screen
 
 static String fmtBytes(uint32_t b) {
   char buf[12];
@@ -807,6 +821,7 @@ static void uiOff() {
 }
 
 static int scrollY;                      // how far the page content is scrolled (see "scrolling" below)
+static void scrollReset();
 
 // ---- canvas, rotation, sending only what changed
 static const int BAND_H = 16;
@@ -842,7 +857,7 @@ static void setRotation(uint8_t r) {
   uiTermCols = termColsUi;
   uiTermRows = termRowsUi;
   uiGeometry = uiGeometry + 1;           // the main loop rebuilds the terminal for the new size
-  scrollY = 0;
+  scrollReset();
   forceFull = true;
   dirty = true;
 }
@@ -955,16 +970,92 @@ static const uint32_t TOUCH_RELEASE_MS = 120;
 // ---- scrolling. A page draws its content between cTop and cBot, shifted up by
 // scrollY and clipped to that window, and reports how long it turned out to be.
 // Whatever does not fit is reached by dragging; nothing is cut off any more.
+//
+// The page behaves like a thing with weight. Under the finger it follows one to
+// one; let go, it keeps the finger's speed and slows down by itself; at its
+// ends it gives - less the further it is pulled - and a spring without bounce
+// brings it back. A touch stops it wherever it is: nothing has to be waited for.
 static int cTop = 0, cBot = 0;
 static int contentH = 0;
 static bool inContent = false;
 static bool scrolling = false;           // this touch has become a drag
-static int scroll0 = 0;                  // scrollY when the finger came down
+static float scroll0 = 0;                // scroll position when the finger came down
+static float scrollPos = 0, scrollVel = 0;   // position (scrollY is this, rounded) and speed in pixels per second
+enum ScrollAnim : uint8_t { A_NONE = 0, A_COAST, A_SPRING };
+static uint8_t scrollAnim = A_NONE;
+static float springTo = 0;
+static uint32_t animAt = 0;
+static bool stoppedByTouch = false;      // this touch caught a moving page: it is not a tap
+// the finger's last positions, to know its speed when it lets go
+struct Sample { uint32_t t; int16_t x, y; };
+static Sample trail[6];
+static uint8_t trailN = 0;
+// a sideways drag that may become a change of page
+static bool swiping = false;
+static int swipeDx = 0;
+static const int SWIPE_COMMIT = 50;
 static bool marquee = false;             // a text on this frame is moving: keep redrawing
 static int simStep = -1, simX0 = 0, simY0 = 0, simX1 = 0, simY1 = 0;   // finger simulated by the debug console
 static const int SIM_STEPS = 10;
+static bool simHold = false;
 
 static int maxScroll() { return max(0, contentH - (cBot - cTop)); }
+
+static void scrollReset() {
+  scrollY = 0;
+  scrollPos = scrollVel = 0;
+  scrollAnim = A_NONE;
+}
+
+// Past its end the page follows less and less: there is nothing more here, but
+// the touch still counts (Apple's formula; c = how willing it is).
+static float rubber(float over, float dim, float c = 0.55f) { return over * dim * c / (dim + c * fabsf(over)); }
+
+// Speed of the finger over its last ~120 ms, in pixels per second.
+static void fingerSpeed(float &vx, float &vy) {
+  vx = vy = 0;
+  if (trailN < 2) return;
+  const Sample &b = trail[trailN - 1];
+  int i = trailN - 2;
+  while (i > 0 && b.t - trail[i].t < 60) i--;
+  const Sample &a = trail[i];
+  if (b.t == a.t || b.t - a.t > 250) return;        // it rested before it let go
+  vx = (b.x - a.x) * 1000.0f / (b.t - a.t);
+  vy = (b.y - a.y) * 1000.0f / (b.t - a.t);
+}
+
+// One step of the page's own movement. Both laws are solved exactly for the
+// time that has passed, so a slow frame changes how often the page is drawn,
+// not where it ends up.
+static void scrollTick(uint32_t now) {
+  if (scrollAnim == A_NONE) return;
+  float dt = (now - animAt) / 1000.0f;
+  if (dt <= 0) return;
+  animAt = now;
+  float most = maxScroll();
+  if (scrollAnim == A_COAST) {
+    const float K = 2.6f;                            // friction: the speed falls to a tenth in ~0.9 s
+    float f = expf(-K * dt);
+    scrollPos += scrollVel * (1 - f) / K;
+    scrollVel *= f;
+    if (scrollPos < 0 || scrollPos > most) {         // ran into an end: the spring takes it from here, speed and all
+      scrollAnim = A_SPRING;
+      springTo = scrollPos < 0 ? 0 : most;
+    } else if (fabsf(scrollVel) < 12) scrollAnim = A_NONE;
+  } else {
+    const float OMEGA = 2 * 3.14159f / 0.38f;        // critically damped, response 0.38 s: back without a bounce
+    float d = scrollPos - springTo, c = scrollVel + OMEGA * d, f = expf(-OMEGA * dt);
+    scrollPos = springTo + (d + c * dt) * f;
+    scrollVel = (scrollVel - c * OMEGA * dt) * f;
+    if (fabsf(scrollPos - springTo) < 0.5f && fabsf(scrollVel) < 8) {
+      scrollPos = springTo;
+      scrollVel = 0;
+      scrollAnim = A_NONE;
+    }
+  }
+  int y = lroundf(scrollPos);
+  if (y != scrollY) { scrollY = y; dirty = true; }
+}
 
 static bool inside(const Btn &b, int x, int y) { return x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h; }
 
@@ -981,13 +1072,15 @@ static void addHotspot(int x, int y, int w, int h, uint8_t id, uint8_t arg = 0) 
 
 static bool isDown(int x, int y, int w, int h) {
   Btn b = {(int16_t)x, (int16_t)y, (int16_t)w, (int16_t)h, 0, 0};
-  return touchDown && !touchSwallow && !scrolling && inside(b, touchX0, touchY0) && inside(b, touchX, touchY);
+  return touchDown && !touchSwallow && !scrolling && !swiping && !stoppedByTouch && inside(b, touchX0, touchY0) && inside(b, touchX, touchY);
 }
 
 static void button(int x, int y, int w, int h, const char *label, uint8_t id, uint32_t textColor = C_TEXT,
                    uint8_t arg = 0, const lgfx::IFont *font = &fonts::DejaVu12) {
   bool down = isDown(x, y, w, h);
-  g->fillRoundRect(x, y, w, h, 10, down ? C_BTN_DOWN : C_BTN);
+  // under the finger it takes the tint and gives way a little - at once, not on release
+  if (down) g->fillRoundRect(x + 2, y + 1, w - 4, h - 2, 10, C_BTN_DOWN);
+  else g->fillRoundRect(x, y, w, h, 10, C_BTN);
   g->setFont(font);
   if (g->textWidth(label) > w - 6) g->setFont(&fonts::DejaVu9);      // a long label on a narrow button
   g->setTextDatum(lgfx::middle_center);
@@ -1023,6 +1116,7 @@ static int buttonRow(const BtnDef *defs, int n, int maxRows = 2) {
 static void gotoScreen(uint8_t s) {
   screen = s % S_COUNT;
   uiScreen = screen;
+  menu = false;
   setupMode = SETUP_MAIN;
   listPage = 0;
   cfgSel = -1;
@@ -1038,6 +1132,8 @@ static void pressed(uint8_t id, uint8_t arg) {
     case B_PREV: gotoScreen(screen + S_COUNT - 1); return;
     case B_NEXT: gotoScreen(screen + 1); return;
     case B_PORT: nextPort(); return;
+    case B_MENU: menu = !menu; return;
+    case B_GOTO: gotoScreen(arg); return;
     case B_LIST_PREV: if (listPage) listPage--; return;
     case B_LIST_NEXT: listPage++; return;            // the drawing code keeps it in range
     case B_CFG_ROW: cfgSel = arg; return;
@@ -1120,9 +1216,10 @@ static void pressed(uint8_t id, uint8_t arg) {
 
 static void press(uint8_t id, uint8_t arg = 0) {
   uint8_t s = screen, m = setupMode;
+  bool wasMenu = menu;
   dirty = true;
   pressed(id, arg);
-  if (s != screen || m != setupMode) scrollY = 0;    // a different page starts at its top
+  if (s != screen || m != setupMode || wasMenu != menu) scrollReset();   // a different page starts at its top
 }
 
 static void tapAt(int x, int y) {
@@ -1140,7 +1237,7 @@ static void touchPoll(uint32_t now) {
     raw = true;
     x = simX0 + (simX1 - simX0) * simStep / SIM_STEPS;
     y = simY0 + (simY1 - simY0) * simStep / SIM_STEPS;
-    if (++simStep > SIM_STEPS) simStep = -1;
+    if (++simStep > SIM_STEPS) simStep = simHold ? SIM_STEPS : -1;
   }
   if (raw) {
     lastTouchSeen = now;
@@ -1149,18 +1246,34 @@ static void touchPoll(uint32_t now) {
       touchStart = now;
       touchX0 = x; touchY0 = y;
       touchSwallow = !on;                // the first touch on a dark screen only wakes it
-      scrolling = false;
-      scroll0 = scrollY;
+      // A page on its way is caught by the finger: it stops here, and goes on
+      // from here if the finger moves. Such a touch presses nothing.
+      stoppedByTouch = scrollAnim != A_NONE;
+      scrollAnim = A_NONE;
+      scrollVel = 0;
+      scrolling = swiping = false;
+      swipeDx = 0;
+      scroll0 = scrollPos;
+      trailN = 0;
       dirty = true;
     }
+    if (trailN == sizeof(trail) / sizeof(trail[0])) memmove(trail, trail + 1, sizeof(trail) - sizeof(trail[0])), trailN--;
+    trail[trailN++] = {now, (int16_t)x, (int16_t)y};
     touchX = x; touchY = y;
     int dx = x - touchX0, dy = y - touchY0;
-    if (!scrolling && !touchSwallow && abs(dy) > 10 && abs(dy) > abs(dx) && touchY0 >= cTop && touchY0 < cBot && maxScroll())
-      scrolling = true;
-    if (scrolling) {
-      int to = constrain(scroll0 - dy, 0, maxScroll());
-      if (to != scrollY) { scrollY = to; dirty = true; }
+    // Which gesture this is shows in its first ten pixels; from then on it stays that.
+    if (!scrolling && !swiping && !touchSwallow) {
+      if (abs(dy) > 10 && abs(dy) > abs(dx) && touchY0 >= cTop && touchY0 < cBot && (maxScroll() || stoppedByTouch)) scrolling = true;
+      else if (abs(dx) > 10 && abs(dx) > abs(dy) && !modal() && !overlay() && !menu) swiping = true;
     }
+    if (scrolling) {
+      float to = scroll0 - dy, most = maxScroll(), vis = cBot - cTop;
+      if (to < 0) to = -rubber(-to, vis);
+      else if (to > most) to = most + rubber(to - most, vis);
+      scrollPos = to;
+      if (lroundf(to) != scrollY) { scrollY = lroundf(to); dirty = true; }
+    }
+    if (swiping && dx != swipeDx) { swipeDx = dx; dirty = true; }
     uiWake();
     return;
   }
@@ -1169,11 +1282,35 @@ static void touchPoll(uint32_t now) {
   dirty = true;
   statTouches = statTouches + 1;
   lastTouchX = touchX0; lastTouchY = touchY0;
+  float vx, vy;
+  fingerSpeed(vx, vy);
+  bool wasSwipe = swiping, caught = stoppedByTouch;
+  swiping = stoppedByTouch = false;
   if (touchSwallow) return;
-  if (scrolling) { scrolling = false; return; }
+  if (scrolling || caught) {
+    // The page goes on with the speed the finger had. Outside its ends there
+    // is nowhere to go on to: the spring brings it back.
+    float most = maxScroll();
+    animAt = now;
+    scrollVel = scrolling ? -vy : 0;
+    scrolling = false;
+    if (scrollPos < 0 || scrollPos > most) {
+      scrollAnim = A_SPRING;
+      springTo = scrollPos < 0 ? 0 : most;
+      scrollVel = 0;
+    } else if (fabsf(scrollVel) > 60) scrollAnim = A_COAST;
+    return;
+  }
   int dx = touchX - touchX0, dy = touchY - touchY0;
-  if (abs(dx) > 50 && abs(dx) > abs(dy) && !modal() && !overlay()) press(dx < 0 ? B_NEXT : B_PREV);   // swipe left = next screen
-  else if (abs(dx) < 16 && abs(dy) < 16) tapAt(touchX0, touchY0);
+  if (wasSwipe) {
+    // Far enough, or thrown: what counts is where the movement was going. A
+    // finger that turned back before letting go has taken it back.
+    float going = dx + vx * 0.12f;
+    bool back = (dx < 0 && vx > 120) || (dx > 0 && vx < -120);
+    if (!back && (abs(dx) > SWIPE_COMMIT || fabsf(going) > SWIPE_COMMIT * 1.6f)) press(dx < 0 ? B_NEXT : B_PREV);   // swipe left = next screen
+    return;
+  }
+  if (abs(dx) < 16 && abs(dy) < 16) tapAt(touchX0, touchY0);
 }
 
 // ---- text that is longer than its place
@@ -1234,12 +1371,25 @@ static void dot(int x, int y, bool lit, uint32_t color) {
   else g->drawCircle(x, y, 5, C_LINE);
 }
 
+// An arrowhead, drawn rather than typed: "<" from a font is thin and sits too low.
+// dir: 0 left, 1 right, 2 down, 3 up; r = half its size.
+static void chevron(int x, int y, uint8_t dir, uint32_t color, int r = 6) {
+  for (int t = -1; t <= 1; t++) {                    // three lines side by side make the stroke
+    switch (dir) {
+      case 0: g->drawLine(x + r / 2 + t, y - r, x - r / 2 + t, y, color); g->drawLine(x - r / 2 + t, y, x + r / 2 + t, y + r, color); break;
+      case 1: g->drawLine(x - r / 2 + t, y - r, x + r / 2 + t, y, color); g->drawLine(x + r / 2 + t, y, x - r / 2 + t, y + r, color); break;
+      case 2: g->drawLine(x - r, y - r / 2 + t, x, y + r / 2 + t, color); g->drawLine(x, y + r / 2 + t, x + r, y - r / 2 + t, color); break;
+      default: g->drawLine(x - r, y + r / 2 + t, x, y - r / 2 + t, color); g->drawLine(x, y - r / 2 + t, x + r, y + r / 2 + t, color); break;
+    }
+  }
+}
+
 static void drawHeader() {
   g->fillRect(0, 0, W, HEAD_H, C_PANEL);
   g->setFont(&fonts::DejaVu18);
-  g->setTextColor(C_TINT);                 // the arrows lead somewhere: they carry the tint
   g->setTextDatum(lgfx::middle_center);
-  g->drawString("<", 16, HEAD_H / 2);
+  bool backDown = isDown(0, 0, 64, HEAD_H + 6);
+  chevron(15, HEAD_H / 2, 0, backDown ? C_TEXT : C_TINT);   // the arrows lead somewhere: they carry the tint
   if (modal()) {                         // a sub-page: the arrow leads back, nothing else leaves it
     g->setTextColor(C_TEXT);
     const char *title = setupMode == SETUP_NETS ? "WLAN waehlen"
@@ -1251,17 +1401,20 @@ static void drawHeader() {
     addHotspot(0, 0, 64, HEAD_H + 6, B_BACK);
     return;
   }
-  g->setTextColor(C_TINT);
-  g->drawString(">", W - 16, HEAD_H / 2);
+  chevron(W - 15, HEAD_H / 2, 1, isDown(W - 64, 0, 64, HEAD_H + 6) ? C_TEXT : C_TINT);
   // While the server has a console open, every page says so in place of its
-  // title; a tap there leads to "Beenden".
-  const char *title = S.conState == 2 ? "Fernkonsole" : TITLES[screen];
-  g->setTextColor(S.conState == 2 ? C_RED : C_TEXT);
-  g->drawString(title, W / 2, HEAD_H / 2);
-  int titleLeft = W / 2 - g->textWidth(title) / 2;
+  // title; a tap there leads to "Beenden". Otherwise the title opens the
+  // overview of all pages, and the small arrowhead beside it says so.
+  const char *title = S.conState == 2 ? "Fernkonsole" : menu ? "Seiten" : TITLES[screen];
+  bool titleDown = isDown(64, 0, W - 128, HEAD_H + 6);
+  g->setTextColor(S.conState == 2 ? C_RED : titleDown ? C_TINT : C_TEXT);
+  int tw = g->textWidth(title), mark = S.conState == 2 ? 0 : 14;
+  g->drawString(title, W / 2 - mark / 2, HEAD_H / 2);
+  if (mark) chevron(W / 2 - mark / 2 + tw / 2 + 9, HEAD_H / 2 + 1, menu ? 3 : 2, titleDown ? C_TINT : C_DIM, 4);
+  int titleLeft = W / 2 - (tw + mark) / 2;
   addHotspot(0, 0, 64, HEAD_H + 6, B_PREV);
   addHotspot(W - 64, 0, 64, HEAD_H + 6, B_NEXT);
-  if (S.conState == 2) addHotspot(64, 0, W - 128, HEAD_H + 6, B_CON_MENU);
+  addHotspot(64, 0, W - 128, HEAD_H + 6, S.conState == 2 ? B_CON_MENU : B_MENU);
 
   // link lamps: web/TCP client, Bluetooth, recording
   int x = W - 44;
@@ -1293,10 +1446,90 @@ static void drawHeader() {
   }
 }
 
+// The page a sideways drag is leading to, if it is far enough to count.
+static int swipeTarget() {
+  if (!swiping || abs(swipeDx) < SWIPE_COMMIT) return -1;
+  return (screen + (swipeDx < 0 ? 1 : S_COUNT - 1)) % S_COUNT;
+}
+
 static void drawNav() {
   if (modal()) return;
-  int y = H - NAV_H / 2, x0 = W / 2 - (S_COUNT - 1) * 7;
-  for (int i = 0; i < S_COUNT; i++) g->fillCircle(x0 + i * 14, y, i == screen ? 3 : 2, i == screen ? C_ACCENT : C_LINE);
+  int y = H - NAV_H / 2, x0 = W / 2 - (S_COUNT - 1) * 7, to = swipeTarget();
+  for (int i = 0; i < S_COUNT; i++)
+    g->fillCircle(x0 + i * 14, y, i == screen || i == to ? 3 : 2, i == to ? C_TINT : i == screen ? C_ACCENT : C_LINE);
+}
+
+// While the finger drags sideways, the name of the page it leads to comes in
+// from that edge and stays under the finger. It takes the tint once letting go
+// would change the page - so the answer is seen before the decision is made.
+static void drawSwipe() {
+  if (!swiping || !swipeDx) return;
+  bool next = swipeDx < 0;
+  const char *name = TITLES[(screen + (next ? 1 : S_COUNT - 1)) % S_COUNT];
+  g->setFont(&fonts::DejaVu18);
+  int full = g->textWidth(name) + 44, pull = abs(swipeDx);
+  int w = pull <= full ? pull : full + (int)rubber(pull - full, W / 2);   // past its size it only stretches
+  int h = 52, y = (H - h) / 2;
+  bool armed = pull >= SWIPE_COMMIT;
+  uint32_t col = armed ? C_TINT : C_BTN;
+  int x = next ? W - w : 0;
+  g->fillRoundRect(next ? x : x - 16, y, w + 16, h, 16, col);   // the round end faces the page, the other is beyond the edge
+  int32_t cx, cy, cw, ch;
+  g->getClipRect(&cx, &cy, &cw, &ch);
+  // The name is read from its first letter on, whichever side it comes from:
+  // from the right it travels in with the edge, from the left it stands at the
+  // screen's edge and is uncovered.
+  g->setTextColor(armed ? C_TEXT : C_DIM);
+  g->setTextDatum(lgfx::middle_left);
+  if (next) {
+    g->setClipRect(x, y, w, h);
+    g->drawString(name, x + 28, y + h / 2);
+    chevron(x + 13, y + h / 2, 0, armed ? C_TEXT : C_DIM);
+  } else {
+    g->setClipRect(0, y, max(0, w - 24), h);
+    g->drawString(name, max(10, w - full + 16), y + h / 2);
+    g->setClipRect(0, y, w, h);
+    chevron(w - 13, y + h / 2, 1, armed ? C_TEXT : C_DIM);
+  }
+  g->setClipRect(cx, cy, cw, ch);
+}
+
+// Every page as a tile: its name and the one thing worth knowing before going
+// there. Nine dots in a row tell how many pages there are, not which is where.
+static void drawMenu() {
+  static char hint[S_COUNT][28];
+  snprintf(hint[S_STATUS], sizeof(hint[0]), "%s", S.autobaud[selPort] ? "Auto-Baud" : S.serial[selPort]);
+  snprintf(hint[S_TERM], sizeof(hint[0]), "%s", S.recording[selPort] ? "zeichnet auf" : S.portName[selPort]);
+  if (S.playState == Player::RUNNING) snprintf(hint[S_SCRIPTS], sizeof(hint[0]), "laeuft");
+  else if (S.cfgCount) snprintf(hint[S_SCRIPTS], sizeof(hint[0]), S.cfgCount == 1 ? "1 Skript" : "%u Skripte", S.cfgCount);
+  else snprintf(hint[S_SCRIPTS], sizeof(hint[0]), "abspielen");   // the list is read when the page is opened
+  snprintf(hint[S_WIFI], sizeof(hint[0]), "%s", S.apSsid);
+  snprintf(hint[S_URL], sizeof(hint[0]), "%s", S.apIp);
+  snprintf(hint[S_BT], sizeof(hint[0]), "%s", S.bleState == Ble::OFF ? "aus" : S.bleState == Ble::CONNECTED ? "verbunden" : "bereit");
+  snprintf(hint[S_SYSTEM], sizeof(hint[0]), "%u MHz", S.cpuMhz);
+  if (S.batPresent) snprintf(hint[S_INFO], sizeof(hint[0]), "Akku %u%%", S.batPct);
+  else snprintf(hint[S_INFO], sizeof(hint[0]), "%s", S.c2);
+  snprintf(hint[S_SETUP], sizeof(hint[0]), "%s", !S.staConfigured ? "kein LAN" : S.staConnected ? "LAN an" : "LAN sucht");
+
+  const int cols = 3, rows = (S_COUNT + cols - 1) / cols, gap = 5;
+  int top = HEAD_H + gap, bottom = H - NAV_H - 2;
+  int tw = (W - gap * (cols + 1)) / cols, th = (bottom - top - gap * (rows - 1)) / rows;
+  for (int i = 0; i < S_COUNT; i++) {
+    int x = gap + (i % cols) * (tw + gap), y = top + (i / cols) * (th + gap);
+    bool down = isDown(x, y, tw, th), here = i == screen;
+    if (down) g->fillRoundRect(x + 2, y + 1, tw - 4, th - 2, 12, C_BTN_DOWN);
+    else g->fillRoundRect(x, y, tw, th, 12, here ? C_BTN : C_PANEL);
+    if (here && !down) g->drawRoundRect(x, y, tw, th, 12, C_TINT);       // where one is
+    g->setTextDatum(lgfx::middle_center);
+    g->setFont(&fonts::DejaVu12);
+    if (g->textWidth(TITLES[i]) > tw - 8) g->setFont(&fonts::DejaVu9);   // upright the tiles are narrow
+    g->setTextColor(C_TEXT);
+    g->drawString(fit(TITLES[i], tw - 6).c_str(), x + tw / 2, y + th / 2 - 8);
+    g->setFont(&fonts::DejaVu9);
+    g->setTextColor(down ? C_TEXT : i == S_BT && S.bleState == Ble::CONNECTED ? C_GREEN : C_DIM);
+    g->drawString(fit(hint[i], tw - 8).c_str(), x + tw / 2, y + th / 2 + 10);
+    addHotspot(x, y, tw, th, B_GOTO, i);
+  }
 }
 
 // ---- page content: label/value rows and whatever else a page draws at rowY
@@ -1315,11 +1548,18 @@ static void contentEnd() {
   inContent = false;
   g->clearClipRect();
   int vis = cBot - cTop, most = maxScroll();
-  if (scrollY > most) { scrollY = most; dirty = true; }       // the content got shorter
+  // The content got shorter while the page rests: back into range. A finger or
+  // the page's own movement may hold it outside for a moment.
+  if (!touchDown && scrollAnim == A_NONE && (scrollY > most || scrollY < 0)) { scrollY = constrain(scrollY, 0, most); scrollPos = scrollY; dirty = true; }
   if (!most) return;
-  int h = max(20, vis * vis / contentH);                      // there is more: say so, and where we are
+  // There is more: say so, and where we are. Pulled past an end, the bar
+  // shrinks against that end, as the page itself is pressed there.
+  int over = scrollY < 0 ? -scrollY : scrollY > most ? scrollY - most : 0;
+  int h = max(8, max(20, vis * vis / contentH) - over);
+  int at = constrain((vis - h) * constrain(scrollY, 0, most) / most, 0, vis - h);
+  if (scrollY > most) at = vis - h;
   g->fillRect(W - 4, cTop, 3, vis, C_PANEL);
-  g->fillRect(W - 4, cTop + (vis - h) * scrollY / most, 3, h, C_ACCENT);
+  g->fillRect(W - 4, cTop + at, 3, h, C_ACCENT);
 }
 
 // A long value continues on the next line instead of being cut off.
@@ -1857,7 +2097,9 @@ static void draw(uint32_t now) {
   if (g == &lcd) busLock();
   g->fillScreen(C_BG);
   drawHeader();
-  switch (screen) {
+  if (menu) {
+    drawMenu();
+  } else switch (screen) {
     case S_TERM: screenTerm(); break;
     case S_WIFI:
       screenQr("WIFI:T:WPA;S:" + qrEscape(S.apSsid) + ";P:" + qrEscape(S.apPass) + ";;", "WLAN", S.apSsid, "Passwort",
@@ -1874,8 +2116,14 @@ static void draw(uint32_t now) {
     case S_SETUP:   screenSetup(); break;
     default:     screenStatus(); break;
   }
-  if (!contentH) { cTop = cBot = 0; scrollY = 0; }
+  if (!contentH) { cTop = cBot = 0; scrollReset(); }
   drawNav();
+  drawSwipe();
+  statScroll = scrollY;
+  statScrollMax = maxScroll();
+  if (scrollY < statScrollMin) statScrollMin = scrollY;
+  if (scrollY > statScrollPeak) statScrollPeak = scrollY;
+  statMenu = menu;
   if (S.conState == 2) g->fillRect(0, HEAD_H - 2, W, 2, C_RED);
   if (overlay()) drawConsoleDialog();
   else if ((int32_t)(msgUntil - now) > 0) drawMessage();
@@ -1941,7 +2189,7 @@ static void uiTask(void *) {
     if (reqWake) { reqWake = false; uiWake(); }
     if (reqOff) { reqOff = false; uiOff(); }
     if (reqNext) { reqNext = false; press(B_NEXT); }
-    if (reqScreen >= 0) { gotoScreen(reqScreen); reqScreen = -1; dirty = true; }
+    if (reqScreen >= 0) { gotoScreen(reqScreen); scrollReset(); reqScreen = -1; dirty = true; }
     if (reqRot >= 0) {                     // 0..3 stays until "rot auto" hands it back to the accelerometer
       rotForced = reqRot < 4;
       if (rotForced) setRotation(reqRot);
@@ -1952,8 +2200,10 @@ static void uiTask(void *) {
       uiWake();
       simX0 = reqDrag[0]; simY0 = reqDrag[1]; simX1 = reqDrag[2]; simY1 = reqDrag[3];
       simStep = 0;
-      Serial.printf("[DIAG] Drag %d,%d -> %d,%d\n", simX0, simY0, simX1, simY1);
+      simHold = reqDragHold;
+      Serial.printf("[DIAG] %s %d,%d -> %d,%d\n", simHold ? "Hold" : "Drag", simX0, simY0, simX1, simY1);
     }
+    if (reqLift) { reqLift = false; simHold = false; simStep = -1; }
     if (reqHalt) {                         // power-off: dark panel, sensor asleep, and nothing more from this task
       uiOff();
       if (imuAddr) {
@@ -1972,6 +2222,7 @@ static void uiTask(void *) {
     }
 
     touchPoll(now);
+    scrollTick(now);
     imuPoll(now);
 
     // the main loop not coming round is the one thing this task can report
@@ -2044,7 +2295,7 @@ static void uiTask(void *) {
     }
     if (reqShot) { reqShot = false; screenshot(); }
     // a dark screen only waits for a touch or a movement: on battery it looks less often
-    vTaskDelay(pdMS_TO_TICKS(on ? 20 : S.saver ? 120 : 50));
+    vTaskDelay(pdMS_TO_TICKS(on ? (scrollAnim != A_NONE || touchDown ? 8 : 20) : S.saver ? 120 : 50));
   }
 }
 

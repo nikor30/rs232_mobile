@@ -12,7 +12,8 @@ Stand 2. Oktober 2026: gebaut, geflasht und am Board geprüft, soweit unten ange
 
 | Funktion | Datei | Geprüft |
 |---|---|---|
-| Farb-Touch-Oberfläche mit sechs Seiten | `src/lcd_ui.cpp` | alle Seiten quer und hoch per Screenshot angesehen, jede Taste per simuliertem Tippen ausgelöst, 4 Minuten Zufallstest (336 Aktionen) ohne Absturz; mit echtem Finger nur die Vorversion |
+| Farb-Touch-Oberfläche mit neun Seiten | `src/lcd_ui.cpp` | alle Seiten quer und hoch per Screenshot angesehen, jede Taste per simuliertem Tippen ausgelöst, 4 Minuten Zufallstest (336 Aktionen) ohne Absturz; mit echtem Finger nur die Vorversion |
+| Seitenübersicht, Blättern mit Schwung und Gummiband, Wisch-Hinweis (12. Oktober 2026) | `src/lcd_ui.cpp` | am Board mit simuliertem Finger: Übersicht quer und hoch per Screenshot, Sprung auf eine Seite; Stand der Seite über `lcd_debug.py status` gelesen (läuft nach dem Loslassen weiter, gibt über das Ende hinaus nach und kehrt zurück, ein ruhender Finger hält sie an); Wisch-Hinweis von beiden Seiten per Screenshot bei gehaltenem Finger; 150 s Zufallstest nur mit Gesten (302 Aktionen) ohne Absturz. **Ungeprüft:** wie es sich unter einem echten Finger anfühlt — das Bild kommt mit rund 10 Bildern je Sekunde, die Bewegung ist richtig gerechnet, aber nicht flüssig wie am Handy |
 | Automatisches Drehen über den Lagesensor | `src/lcd_ui.cpp` | am Gerät bestätigt (quer); die beiden Hochformat-Richtungen sind gerechnet |
 | Serielle Konsole über Bluetooth LE | `src/ble.cpp` | Kopplung mit PIN, Verschlüsselung und Schreiben vom Raspberry Pi aus; Ein-/Ausschalten mehrfach; Richtung Gerät → Handy ungetestet (kein Loopback verdrahtet) |
 | Akkuanzeige mit Ladeerkennung | `src/power.cpp` | Messung an IO5 mit 1000-mAh-LiPo bestätigt (6. Oktober 2026); „lädt" am USB-Port eines Rechners gesehen; Akkubetrieb, Netzteil und Ab-/Anstecken **ungeprüft** — siehe unten |
@@ -21,9 +22,10 @@ Stand 2. Oktober 2026: gebaut, geflasht und am Board geprüft, soweit unten ange
 
 ## Bedienung
 
-- **Ziehen nach oben/unten** verschiebt eine Seite, die länger ist als der Bildschirm; der Balken am rechten Rand zeigt, dass es weitergeht und wo man steht. Nichts wird mehr abgeschnitten: lange Werte laufen in die nächste Zeile, Listeneinträge und Titel, die einzeilig bleiben müssen, wandern langsam hin und her.
+- **Ziehen nach oben/unten** verschiebt eine Seite, die länger ist als der Bildschirm; der Balken am rechten Rand zeigt, dass es weitergeht und wo man steht. Die Seite behält beim Loslassen die Geschwindigkeit des Fingers und wird von selbst langsamer; an ihren Enden gibt sie nach — je weiter gezogen, desto weniger — und kehrt ohne Nachschwingen zurück. Eine Berührung hält sie an, wo sie gerade ist, und drückt dabei nichts. Nichts wird mehr abgeschnitten: lange Werte laufen in die nächste Zeile, Listeneinträge und Titel, die einzeilig bleiben müssen, wandern langsam hin und her.
 - **Tasten** sind 46 Pixel hoch (6 mm), Listenzeilen 32. Passen die Beschriftungen einer Tastenreihe nicht nebeneinander (hochkant), stehen sie in zwei Reihen.
-- **Wischen** oder die Pfeile oben wechseln die Seite: Status, Terminal, Skripte, WLAN (QR), Web-UI (QR), Bluetooth, System, Info, Setup. Die BOOT-Taste blättert ebenfalls.
+- **Wischen** oder die Pfeile oben wechseln die Seite: Status, Terminal, Skripte, WLAN (QR), Web-UI (QR), Bluetooth, System, Info, Setup. Die BOOT-Taste blättert ebenfalls. Während der Finger seitwärts zieht, kommt der Name der Seite, zu der es geht, von diesem Rand herein und bleibt unter dem Finger; er wird blau, sobald Loslassen die Seite wechselt (ab 50 Pixel, oder mit Schwung). Wer den Finger zurückbewegt, nimmt es zurück.
+- **Der Titel** öffnet die Übersicht: alle neun Seiten als Kacheln, jede mit dem einen Wert, den man vorher wissen will (Baudrate, Hotspot-Name, Bluetooth-Zustand, Akku …). Ein Tipp führt direkt hin — statt bis zu acht Mal zu wischen. Noch ein Tipp auf den Titel schließt sie.
 - **Status**: Schnittstelle, RX/TX-Zähler, Netz. Tasten: Baudrate weiterschalten, Auto-Baud, BREAK.
 - **Terminal**: Live-Ansicht der seriellen Leitung (52×19 Zeichen quer, 39×29 hoch), gespeist aus dem Replay-Puffer. Escape-Sequenzen werden verworfen, nicht ausgewertet. Tasten: Enter, Ctrl-C, BREAK, REC (nur mit SD-Karte).
 - **Skripte**: die in der Weboberfläche (Reiter Konfig) gespeicherten Konfigurationen. Antippen wählt aus, erst „Senden an Port N" spielt ab — zeilenweise, mit Warten auf den Prompt, Stopp bei Fehlermeldung, Steuerzeilen `@pause`, `@expect`, `@break`, `@timeout` wie im Browser (`src/player.cpp`). Konfigurationen mit `{{Variablen}}` gehen nur in der Weboberfläche.
@@ -139,6 +141,7 @@ tools/lcd_debug.py shot bild.png           # Screenshot dessen, was das Display 
 tools/lcd_debug.py screen 1 tap 54 205     # Seite wählen, Berührung simulieren
 tools/lcd_debug.py rot 0 shot hoch.png     # Drehung erzwingen (bleibt, bis "rot auto" sie dem Sensor zurückgibt)
 tools/lcd_debug.py drag 160 180 160 40     # Finger von A nach B: ziehen (scrollen) oder wischen
+tools/lcd_debug.py hold 280 130 200 130 shot wisch.png lift   # Finger bleibt liegen: ansehen, was das Display während einer Geste zeigt
 tools/lcd_debug.py bat                     # Akku: Rohwerte, worauf "laedt"/"voll" beruht, Sparmodus, CPU-Takt
 tools/lcd_debug.py batcal full             # gemessene Spannung = 100 % (empty, reset, oder zwei Werte in mV)
 tools/lcd_debug.py c2                      # Leitstelle: Zustand, Code, Dauer des Handshakes, Stack und Heap

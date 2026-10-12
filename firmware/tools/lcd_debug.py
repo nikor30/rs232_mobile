@@ -7,6 +7,8 @@ Talks to the firmware over the USB serial port without resetting the board:
     lcd_debug.py shot out.png           screenshot of what the display shows
     lcd_debug.py tap 160 200            a touch at that position
     lcd_debug.py drag 160 200 160 80    a finger moved from one position to another (scrolls, swipes)
+    lcd_debug.py hold 300 120 200 120   the same, but the finger stays down where it arrived - to see
+                                        what the screen shows during a gesture; "lift" lets go
     lcd_debug.py screen 1               0 Status, 1 Terminal, 2 Skripte, 3 WLAN, 4 Web-UI, 5 Bluetooth,
                                         6 System, 7 Info, 8 Setup
     lcd_debug.py cfgtest                store a small configuration "Demo" to try the Skripte page
@@ -147,8 +149,12 @@ def main(argv):
         elif c == "tap":
             s.write(f"tap {argv[i + 1]} {argv[i + 2]}\n".encode()); i += 2
             sys.stdout.write(read_until(s, lambda b: False, 0.8).decode("utf8", "replace"))
-        elif c == "drag":
-            s.write(("drag " + " ".join(argv[i + 1:i + 5]) + "\n").encode()); i += 4
+        elif c in ("drag", "hold"):
+            s.write((c + " " + " ".join(argv[i + 1:i + 5]) + "\n").encode()); i += 4
+            # a drag is over when its line has passed; a held finger only has to arrive
+            sys.stdout.write(read_until(s, lambda b: False, 0.8 if c == "hold" else 1.2).decode("utf8", "replace"))
+        elif c == "lift":
+            s.write(b"lift\n")
             sys.stdout.write(read_until(s, lambda b: False, 1.2).decode("utf8", "replace"))
         elif c == "saver":
             s.write(f"saver {argv[i + 1]}\n".encode()); i += 1
