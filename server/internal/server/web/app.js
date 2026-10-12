@@ -14,6 +14,8 @@
   let token = sessionStorage.getItem('c2admin') || '';   // admin token, if that is how this tab got in
   let signedIn = false, me = '', methods = { token: false, entra: false };
   let devices = [], selected = '', timer = 0, expTimer = 0;
+  let view = 'geraete', server = null, status = null, loaded = false;
+  const VIEWS = { geraete: 'Geräte', benutzer: 'Benutzer', protokoll: 'Protokoll', server: 'Server' };
   // The cookie of a signed-in account travels by itself. The X-C2 header shows
   // the server that the call comes from this page and not from another site.
   const authHeaders = () => (token ? { Authorization: 'Bearer ' + token } : { 'X-C2': '1' });
@@ -55,6 +57,58 @@
   function badge(state, names) {
     return el('span', { className: 'badge ' + state, textContent: names[state] || state });
   }
+  // On a narrow screen a table row becomes a block of its own; each cell then
+  // carries the name of its column (style.css, table.stack).
+  function label(table) {
+    const heads = [...table.tHead.rows[0].cells].map((th) => th.textContent);
+    for (const tr of table.tBodies[0].rows) [...tr.cells].forEach((td, i) => { td.dataset.label = heads[i] || ''; });
+  }
+  // A question before something that cannot be taken back. Resolves to true
+  // only for the button that says what will happen.
+  function ask(title, text, yes, kind) {
+    const dlg = $('#askDlg');
+    $('#askTitle').textContent = title;
+    $('#askText').textContent = text;
+    $('#askYes').textContent = yes;
+    $('#askYes').className = 'btn primary ' + (kind === undefined ? 'danger' : kind);
+    dlg.returnValue = '';
+    dlg.showModal();
+    $('#askNo').focus();                            // Enter must not be the dangerous answer
+    return new Promise((done) => dlg.addEventListener('close', () => done(dlg.returnValue === 'yes'), { once: true }));
+  }
+  $('#askNo').addEventListener('click', () => $('#askDlg').close(''));
+  $('#askYes').addEventListener('click', () => $('#askDlg').close('yes'));
+
+  // ---- where one is: #geraete, #geraete/<id>, #benutzer, #protokoll, #server
+  function route() {
+    const [v, id] = location.hash.slice(1).split('/');
+    const was = selected;
+    view = VIEWS[v] ? v : 'geraete';
+    selected = view === 'geraete' && id ? id : '';
+    document.body.classList.toggle('detail', !!selected);
+    document.body.classList.toggle('popped', !!was && !selected && view === 'geraete');   // back from a device: the list returns from the left
+    for (const name of Object.keys(VIEWS)) $('#v-' + name).hidden = name !== view || !signedIn;
+    for (const a of $('#nav').children) {
+      if (a.dataset.view === view) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+    }
+    $('#title').textContent = signedIn ? VIEWS[view] : 'RS232-Leitstelle';
+    document.title = signedIn ? `${VIEWS[view]} – RS232-Leitstelle` : 'RS232-Leitstelle';
+    if (!signedIn) return;
+    if (was !== selected) {
+      if (was) conDetach();
+      renderDevices();
+      if (selected) { renderDetail(); window.scrollTo(0, 0); }
+    }
+    showDetail();
+    if (view === 'benutzer' || view === 'protokoll') loadAdmin();
+    if (view === 'server') renderServer();
+  }
+  window.addEventListener('hashchange', route);
+  function showDetail() {
+    const d = devices.find((x) => x.id === selected);
+    $('#detail').hidden = !d;
+    $('#pick').hidden = !!d || !devices.length;
+  }
 
   // ---- login
   async function auth(path, body) {             // the calls around signing in: no token, no session yet
@@ -69,14 +123,16 @@
   }
   function showLogin() {
     token = '';
-    signedIn = false;
+    signedIn = loaded = false;
     me = '';
     sessionStorage.removeItem('c2admin');
     clearTimeout(timer);
     conDetach();
     $('#app').hidden = true;
-    $('#logout').hidden = true;
-    $('#srvInfo').textContent = $('#whoami').textContent = '';
+    $('#logout').hidden = $('#nav').hidden = true;
+    $('#whoami').textContent = '';
+    document.body.classList.remove('detail', 'popped');
+    $('#title').textContent = document.title = 'RS232-Leitstelle';
     $('#entraLogin').hidden = !methods.entra;
     $('#tokenBox').hidden = !methods.token;
     $('#login').hidden = false;
@@ -88,17 +144,16 @@
   }
   async function start() {
     try {
-      const s = await api('GET', '/server');
+      server = await api('GET', '/server');
       if (token) sessionStorage.setItem('c2admin', token);
       signedIn = true;
-      $('#srvInfo').textContent = `${s.public_url} · Serverschlüssel ${s.fingerprint.slice(0, 16)}…`;
-      $('#srvInfo').title = 'Fingerabdruck des Serverschlüssels: ' + s.fingerprint;
       $('#whoami').textContent = token ? 'Admin-Token' : me;
       $('#login').hidden = true;
       $('#app').hidden = false;
-      $('#logout').hidden = false;
+      $('#logout').hidden = $('#nav').hidden = false;
+      selected = '';
+      route();
       refresh();
-      loadAdmin();
     } catch (e) {
       showLogin();
       loginError(e.message);
@@ -171,31 +226,39 @@
   async function refresh() {
     clearTimeout(timer);
     try {
-      devices = await api('GET', '/devices');
+      [devices, server, status] = await Promise.all([api('GET', '/devices'), api('GET', '/server'), api('GET', '/status')]);
+      loaded = true;
       renderDevices();
+      renderServer();
       if (selected) await renderDetail();
     } catch (e) { if (signedIn) toast(e.message); }
     if (signedIn) timer = setTimeout(refresh, 3000);
   }
   function renderDevices() {
-    const body = $('#devices tbody');
-    body.textContent = '';
+    const list = $('#devices');
+    const at = document.activeElement && document.activeElement.closest && document.activeElement.closest('.dev');
+    const focus = at && at.dataset.id;
+    list.textContent = '';
     for (const d of devices) {
-      const st = d.status || {};
-      const tr = el('tr', { className: d.id === selected ? 'sel' : '' },
-        el('td', { textContent: d.name || d.id.slice(0, 8) }),
-        el('td', null, badge(d.state, STATES)),
-        el('td', { textContent: ago(d.last_seen) }),
-        el('td', { textContent: st.bat_pct == null ? '–' : `${st.bat_pct} %${st.charge ? ' (' + st.charge + ')' : ''}` }),
-        el('td', { textContent: st.rssi == null ? '–' : `${st.rssi} dBm` }),
-        el('td', { textContent: st.fw || (d.info && d.info.fw) || '–' }),
-        el('td', { textContent: d.open_commands || '' }));
-      tr.addEventListener('click', () => { selected = d.id; renderDevices(); renderDetail(); });
-      body.append(tr);
+      const st = d.status || {}, meta = [];
+      if (d.last_seen) meta.push('zuletzt ' + ago(d.last_seen));
+      if (st.bat_pct != null) meta.push(`Akku ${st.bat_pct} %${st.charge ? ' (' + st.charge + ')' : ''}`);
+      if (st.rssi != null) meta.push(`${st.rssi} dBm`);
+      const fw = st.fw || (d.info && d.info.fw);
+      if (fw) meta.push('Firmware ' + fw);
+      if (d.open_commands) meta.push(d.open_commands === 1 ? '1 Auftrag offen' : `${d.open_commands} Aufträge offen`);
+      if (d.old_key) meta.push('alter Serverschlüssel');
+      const a = el('a', { className: 'dev', href: '#geraete/' + d.id, role: 'listitem' },
+        el('b', { textContent: d.name || d.id.slice(0, 8) }), badge(d.state, STATES),
+        el('span', { className: 'meta', textContent: meta.join(' · ') || 'hat sich noch nicht gemeldet' }));
+      a.dataset.id = d.id;
+      if (d.id === selected) a.setAttribute('aria-current', 'true');
+      list.append(a);
+      if (d.id === focus) a.focus({ preventScroll: true });     // the list is rebuilt under the keyboard's feet
     }
-    $('#devices').hidden = !devices.length;
     $('#noDevices').hidden = !!devices.length;
-    if (selected && !devices.some((d) => d.id === selected)) { selected = ''; $('#detail').hidden = true; conDetach(); }
+    if (loaded && selected && !devices.some((d) => d.id === selected)) { conDetach(); location.hash = '#geraete'; }   // it is gone
+    showDetail();
   }
 
   // ---- one device
@@ -205,7 +268,8 @@
   async function renderDetail() {
     const d = devices.find((x) => x.id === selected);
     if (!d) return;
-    $('#detail').hidden = false;
+    showDetail();
+    $('#dOldKey').hidden = !d.old_key;
     $('#dName').textContent = d.name || d.id;
     const b = $('#dState');
     b.className = 'badge ' + d.state;
@@ -235,8 +299,9 @@
         el('td', { textContent: what }),
         el('td', null, badge(c.state, CMD_STATES)),
         el('td', { textContent: ago(c.done || c.sent || c.created) }),
-        el('td', null, c.result === undefined ? '' : el('pre', { textContent: pretty(c.result) }))));
+        el('td', { className: c.result === undefined ? 'none' : 'wide' }, c.result === undefined ? '' : el('pre', { textContent: pretty(c.result) }))));
     }
+    label($('#history'));
     $('#history').hidden = $('#histTitle').hidden = !cmds.length;
     // names for "Abspielen": from the most recent answer to "Konfigurationen"
     const list = cmds.filter((c) => c.type === 'configs' && c.state === 'done' && c.result && c.result.configs).pop();
@@ -264,16 +329,16 @@
     } catch (err) { toast(err.message, 5000); }
     refresh();
   }
-  $('#commands').addEventListener('click', (e) => {
+  $('#commands').addEventListener('click', async (e) => {
     const type = e.target.dataset && e.target.dataset.cmd;
     if (!type) return;
-    if (type === 'reboot' && !confirm('Das Gerät neu starten? Laufende Konsolensitzungen brechen ab.')) return;
+    if (type === 'reboot' && !await ask('Gerät neu starten?', 'Laufende Konsolensitzungen brechen ab.', 'Neu starten')) return;
     send(type);
   });
-  $('#playForm').addEventListener('submit', (e) => {
+  $('#playForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const name = $('#playName').value.trim(), port = +$('#playPort').value;
-    if (!confirm(`„${name}“ auf Port ${port} abspielen?\nDie Zeilen gehen an die Konsole des dort angeschlossenen Geräts.`)) return;
+    if (!await ask(`„${name}“ auf Port ${port} abspielen?`, 'Die Zeilen gehen an die Konsole des dort angeschlossenen Geräts.', 'Abspielen')) return;
     send('play', { name, port });
   });
   // ---- remote console
@@ -394,6 +459,7 @@
           el('td', { textContent: l.reason || '' }),
           el('td', { textContent: l.end ? `${l.bytes_in} / ${l.bytes_out}` : '' })));
       }
+      label($('#conLog'));
       $('#conLog').hidden = !v.sessions.length;
     }).catch(() => {});
   }
@@ -410,7 +476,7 @@
 
   $('#revoke').addEventListener('click', async () => {
     const d = devices.find((x) => x.id === selected);
-    if (!d || !confirm(`„${d.name || d.id}“ sperren?\nDas gilt sofort und endgültig: Das Gerät kommt auch mit einer neuen Einladung nicht zurück.`)) return;
+    if (!d || !await ask(`„${d.name || d.id}“ sperren?`, 'Das gilt sofort und endgültig: Das Gerät kommt auch mit einer neuen Einladung nicht zurück.', 'Sperren')) return;
     try { await api('POST', `/devices/${selected}/revoke`); toast('Gesperrt'); } catch (err) { toast(err.message); }
     refresh();
   });
@@ -458,14 +524,15 @@
     'POST /users': 'Benutzer angelegt', 'POST /users/{name}/reset': 'Konto zurückgesetzt', 'POST /users/{name}/disable': 'Konto gesperrt oder freigegeben',
     'DELETE /users/{name}': 'Benutzer gelöscht', 'POST /enroll-tokens': 'Einladung erzeugt', 'POST /devices/{id}/approve': 'Gerät bestätigt',
     'POST /devices/{id}/revoke': 'Gerät gesperrt', 'POST /devices/{id}/commands': 'Auftrag', 'POST /devices/{id}/console/{sess}/close': 'Fernkonsole beendet',
+    'POST /server/rotate-key': 'Serverschlüssel gewechselt', 'POST /server/rotate-key/end': 'Schlüsselwechsel beendet',
   };
   function showCode(name, code) {
     $('#codeFor').textContent = name;
     $('#codeText').textContent = code;
     $('#codeDlg').showModal();
   }
-  async function userAction(text, method, path, body) {
-    if (!confirm(text)) return;
+  async function userAction(title, text, yes, method, path, body) {
+    if (!await ask(title, text, yes, yes === 'Freigeben' ? '' : 'danger')) return;
     try {
       const r = await api(method, path, body);
       if (r.setup) showCode(r.name, r.setup);
@@ -483,14 +550,16 @@
       const acts = el('td', { className: 'acts' });
       const name = encodeURIComponent(u.name);
       if (u.kind === 'local') acts.append(el('button', { className: 'btn small', textContent: 'Zurücksetzen',
-        onclick: () => userAction(`Konto „${u.name}“ zurücksetzen?\nPasswort und Authenticator-App gelten dann nicht mehr; es gibt einen neuen Einrichtungscode.`, 'POST', `/users/${name}/reset`) }));
+        onclick: () => userAction(`Konto „${u.name}“ zurücksetzen?`, 'Passwort und Authenticator-App gelten dann nicht mehr; es gibt einen neuen Einrichtungscode.', 'Zurücksetzen', 'POST', `/users/${name}/reset`) }));
       acts.append(el('button', { className: 'btn small', textContent: u.disabled ? 'Freigeben' : 'Sperren',
-        onclick: () => userAction(`Konto „${u.name}“ ${u.disabled ? 'freigeben' : 'sperren'}?`, 'POST', `/users/${name}/disable`, { disabled: !u.disabled }) }));
+        onclick: () => userAction(`Konto „${u.name}“ ${u.disabled ? 'freigeben' : 'sperren'}?`, u.disabled ? 'Die Person kann sich danach wieder anmelden.' : 'Die Person wird abgemeldet und kommt nicht mehr herein, bis das Konto freigegeben wird.',
+          u.disabled ? 'Freigeben' : 'Sperren', 'POST', `/users/${name}/disable`, { disabled: !u.disabled }) }));
       acts.append(el('button', { className: 'btn small danger', textContent: 'Löschen',
-        onclick: () => userAction(`Konto „${u.name}“ löschen?`, 'DELETE', `/users/${name}`) }));
+        onclick: () => userAction(`Konto „${u.name}“ löschen?`, 'Das lässt sich nicht zurücknehmen.', 'Löschen', 'DELETE', `/users/${name}`) }));
       ub.append(el('tr', null, el('td', { textContent: u.name }), el('td', { textContent: how }), el('td', { textContent: state }),
         el('td', { textContent: when(u.last_login) }), acts));
     }
+    label($('#users'));
     $('#users').hidden = !users.length;
     $('#noUsers').hidden = !!users.length;
     const ab = $('#audit tbody');
@@ -503,7 +572,84 @@
         el('td', { textContent: dev ? dev.name || a.target.slice(0, 8) : a.target || '' }),
         el('td', { textContent: a.ok ? '' : 'abgelehnt' })));
     }
+    label($('#audit'));
   }
+
+  // ---- the server: how it is, and its key
+  function span(s) {                                // seconds, as a person says it
+    if (s < 120) return `${s} s`;
+    if (s < 7200) return `${Math.round(s / 60)} min`;
+    if (s < 172800) return `${Math.round(s / 3600)} h`;
+    return `${Math.round(s / 86400)} Tagen`;
+  }
+  function renderServer() {
+    if (!server || !status) return;
+    const st = status.state, kc = server.key_change, dv = status.devices;
+    // what is wrong is said on every page, not only where the numbers are
+    $('#alert').hidden = st.ok;
+    if (!st.ok) $('#alert').textContent = `Der Server kann seinen Zustand nicht speichern (seit ${when(st.since)}). Änderungen gehen verloren, wenn er jetzt neu startet.`;
+    const mark = $('#navMark');
+    mark.hidden = st.ok && !kc;
+    mark.className = 'mark' + (st.ok ? '' : ' bad');
+    const b = $('#stState');
+    b.className = 'badge ' + (st.ok ? 'ok' : 'failed');
+    b.textContent = st.ok ? 'in Ordnung' : 'Fehler';
+    $('#stError').hidden = st.ok;
+    $('#stError').textContent = st.ok ? '' : `Speichern scheitert seit ${when(st.since)}: ${st.error}`;
+    const turned = status.turned_away;
+    const set = (id, n, attn) => { $(id).textContent = n; $(id).parentNode.classList.toggle('attn', !!attn); };
+    set('#stActive', dv.active);
+    set('#stPending', dv.pending, dv.pending);
+    set('#stSilent', dv.silent, dv.silent);
+    set('#stRevoked', dv.revoked);
+    set('#stConsoles', status.consoles_open);
+    set('#stSignedIn', status.signed_in);
+    set('#stDenied', turned.handshake + turned.sign_in + turned.admin);
+    $('#stUptime').textContent = span(status.uptime_s);
+    $('#stUptime').className = 'text';
+    $('#stNote').textContent = `„Still“ heißt: verbunden, aber seit über ${span(status.silent_after_s)} nicht gemeldet. Abgewiesen wird, wer zu schnell zu oft anfragt (Geräte ${turned.handshake}, Anmeldungen ${turned.sign_in}, Aufrufe ohne Anmeldung ${turned.admin}).`;
+
+    $('#srvUrl').textContent = server.public_url;
+    $('#srvFp').textContent = server.fingerprint;
+    $('#keyChange').hidden = !kc;
+    $('#kcEnd').hidden = !kc;
+    $('#kcStart').hidden = !!kc;
+    if (kc) {
+      const waiting = devices.filter((d) => d.old_key).map((d) => d.name || d.id.slice(0, 8));
+      $('#kcText').textContent = kc.devices_waiting ? 'Geräte, die den neuen noch nicht haben, erkennen den Server weiter am alten.' : 'Alle Geräte haben den neuen Schlüssel – der Wechsel kann beendet werden.';
+      $('#kcOld').textContent = kc.old_fingerprint;
+      $('#kcUntil').textContent = when(kc.old_until);
+      $('#kcWaiting').textContent = waiting.length ? `${waiting.length}: ${waiting.join(', ')}` : 'kein Gerät';
+    }
+  }
+  $('#kcStart').addEventListener('click', () => {
+    $('#rotateForm').reset();
+    $('#rotateErr').hidden = true;
+    $('#rotateDlg').showModal();
+    $('#rotateCancel').focus();
+  });
+  $('#rotateCancel').addEventListener('click', () => $('#rotateDlg').close());
+  $('#rotateForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      server = await api('POST', '/server/rotate-key', { days: +$('#rotateDays').value });
+      $('#rotateDlg').close();
+      toast('Neuer Serverschlüssel – die Geräte erfahren ihn, sobald sie sich melden', 5000);
+      refresh();
+    } catch (err) {
+      $('#rotateErr').textContent = err.message;
+      $('#rotateErr').hidden = false;
+    }
+  });
+  $('#kcEnd').addEventListener('click', async () => {
+    const waiting = devices.filter((d) => d.old_key).map((d) => d.name || d.id.slice(0, 8));
+    const text = waiting.length
+      ? `Der alte Schlüssel gilt dann nicht mehr. ${waiting.length === 1 ? 'Dieses Gerät hat' : 'Diese Geräte haben'} den neuen noch nicht und ${waiting.length === 1 ? 'muss' : 'müssen'} danach neu angemeldet werden:\n${waiting.join(', ')}`
+      : 'Der alte Schlüssel gilt dann nicht mehr. Alle Geräte haben den neuen schon.';
+    if (!await ask('Schlüsselwechsel beenden?', text, 'Beenden', waiting.length ? 'danger' : '')) return;
+    try { server = await api('POST', '/server/rotate-key/end'); toast('Der alte Schlüssel ist vergessen'); } catch (err) { toast(err.message, 5000); }
+    refresh();
+  });
   $('#auditReload').addEventListener('click', loadAdmin);
   $('#addUser').addEventListener('click', () => {
     $('#userForm').reset();

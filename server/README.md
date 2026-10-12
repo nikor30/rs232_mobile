@@ -90,7 +90,9 @@ curl -s -X POST $S/admin/v1/server/rotate-key/end -H "$A"                 # vorz
 - **Nach einem Diebstahl des Schlüssels** reicht das nicht: Der Dieb kann den Geräten genauso einen Schlüssel ankündigen. Dann den Wechsel sofort beenden (`…/end`) und alle Geräte neu anmelden.
 - Braucht Firmware ab diesem Stand; ältere Geräte kennen die Ankündigung nicht und fallen nach der Frist heraus.
 
-**Stand:** Go-Tests, `test/cloud.sh` und der Protokollcode der Firmware auf dem PC (`tests/c2/run.sh`). **Nicht am Board geprüft**, und die Weboberfläche hat dafür noch keinen Knopf — nur die Schnittstelle.
+In der Weboberfläche: Bereich **Server** → „Schlüssel wechseln“; dort stehen danach der alte Fingerabdruck, die Frist und welche Geräte noch warten.
+
+**Stand:** Go-Tests, `test/cloud.sh`, die Weboberfläche im Browser (`test/ui.sh`) und der Protokollcode der Firmware auf dem PC (`tests/c2/run.sh`). **Nicht am Board geprüft.**
 
 ### Überwachung
 
@@ -195,7 +197,7 @@ Wer das Datenverzeichnis (mit PostgreSQL: die Datenbank und ihre Sicherungen) ve
 
 ```bash
 ./test/e2e.sh                       # alles: Unit-Tests, Image, Ende-zu-Ende im Container
-./test/ui.sh                        # die Weboberfläche in einem Browser ohne Bildschirm (Playwright-Image, 3 GB)
+./test/ui.sh [VERZEICHNIS]          # die Weboberfläche in einem Browser ohne Bildschirm, breit und als Handy; Bilder ins Verzeichnis (Playwright-Image, 3 GB)
 ./test/pg.sh                        # die Unit-Tests noch einmal, mit dem Zustand in einem echten PostgreSQL
 ./test/cloud.sh                     # Caddy + Server + PostgreSQL: Umzug von der Datei, Zertifikat, Konto, Ausfall der Datenbank, Schlüsselwechsel, Neustart
 ./test/backup.sh                    # Sicherung der Datenbank und Zurückspielen, auch nach dem Verlust aller Volumes

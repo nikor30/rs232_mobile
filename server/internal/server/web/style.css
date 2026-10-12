@@ -27,18 +27,46 @@ body {
   -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
 }
 
-/* The bar floats: translucent, with the page scrolling under it. */
+/* The bar floats: translucent, with the page scrolling under it. The material
+   is a layer of its own behind the bar's content: a filter on the bar itself
+   would tie the tab bar (fixed to the screen's lower edge on a phone) to it. */
 header {
-  position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 1rem; padding: .7rem 1.25rem;
-  background: var(--bar); -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px);
-  border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: .75rem;
+  padding: .55rem max(1.25rem, env(safe-area-inset-right)) .55rem max(1.25rem, env(safe-area-inset-left)); min-height: 3.25rem;
 }
-header h1 { font-size: 1.0625rem; font-weight: 600; letter-spacing: -.015em; margin: 0; flex: none; }
-header .dim { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-header #whoami { flex: none; font-weight: 500; color: var(--text); }
+header::before {
+  content: ""; position: absolute; inset: 0; z-index: -1; border-bottom: 1px solid var(--line);
+  background: var(--bar); -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px);
+}
+header h1 { font-size: 1.0625rem; font-weight: 600; letter-spacing: -.015em; margin: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+header #whoami { flex: none; font-weight: 500; color: var(--text); max-width: 12rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.back { display: none; }
 
-main { max-width: 1100px; margin: 1.5rem auto; padding: 0 1rem; display: grid; gap: 1.25rem; }
-.card { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 1.25rem 1.4rem; overflow-x: auto; }
+/* Where one can go, always in sight and named by what is there. On a wide
+   screen it is a segmented control in the bar. */
+nav { display: flex; gap: 2px; padding: 2px; border-radius: 11px; background: var(--fill); flex: none; }
+nav a {
+  position: relative; display: flex; align-items: center; gap: .4rem; padding: .32rem .85rem; border-radius: 9px;
+  color: var(--text); text-decoration: none; font-size: .8125rem; font-weight: 500; white-space: nowrap;
+  -webkit-tap-highlight-color: transparent; transition: background-color .2s, color .2s, transform .25s var(--ease);
+}
+nav a:hover { background: var(--fill); }
+nav a:active { transform: scale(.96); background: var(--fill-strong); transition-duration: 0s; }
+nav a[aria-current] { background: var(--card); box-shadow: 0 1px 3px rgba(0, 0, 0, .12); font-weight: 600; }
+nav a:focus-visible { outline: none; box-shadow: 0 0 0 3.5px color-mix(in srgb, var(--accent) 40%, transparent); }
+nav svg { width: 1.05rem; height: 1.05rem; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+/* something in there wants attention; the words are in the banner and on the page itself */
+.mark { width: .5rem; height: .5rem; border-radius: 50%; background: var(--warn); flex: none; }
+.mark.bad { background: var(--bad); }
+
+main { max-width: 1180px; margin: 1.5rem auto; padding: 0 max(1rem, env(safe-area-inset-right)) 0 max(1rem, env(safe-area-inset-left)); display: grid; gap: 1.25rem; }
+.view { display: grid; gap: 1.25rem; min-width: 0; animation: view-in .3s var(--ease); }
+@keyframes view-in { from { opacity: 0; transform: translateY(6px); } }
+/* The devices and the one that is picked, side by side: the list stays put. */
+.split { grid-template-columns: minmax(17rem, 22rem) minmax(0, 1fr); align-items: start; }
+.split #listCard { position: sticky; top: 4.5rem; max-height: calc(100vh - 6rem); overflow-y: auto; }
+.empty { text-align: center; padding: 4rem 1rem; margin: 0; font-size: .9375rem; }
+.card { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 1.25rem 1.4rem; overflow-x: auto; min-width: 0; }
 .narrow { max-width: 400px; margin: 0 auto; display: grid; gap: 1rem; }
 #login { margin-top: 3.5rem; }
 /* Large text is set tighter, small text looser; weight carries the hierarchy. */
@@ -49,6 +77,42 @@ p { margin: .5rem 0; }
 .row { display: flex; align-items: center; justify-content: space-between; gap: .8rem; margin: .4rem 0; }
 .row.left { justify-content: flex-start; align-items: flex-end; }
 .row.wrap { flex-wrap: wrap; }
+.row.end { justify-content: flex-end; margin-top: 1.2rem; }
+.acts { display: flex; gap: .5rem; flex-wrap: wrap; margin-left: auto; }
+.grow { flex: 1 1 12rem; }
+.grow input { width: 100%; }
+.pre { white-space: pre-line; }
+
+/* A list of things to pick from: the name, its state in a word, and what
+   one wants to know before opening it. Fits any width as it is. */
+.list { margin: .6rem -.6rem 0; display: grid; }
+.dev {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .15rem .6rem; align-items: center; padding: .7rem .6rem; min-height: 3.5rem;
+  color: inherit; text-decoration: none; border-radius: 12px; position: relative; -webkit-tap-highlight-color: transparent; transition: background-color .15s;
+}
+.dev + .dev::before { content: ""; position: absolute; left: .6rem; right: .6rem; top: 0; border-top: 1px solid var(--line); }
+.dev:hover { background: var(--fill); }
+.dev:active { background: var(--fill-strong); transition: none; }
+.dev:focus-visible { outline: none; box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--accent) 40%, transparent); }
+.dev[aria-current] { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.dev[aria-current]::before, .dev[aria-current] + .dev::before, .dev:hover::before, .dev:hover + .dev::before { border-color: transparent; }
+.dev b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dev .meta { grid-column: 1 / -1; color: var(--dim); font-size: .8125rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Something the reader should know before going on: a tinted band with the words in it. */
+.banner { margin: .8rem 0; padding: .7rem .9rem; border-radius: 12px; background: color-mix(in srgb, currentColor 12%, transparent); font-weight: 500; }
+.banner.warn { color: var(--warn); }
+.banner.bad { color: var(--bad); }
+.banner b { font-weight: 700; }
+main > .banner { margin: 0; }
+
+/* Numbers at a glance. */
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr)); gap: .6rem; margin: .9rem 0 .4rem; }
+.tiles > div { background: var(--fill); border-radius: 12px; padding: .7rem .85rem; display: flex; flex-direction: column-reverse; justify-content: flex-end; gap: .1rem; }
+.tiles dt { color: var(--dim); font-size: .8125rem; line-height: 1.3; }
+.tiles dd { margin: 0; font-size: 1.625rem; line-height: 1.15; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.tiles dd.text { font-size: 1.0625rem; letter-spacing: -.01em; padding: .3rem 0; }
+.tiles .attn dd { color: var(--warn); }
 .dim { color: var(--dim); font-size: .8125rem; line-height: 1.4; letter-spacing: .003em; }
 .err { color: var(--bad); margin: 0; font-weight: 500; }
 .mono, code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .8125rem; word-break: break-all; }
@@ -57,20 +121,16 @@ table { width: 100%; border-collapse: collapse; margin-top: .6rem; }
 th, td { text-align: left; padding: .6rem .7rem; border-bottom: 1px solid var(--line); vertical-align: top; }
 tbody tr:last-child > * { border-bottom: 0; }
 thead th { color: var(--dim); font-weight: 400; font-size: .8125rem; padding-bottom: .4rem; }
-#devices tbody tr { cursor: pointer; transition: background-color .15s; }
-#devices tbody tr:hover { background: var(--fill); }
-#devices tbody tr:active { background: var(--fill-strong); transition: none; }
-#devices tbody tr.sel { background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .kv th { width: 11rem; color: var(--dim); font-weight: 400; }
 tr.failed td { color: var(--bad); }
 td.acts { text-align: right; white-space: nowrap; }
 td.acts .btn { margin-left: .3rem; }
 
 /* A state is a tinted capsule: colour and word together, never colour alone. */
-.badge { display: inline-block; padding: .12rem .6rem; border-radius: 999px; font-size: .75rem; font-weight: 600; letter-spacing: .01em;
+.badge { display: inline-block; white-space: nowrap; padding: .12rem .6rem; border-radius: 999px; font-size: .75rem; font-weight: 600; letter-spacing: .01em;
   background: color-mix(in srgb, currentColor 14%, transparent); }
-.badge.active, .badge.done { color: var(--ok); }
-.badge.pending, .badge.queued, .badge.sent { color: var(--warn); }
+.badge.active, .badge.done, .badge.ok { color: var(--ok); }
+.badge.pending, .badge.queued, .badge.sent, .badge.warn { color: var(--warn); }
 .badge.revoked, .badge.failed, .badge.expired { color: var(--bad); }
 
 label { display: grid; gap: .3rem; font-size: .8125rem; color: var(--dim); }
@@ -99,8 +159,10 @@ input.code { font: 600 1.5rem ui-monospace, "SF Mono", Menlo, monospace; letter-
 .btn.primary:active { filter: brightness(.88); }
 .btn.warn { color: var(--warn); }
 .btn.danger { color: var(--bad); }
+.btn.primary.danger { background: var(--bad); color: #fff; }
 a.btn { text-decoration: none; display: inline-flex; align-items: center; }
-@media (pointer: coarse) { .btn, input, select { min-height: 2.75rem; } .btn.small { min-height: 2.25rem; } }
+/* Under a finger everything that can be pressed is at least 44 px high - also the small ones. */
+@media (pointer: coarse) { .btn, .btn.small, input, select { min-height: 2.75rem; } }
 
 pre { margin: 0; font: .8rem/1.4 ui-monospace, "SF Mono", Menlo, monospace; white-space: pre-wrap; word-break: break-word; max-height: 16rem; overflow: auto; }
 
@@ -118,7 +180,8 @@ dialog::backdrop { background: rgba(0, 0, 0, 0); transition: background-color .2
 dialog[open]::backdrop { background: rgba(0, 0, 0, .4); }
 @starting-style { dialog[open]::backdrop { background: rgba(0, 0, 0, 0); } }
 dialog form { display: grid; gap: .9rem; }
-dialog ol { padding-left: 1.2rem; margin: .8rem 0; }
+dialog ol, dialog ul { padding-left: 1.2rem; margin: .8rem 0; }
+dialog h2 { margin-bottom: .6rem; }
 dialog li { margin: .35rem 0; }
 #qr, #totpQr { display: block; margin: .8rem auto 1rem; background: #fff; border-radius: 12px; image-rendering: pixelated; max-width: 100%; height: auto; }
 
@@ -137,24 +200,118 @@ details.card form { display: grid; gap: .9rem; }
 code.big { font-size: 1.375rem; font-weight: 600; letter-spacing: .08em; user-select: all; }
 
 /* content-box: the fit addon takes the height as the room for the rows */
-#term { background: #000; border-radius: 12px; padding: 8px; height: 26rem; margin-top: .6rem; box-sizing: content-box; }
+#term { background: #000; border-radius: 12px; padding: 8px; height: min(26rem, 55vh); margin-top: .6rem; box-sizing: content-box; }
 #conState.open { color: var(--ok); font-weight: 500; }
 #conState.wait { color: var(--warn); font-weight: 500; }
+
+/* ---- A narrow screen: one thing at a time. The places move under the thumb,
+   the picked device takes the whole screen with a way back, tables become
+   one block per row, and a dialog comes up from the edge the thumb is at. */
+@media (max-width: 760px) {
+  header { padding-top: .45rem; padding-bottom: .45rem; }
+  .btn, .btn.small, input, select { min-height: 2.75rem; }   /* a narrow screen is a touch screen, whatever the browser says of its pointer */
+  nav {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; border-radius: 0; gap: 0; justify-content: space-around;
+    padding: .3rem max(.5rem, env(safe-area-inset-right)) calc(.3rem + env(safe-area-inset-bottom)) max(.5rem, env(safe-area-inset-left));
+    background: var(--bar); -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px); border-top: 1px solid var(--line);
+  }
+  nav a { flex: 1; flex-direction: column; gap: .1rem; padding: .3rem .2rem; min-height: 3rem; justify-content: center; font-size: .6875rem; letter-spacing: .01em; color: var(--dim); border-radius: 10px; }
+  nav a[aria-current] { background: none; box-shadow: none; color: var(--accent); }
+  nav a:hover { background: none; }          /* a finger does not hover; what it presses still answers (:active) */
+  nav a:active { background: var(--fill-strong); }
+  /* the bar already says where one is */
+  .dup { display: none; }
+  .row:has(> .dup) { justify-content: flex-end; }
+  .row:has(> .dup) > .btn.primary { flex: 1 1 auto; }
+  nav svg { width: 1.5rem; height: 1.5rem; }
+  nav .mark { position: absolute; top: .3rem; left: calc(50% + .6rem); }
+  main { margin: 1rem auto; padding-bottom: calc(4.5rem + env(safe-area-inset-bottom)); gap: 1rem; }
+  .card { padding: 1.1rem 1rem; }
+  #login { margin-top: 1.5rem; }
+  #toast { bottom: calc(4.75rem + env(safe-area-inset-bottom)); }
+
+  .split { grid-template-columns: minmax(0, 1fr); }
+  .split #listCard { position: static; max-height: none; }
+  #pick { display: none; }
+  body.detail #listCard { display: none; }
+  body.detail .back {
+    display: inline-flex; align-items: center; gap: .15rem; flex: none; margin-left: -.5rem; padding: .4rem .5rem; min-height: 2.75rem; border-radius: 10px;
+    color: var(--accent); text-decoration: none; font-weight: 500; -webkit-tap-highlight-color: transparent;
+  }
+  body.detail .back::before { content: ""; width: .6rem; height: .6rem; border-left: 2.5px solid; border-bottom: 2.5px solid; transform: rotate(45deg); margin-right: .1rem; }
+  body.detail .back:active { background: var(--fill-strong); }
+  body.detail header h1, body.detail #whoami { display: none; }
+  body.detail header { justify-content: space-between; }
+  /* going in moves forward, coming back moves back */
+  body.detail .view { animation-name: push-in; }
+  body.popped .view { animation-name: pop-in; }
+
+  .kv th, .kv td { display: block; width: auto; border: 0; padding: 0; }
+  .kv th { padding-top: .6rem; font-size: .8125rem; }
+  .kv td { padding-bottom: .6rem; border-bottom: 1px solid var(--line); }
+  .kv tr:last-child td { border-bottom: 0; }
+
+  table.stack thead { display: none; }
+  table.stack tr { display: block; padding: .6rem 0; border-bottom: 1px solid var(--line); }
+  table.stack tbody tr:last-child { border-bottom: 0; }
+  table.stack td { display: flex; gap: 1rem; justify-content: space-between; align-items: baseline; padding: .15rem 0; border: 0; text-align: right; overflow-wrap: anywhere; }
+  table.stack td::before { content: attr(data-label); color: var(--dim); font-size: .8125rem; text-align: left; flex: none; }
+  table.stack td:empty, table.stack td.none { display: none; }
+  table.stack td:first-child { font-weight: 600; }
+  table.stack td.acts { justify-content: flex-start; padding-top: .5rem; margin: 0; }
+  table.stack td.acts::before { content: none; }
+  table.stack td.acts .btn { margin: 0; }
+  table.stack td.wide { display: block; text-align: left; }
+  table.stack td.wide::before { display: block; margin-bottom: .2rem; }
+
+  /* The record is long: what happened and when on one line, who and from where under it. */
+  #audit tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .1rem .8rem; }
+  #audit td { display: block; text-align: left; padding: 0; }
+  #audit td::before { content: none; }
+  #audit td:nth-child(4) { grid-area: 1 / 1; font-weight: 600; }
+  #audit td:nth-child(1) { grid-area: 1 / 2; font-weight: 400; color: var(--dim); font-size: .8125rem; align-self: baseline; }
+  #audit td:nth-child(2) { grid-area: 2 / 1; }
+  #audit td:nth-child(3) { grid-area: 2 / 2; color: var(--dim); font-size: .8125rem; align-self: baseline; }
+  #audit td:nth-child(5) { grid-area: 3 / 1 / auto / -1; color: var(--dim); font-size: .8125rem; }
+  #audit td:nth-child(6) { grid-area: 4 / 1 / auto / -1; font-weight: 600; }
+  #audit tr.failed td { color: var(--bad); }
+
+  .row.end > .btn, #playForm > .btn, #conForm > .btn, #approveForm .btn { flex: 1 1 auto; }
+  input.code { flex: 1 1 11rem; width: auto; }
+
+  dialog {
+    margin: auto 0 0; width: 100%; max-width: 100%; max-height: 92dvh; border-radius: 20px 20px 0 0;
+    padding: 1.4rem max(1.2rem, env(safe-area-inset-right)) calc(1.4rem + env(safe-area-inset-bottom)) max(1.2rem, env(safe-area-inset-left));
+    transform: translateY(100%); opacity: 1;
+  }
+  dialog[open] { transform: none; }
+  @starting-style { dialog[open] { opacity: 1; transform: translateY(100%); } }
+  dialog .row.end > .btn, dialog .acts { flex: 1 1 auto; }
+  dialog .acts > .btn { flex: 1 1 auto; }
+}
+@keyframes push-in { from { opacity: 0; transform: translateX(28px); } }
+@keyframes pop-in { from { opacity: 0; transform: translateX(-28px); } }
 
 /* Less motion means a plain fade, not nothing; less transparency means solid
    surfaces; more contrast means visible edges. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01s !important; }
+  .view { animation: view-fade .2s !important; }
+  nav a, nav a:active { transform: none; }
   .btn, .btn:active { transform: none; }
-  dialog, dialog[open] { transform: none; transition: opacity .2s, overlay .2s allow-discrete, display .2s allow-discrete; }
-  @starting-style { dialog[open] { transform: none; } }
+  dialog, dialog[open] { transform: none; opacity: 0; transition: opacity .2s, overlay .2s allow-discrete, display .2s allow-discrete; }
+  dialog[open] { opacity: 1; }
+  @starting-style { dialog[open] { transform: none; opacity: 0; } }
 }
+@keyframes view-fade { from { opacity: 0; } }
 @media (prefers-reduced-transparency: reduce) {
-  header { background: var(--bg); -webkit-backdrop-filter: none; backdrop-filter: none; }
+  header::before { background: var(--bg); -webkit-backdrop-filter: none; backdrop-filter: none; }
+  @media (max-width: 760px) { nav { background: var(--bg); -webkit-backdrop-filter: none; backdrop-filter: none; } }
   #toast { background: #28282c; -webkit-backdrop-filter: none; backdrop-filter: none; }
 }
 @media (prefers-contrast: more) {
   :root { --line: color-mix(in srgb, var(--text) 55%, transparent); --dim: var(--text); }
-  .card, dialog, .btn, input, select, textarea { outline: 1px solid var(--line); }
-  header { background: var(--bg); }
+  .card, dialog, .btn, input, select, textarea, .banner, .tiles > div, nav a[aria-current] { outline: 1px solid var(--line); }
+  header::before { background: var(--bg); }
+  @media (max-width: 760px) { nav { background: var(--bg); } }
 }

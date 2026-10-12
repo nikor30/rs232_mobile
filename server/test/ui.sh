@@ -40,7 +40,10 @@ CODE=$(echo "$OUT1" | awk '/^CODE/{print $2}')
 browser approve "Labor:$CODE" || fail "approve"
 docker run -d --name ${COMPOSE_PROJECT_NAME}-sim --network "$NET" -v ${COMPOSE_PROJECT_NAME}_dev:/data --entrypoint /devsim rs232-c2 \
   -state /data/device.json -tls-skip-verify run -control -console -interval 1s >/dev/null
+browser server || fail "server"
 browser command "Labor" || fail "command"
 browser accounts || fail "accounts"
+browser phone "Labor" || fail "phone"
+browser revoke "Labor" || fail "revoke"
 echo "screenshots: $OUT"
 printf '\nWEB INTERFACE CHECKS PASSED\n'
