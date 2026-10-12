@@ -141,6 +141,11 @@ type Server struct {
 	// Requests per client address. A handshake costs the server a key
 	// exchange, a sign-in a password hash; neither is free for the asking.
 	limHandshake, limAuth, limFail *limiter
+
+	started   time.Time
+	healthMu  sync.Mutex
+	healthAt  time.Time // when the state was last checked
+	healthErr error
 }
 
 func New(cfg Config, st *store.Store) *Server {
@@ -154,6 +159,7 @@ func New(cfg Config, st *store.Store) *Server {
 		web: map[[32]byte]*webSession{}, fails: map[string]*failCount{}, dummySalt: make([]byte, 16),
 		limHandshake: newLimiter(30, time.Second), limAuth: newLimiter(10, 6*time.Second), limFail: newLimiter(30, 2*time.Second)}
 	rand.Read(sv.dummySalt)
+	sv.started = time.Now()
 	if cfg.Entra != nil {
 		sv.entra = newEntra(*cfg.Entra, cfg.PublicURL)
 	}
@@ -165,7 +171,7 @@ func (sv *Server) SetClock(now func() time.Time) { sv.now = now; sv.st.SetClock(
 
 func (sv *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, "ok\n") })
+	mux.HandleFunc("GET /healthz", sv.healthz)
 	mux.HandleFunc("GET /v1/server-key", sv.serverKey)
 	mux.HandleFunc("POST /v1/handshake", sv.handshake)
 	mux.HandleFunc("POST /v1/msg", sv.msg)
@@ -185,6 +191,7 @@ func (sv *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /admin/v1/users/{name}", sv.admin(sv.deleteUser))
 	mux.HandleFunc("GET /admin/v1/audit", sv.admin(sv.auditLog))
 	mux.HandleFunc("GET /admin/v1/server", sv.admin(sv.serverInfo))
+	mux.HandleFunc("GET /admin/v1/status", sv.admin(sv.status))
 	mux.HandleFunc("POST /admin/v1/enroll-tokens", sv.admin(sv.newToken))
 	mux.HandleFunc("GET /admin/v1/devices", sv.admin(sv.listDevices))
 	mux.HandleFunc("POST /admin/v1/devices/{id}/approve", sv.admin(sv.approve))
@@ -457,6 +464,80 @@ func (sv *Server) serverInfo(w http.ResponseWriter, _ *http.Request) {
 		"public_url":  sv.cfg.PublicURL,
 		"commands":    sv.cfg.Commands,
 		"poll_s":      sv.cfg.PollS,
+	})
+}
+
+// ---------------------------------------------------------------- monitoring
+
+const healthEvery = 10 * time.Second
+
+// Check says whether the server can do its work, which is to say whether its
+// state can be written. Anybody may ask (/healthz), so the backend is asked at
+// most every healthEvery.
+func (sv *Server) Check() error {
+	sv.healthMu.Lock()
+	defer sv.healthMu.Unlock()
+	if now := time.Now(); sv.healthAt.IsZero() || now.Sub(sv.healthAt) >= healthEvery {
+		sv.healthAt, sv.healthErr = now, sv.st.Check()
+	}
+	return sv.healthErr
+}
+
+// healthz is for whatever watches the server from outside: 200 or 503, and
+// not a word about why - that is in the log and in /admin/v1/status.
+func (sv *Server) healthz(w http.ResponseWriter, _ *http.Request) {
+	if sv.Check() != nil {
+		http.Error(w, "failing", http.StatusServiceUnavailable)
+		return
+	}
+	io.WriteString(w, "ok\n")
+}
+
+// silentAfter is how long an active device may stay away before it counts as
+// silent: several of its polls, and a handshake that had to be repeated.
+func (sv *Server) silentAfter() time.Duration {
+	return max(5*time.Duration(sv.cfg.PollS)*time.Second, 5*time.Minute)
+}
+
+func (sv *Server) status(w http.ResponseWriter, _ *http.Request) {
+	now := sv.now()
+	devices := map[string]int{store.StatePending: 0, store.StateActive: 0, store.StateRevoked: 0, "silent": 0}
+	for _, d := range sv.st.Devices() {
+		devices[d.State]++
+		if d.State == store.StateActive && (d.LastSeen == nil || now.Sub(*d.LastSeen) > sv.silentAfter()) {
+			devices["silent"]++
+		}
+	}
+	sv.mu.Lock()
+	consoles := 0
+	for _, c := range sv.cons {
+		if c.ended == nil {
+			consoles++
+		}
+	}
+	sv.mu.Unlock()
+	sv.authMu.Lock()
+	signedIn := len(sv.web)
+	sv.authMu.Unlock()
+	denied := func(l *limiter) int64 {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		return l.denied
+	}
+	state := map[string]any{"ok": true}
+	sv.Check()
+	if since, err := sv.st.Health(); err != nil {
+		state = map[string]any{"ok": false, "error": err.Error(), "since": since}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"started":        sv.started.UTC(),
+		"uptime_s":       int(time.Since(sv.started) / time.Second),
+		"state":          state,
+		"devices":        devices,
+		"silent_after_s": int(sv.silentAfter() / time.Second),
+		"consoles_open":  consoles,
+		"signed_in":      signedIn,
+		"turned_away":    map[string]int64{"handshake": denied(sv.limHandshake), "sign_in": denied(sv.limAuth), "admin": denied(sv.limFail)},
 	})
 }
 

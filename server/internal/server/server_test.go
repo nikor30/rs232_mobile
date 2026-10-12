@@ -490,3 +490,97 @@ func TestDeviceEndpointsRejectGarbage(t *testing.T) {
 		t.Fatalf("empty msg: HTTP %d", code)
 	}
 }
+
+func TestHealthAndStatus(t *testing.T) {
+	e := newEnv(t)
+	get := func(path string) (int, string) {
+		resp, err := http.Get(e.ts.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, strings.TrimSpace(string(b))
+	}
+	if code, body := get("/healthz"); code != 200 || body != "ok" {
+		t.Fatalf("healthz: %d %q", code, body)
+	}
+	if code, _ := get("/admin/v1/status"); code != 401 {
+		t.Fatalf("status without sign-in: %d", code)
+	}
+
+	seen := e.enrolled()
+	if _, err := seen.Poll(nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	e.enrolled() // approved, never came back
+	pending := e.device()
+	if _, err := pending.Enroll(e.token(), "wartet", nil); err != nil {
+		t.Fatal(err)
+	}
+	var st struct {
+		UptimeS int `json:"uptime_s"`
+		State   struct {
+			OK    bool
+			Error string
+			Since time.Time
+		}
+		Devices      map[string]int
+		SilentAfterS int              `json:"silent_after_s"`
+		ConsolesOpen int              `json:"consoles_open"`
+		TurnedAway   map[string]int64 `json:"turned_away"`
+	}
+	status := func() {
+		t.Helper()
+		st.State.Error = ""
+		if code := e.admin("GET", "/admin/v1/status", nil, &st); code != 200 {
+			t.Fatalf("status: HTTP %d", code)
+		}
+	}
+	status()
+	if !st.State.OK || st.Devices["active"] != 2 || st.Devices["pending"] != 1 || st.Devices["revoked"] != 0 || st.Devices["silent"] != 1 || st.SilentAfterS != 300 {
+		t.Fatalf("status: %+v", st)
+	}
+	e.now = e.now.Add(6 * time.Minute)
+	if status(); st.Devices["silent"] != 2 {
+		t.Fatalf("after six minutes of silence: %+v", st.Devices)
+	}
+
+	// requests that were turned away are counted
+	for i := 0; i < 40; i++ {
+		get("/admin/v1/devices")
+	}
+	if status(); st.TurnedAway["admin"] == 0 || st.TurnedAway["handshake"] != 0 {
+		t.Fatalf("turned away: %+v", st.TurnedAway)
+	}
+
+	if os.Getenv(store.TestDatabase) != "" {
+		return // the rest needs a backend that a test can take away
+	}
+	if err := os.RemoveAll(e.dir); err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := get("/healthz"); code != 200 {
+		t.Fatalf("healthz asks the backend again within %v: %d", healthEvery, code)
+	}
+	e.sv.healthAt = time.Time{}
+	if code, body := get("/healthz"); code != 503 || body != "failing" {
+		t.Fatalf("healthz without a data directory: %d %q", code, body)
+	}
+	if status(); st.State.OK || st.State.Error == "" || st.State.Since.IsZero() {
+		t.Fatalf("status without a data directory: %+v", st.State)
+	}
+	if strings.Contains(st.State.Error, "\n") {
+		t.Fatalf("error: %q", st.State.Error)
+	}
+	if err := os.Mkdir(e.dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	e.sv.healthAt = time.Time{}
+	if code, _ := get("/healthz"); code != 200 {
+		t.Fatalf("healthz after the repair: %d", code)
+	}
+	if status(); !st.State.OK {
+		t.Fatalf("status after the repair: %+v", st.State)
+	}
+}

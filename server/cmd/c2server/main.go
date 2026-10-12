@@ -11,6 +11,8 @@ import (
 	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
+	"fmt"
 	"log"
 	"math/big"
 	"net"
@@ -77,8 +79,56 @@ func selfSigned(dir string, hosts []string) (tls.Certificate, error) {
 	return tls.LoadX509KeyPair(crtFile, keyFile)
 }
 
+// health asks the server in this container how it is (docker's health check:
+// the image has no shell and no curl).
+func health(listen, tlsMode string) int {
+	_, port, err := net.SplitHostPort(listen)
+	if err != nil {
+		port = strings.TrimPrefix(listen, ":")
+	}
+	scheme := "https"
+	if tlsMode == "off" {
+		scheme = "http"
+	}
+	// its own certificate, asked for by address
+	c := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
+	resp, err := c.Get(scheme + "://127.0.0.1:" + port + "/healthz")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		fmt.Fprintln(os.Stderr, resp.Status)
+		return 1
+	}
+	return 0
+}
+
+// watch checks the state twice a minute and writes into the log when that
+// changes - also while nobody asks /healthz.
+func watch(sv *server.Server) {
+	var failing bool
+	for range time.Tick(30 * time.Second) {
+		err := sv.Check()
+		if errors.Is(err, store.ErrTaken) {
+			log.Fatalf("state: %v - stopping", err)
+		}
+		switch {
+		case err != nil && !failing:
+			log.Printf("state: CANNOT BE SAVED: %v", err)
+		case err == nil && failing:
+			log.Print("state: can be saved again")
+		}
+		failing = err != nil
+	}
+}
+
 func main() {
 	log.SetFlags(log.LstdFlags | log.LUTC)
+	if len(os.Args) > 1 && os.Args[1] == "-health" {
+		os.Exit(health(env("C2_LISTEN", ":8443"), env("C2_TLS", "selfsigned")))
+	}
 	dataDir := env("C2_DATA_DIR", "/data")
 	listen := env("C2_LISTEN", ":8443")
 	tlsMode := env("C2_TLS", "selfsigned") // selfsigned | files | off
@@ -127,6 +177,7 @@ func main() {
 		log.Print("no admin token: accounts only")
 	}
 	sv := server.New(cfg, st)
+	go watch(sv)
 	hs := &http.Server{
 		Addr:              listen,
 		Handler:           sv.Handler(),

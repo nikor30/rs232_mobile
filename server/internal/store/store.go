@@ -122,6 +122,8 @@ type Store struct {
 	// "last seen" and the reported status change with every poll of every
 	// device. They are written with the next real change, or after seenFlush.
 	lastSave  time.Time
+	failing   time.Time // since when the backend refuses, if it does
+	failErr   error
 	tookFirst bool   // the state came from an import, not from the backend
 	imported  string // and this is the file it came from
 }
@@ -201,11 +203,49 @@ func (s *Store) ServerKey() *proto.StaticKey { return s.key }
 // out with the next save. Callers hold the lock.
 func (s *Store) save() error {
 	if err := s.b.save(&s.d, &s.ch); err != nil {
-		return err
+		return s.note(err)
 	}
 	s.ch = changes{}
 	s.lastSave = s.now()
+	return s.note(nil)
+}
+
+// note remembers how the last contact with the backend went.
+func (s *Store) note(err error) error {
+	if err == nil {
+		s.failing, s.failErr = time.Time{}, nil
+	} else {
+		if s.failing.IsZero() {
+			s.failing = s.now()
+		}
+		s.failErr = err
+	}
+	return err
+}
+
+// Check looks whether the state can still be written: it tries again what an
+// earlier save could not write, and otherwise asks the backend. Nothing else
+// would notice a backend that went away while no device and nobody is talking
+// to the server.
+func (s *Store) Check() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	failed := !s.failing.IsZero()
+	if err := s.note(s.b.check()); err != nil {
+		return err
+	}
+	if !s.ch.empty() && (failed || s.now().Sub(s.lastSave) > seenFlush) {
+		return s.save()
+	}
 	return nil
+}
+
+// Health is what the last save or check found: nil, or the error and since
+// when the backend has been refusing.
+func (s *Store) Health() (since time.Time, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.failing, s.failErr
 }
 
 // ---------------------------------------------------------------- tokens

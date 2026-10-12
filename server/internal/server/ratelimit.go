@@ -17,6 +17,7 @@ type limiter struct {
 	refill  time.Duration
 	buckets map[string]*bucket
 	sweep   time.Time
+	denied  int64 // requests turned away since the start
 }
 
 type bucket struct {
@@ -87,6 +88,9 @@ func (sv *Server) limited(l *limiter, w http.ResponseWriter, r *http.Request) bo
 	if ok {
 		return false
 	}
+	l.mu.Lock()
+	l.denied++
+	l.mu.Unlock()
 	w.Header().Set("Retry-After", strconv.Itoa(int(wait/time.Second)+1))
 	http.Error(w, "too many requests", http.StatusTooManyRequests)
 	return true

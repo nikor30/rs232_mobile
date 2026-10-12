@@ -14,6 +14,8 @@ type backend interface {
 	// save writes the state. ch names what has changed since the last save
 	// that worked; a backend may also write everything.
 	save(d *data, ch *changes) error
+	// check says whether the backend is still there to write to.
+	check() error
 	close() error
 }
 
@@ -122,6 +124,11 @@ func (f *file) save(d *data, _ *changes) error {
 		return err
 	}
 	return os.Rename(tmp, f.path)
+}
+
+func (f *file) check() error {
+	_, err := os.Stat(filepath.Dir(f.path))
+	return err
 }
 
 func (f *file) close() error { return nil }

@@ -35,7 +35,7 @@ docker compose -f docker-compose.cloud.yml up -d --build
 - Die Datenbank enthält den privaten Serverschlüssel, die Passwort-Hashes und die TOTP-Geheimnisse. Wer das Volume `pgdata` verliert, muss alle Geräte neu anmelden. Dagegen gibt es die Sicherung (nächster Abschnitt).
 - Hineinsehen: `docker compose -f docker-compose.cloud.yml exec db psql -U c2 c2` — Tabellen `devices`, `commands`, `consoles`, `users`, `audit`, `tokens`, `server`. Das Protokoll behält dort 200 000 Einträge; die Weboberfläche zeigt die neuesten.
 
-**Stand:** auf dem Raspberry Pi mit `C2_CADDY_TLS=internal` getestet (`test/cloud.sh`, und mit dem Waveshare-Board im lokalen Netz), nicht mit einem echten Zertifikat und nicht im Internet. Wechsel des Serverschlüssels und Überwachung fehlen noch — die Warnung oben gilt weiter.
+**Stand:** auf dem Raspberry Pi mit `C2_CADDY_TLS=internal` getestet (`test/cloud.sh`, und mit dem Waveshare-Board im lokalen Netz), nicht mit einem echten Zertifikat und nicht im Internet. Der Wechsel des Serverschlüssels fehlt noch — die Warnung oben gilt weiter.
 
 ### Sicherung und Wiederherstellung
 
@@ -72,6 +72,17 @@ $C up -d
 Zurückgespielt wird alles oder nichts; eine kaputte Datei lässt die Datenbank, wie sie war. **Was nach der Sicherung geschah, ist danach weg:** Später angemeldete Geräte kennt der Server nicht mehr (neu anmelden), und ein später **gesperrtes Gerät ist wieder aktiv** — nach dem Zurückspielen die Geräteliste durchgehen und erneut sperren. Dasselbe gilt für gesperrte oder zurückgesetzte Konten.
 
 **Stand:** `test/backup.sh` (von selbst geschriebene Sicherung, Zurückspielen über einen späteren Stand, Verlust aller Volumes, Aufräumen). Nicht geprüft: eine Sicherung aus einem älteren Schema in einen neueren Server (es gibt erst ein Schema), große Datenbanken, und ob jemand nach einem echten Ausfall mit dieser Anleitung zurechtkommt.
+
+### Überwachung
+
+- **`GET /healthz`** (ohne Anmeldung) antwortet `200 ok`, solange der Server seinen Zustand schreiben kann, sonst `503 failing` — ohne Begründung; die steht im Log und in `/admin/v1/status`. Das ist die Adresse für einen Wächter von außen (`https://<C2_DOMAIN>/healthz`). Die Datenbank wird dafür höchstens alle 10 Sekunden gefragt.
+- **Container:** `docker compose ps` zeigt `healthy`/`unhealthy` für den Server (`/c2server -health` fragt das eigene `/healthz`), die Datenbank und die Sicherung (`unhealthy`, wenn zwei Abstände lang keine Sicherung entstand).
+- **Log:** Der Server prüft zweimal in der Minute selbst und schreibt `state: CANNOT BE SAVED: …` und später `state: can be saved again`; dazu wie bisher jede Anmeldung und jeden verändernden Aufruf (`audit: …`).
+- **`GET /admin/v1/status`** (mit Anmeldung) für alles Weitere, zum Beispiel aktive Geräte, die sich länger als fünf Abfrageabstände (mindestens fünf Minuten) nicht gemeldet haben (`devices.silent`).
+- **Fällt die Datenbank aus,** läuft der Server weiter: Geräte bekommen Antworten aus dem Speicher, Änderungen werden mit Fehler 500 abgewiesen — bleiben aber im Speicher und werden geschrieben, sobald die Datenbank wieder da ist. Die Sperre gegen einen zweiten Serverprozess nimmt der Server danach neu; hat inzwischen ein anderer Prozess die Datenbank übernommen, beendet er sich.
+- **Nicht eingebaut ist das Benachrichtigen:** Niemand bekommt von selbst eine Nachricht. Dafür braucht es einen Wächter außerhalb dieses Rechners, der `/healthz` abfragt — er merkt dann auch, wenn der ganze Rechner weg ist.
+
+**Stand:** Go-Tests und `test/cloud.sh` (Datenbank im Betrieb gestoppt und wieder gestartet). Nicht geprüft: ein echter Wächter von außen, eine Datenbank, die hängt statt zu fehlen, ein Ausfall über Stunden.
 
 ## Ein simuliertes Gerät anmelden
 
@@ -127,6 +138,7 @@ Alle Aufrufe mit `Authorization: Bearer <C2_ADMIN_TOKEN>` oder mit dem Cookie ei
 | `DELETE /admin/v1/users/{name}` | Konto löschen (nicht das eigene) |
 | `GET /admin/v1/audit?n=200` | Protokoll, neueste zuerst |
 | `GET /admin/v1/server` | Fingerabdruck des Serverschlüssels, öffentliche Adresse, Auftragsarten |
+| `GET /admin/v1/status` | Überwachung: Laufzeit, ob der Zustand gespeichert werden kann (sonst Fehler und seit wann), Geräte je Zustand und wie viele aktive still sind, offene Fernkonsolen, angemeldete Browser, abgewiesene Anfragen (429) seit dem Start |
 | `GET /admin/v1/devices/{id}/commands` | Aufträge mit Zustand (`queued`, `sent`, `done`, `failed`, `expired`) und Ergebnis |
 
 ## Anmeldung über Microsoft Entra ID
@@ -164,7 +176,7 @@ Wer das Datenverzeichnis (mit PostgreSQL: die Datenbank und ihre Sicherungen) ve
 ./test/e2e.sh                       # alles: Unit-Tests, Image, Ende-zu-Ende im Container
 ./test/ui.sh                        # die Weboberfläche in einem Browser ohne Bildschirm (Playwright-Image, 3 GB)
 ./test/pg.sh                        # die Unit-Tests noch einmal, mit dem Zustand in einem echten PostgreSQL
-./test/cloud.sh                     # Caddy + Server + PostgreSQL: Umzug von der Datei, Zertifikat, Konto, Neustart
+./test/cloud.sh                     # Caddy + Server + PostgreSQL: Umzug von der Datei, Zertifikat, Konto, Ausfall der Datenbank, Neustart
 ./test/backup.sh                    # Sicherung der Datenbank und Zurückspielen, auch nach dem Verlust aller Volumes
 ../tests/c2/run.sh                  # der Protokollcode der Firmware auf dem PC gegen diesen Server
 docker build --target test .        # nur Formatierung, go vet und Unit-Tests

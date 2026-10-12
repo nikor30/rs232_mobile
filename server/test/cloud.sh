@@ -152,6 +152,34 @@ if OUT=$($CLOUD run --rm --no-deps c2server 2>&1); then fail "a second server st
 echo "$OUT" | grep -q "another server process is using this database" || fail "second server: $OUT"
 echo "ok   a second server refuses to start"
 
+step "the database goes away and comes back"
+SRV=$($CLOUD ps -q c2server)
+for i in $(seq 1 60); do [ "$(docker inspect -f '{{.State.Health.Status}}' $SRV)" = healthy ] && break; sleep 1; done
+expect "container" "$(docker inspect -f '{{.State.Health.Status}}' $SRV)" healthy
+expect "state" "$(admin GET /admin/v1/status | head -n -1 | json '(d["state"]["ok"], d["devices"]["active"])')" "(True, 2)"
+$CLOUD stop db 2>&1 | tail -1
+for i in $(seq 1 40); do [ "$(c -o /dev/null -w '%{http_code}' "$API/healthz")" = 503 ] && break; sleep 1; done
+expect "healthz without the database" "$(c -o /dev/null -w '%{http_code}' "$API/healthz")" 503
+if $CLOUD exec -T c2server /c2server -health 2>/dev/null; then fail "the health check passes without a database"; fi
+echo "ok   the container's health check fails"
+expect "status says why" "$(admin GET /admin/v1/status | head -n -1 | json '(d["state"]["ok"], bool(d["state"]["error"]))')" "(False, True)"
+expect "a change is refused, not lost quietly" "$(admin POST /admin/v1/enroll-tokens '{"ttl_s":120,"note":"ohne-datenbank"}' | tail -1)" 500
+for i in $(seq 1 40); do $CLOUD logs c2server 2>&1 | grep -q "state: CANNOT BE SAVED" && break; sleep 1; done
+$CLOUD logs c2server 2>&1 | grep -q "state: CANNOT BE SAVED" || fail "nothing in the log about the lost database"
+echo "ok   it is in the log"
+$CLOUD start db 2>&1 | tail -1
+for i in $(seq 1 60); do [ "$(c -o /dev/null -w '%{http_code}' "$API/healthz")" = 200 ] && break; sleep 1; done
+expect "healthz with the database back" "$(c "$API/healthz")" ok
+for i in $(seq 1 40); do $CLOUD logs c2server 2>&1 | grep -q "state: can be saved again" && break; sleep 1; done
+$CLOUD logs c2server 2>&1 | grep -q "state: can be saved again" || fail "nothing in the log about the database being back"
+echo "ok   and that it is back"
+expect "devices are still there" "$(admin GET /admin/v1/status | head -n -1 | json '(d["state"]["ok"], d["devices"]["active"])')" "(True, 2)"
+expect "old device talks to the server" "$(devsim run -n 1 | head -1)" "STATE active"
+# the lock went with the database's connections; the server has taken it again
+if OUT=$($CLOUD run --rm --no-deps c2server 2>&1); then fail "a second server started after the database came back"; fi
+echo "$OUT" | grep -q "another server process is using this database" || fail "second server: $OUT"
+echo "ok   a second server still refuses to start"
+
 step "restart without the admin token: accounts only"
 $CLOUD down 2>&1 | tail -1
 SAVED=$C2_ADMIN_TOKEN

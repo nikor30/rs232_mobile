@@ -105,6 +105,7 @@ const (
 type pg struct {
 	db     *sql.DB
 	lock   *sql.Conn // holds the advisory lock for as long as it lives
+	taken  bool      // the lock was lost to another process
 	audits int
 }
 
@@ -216,6 +217,47 @@ func (p *pg) migrate(ctx context.Context) error {
 		}
 	}
 	return tx.Commit()
+}
+
+// ErrTaken: the lock of the one server process was lost and another process
+// has it now. This one must stop writing.
+var ErrTaken = errors.New("another server process has taken over this database")
+
+// check asks the database for a sign of life. The advisory lock lives on one
+// connection and goes with it when the database restarts: then it is taken
+// again here - unless somebody else was faster.
+func (p *pg) check() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if p.taken {
+		return ErrTaken
+	}
+	if err := p.db.PingContext(ctx); err != nil {
+		return err
+	}
+	if p.lock != nil {
+		if p.lock.PingContext(ctx) == nil {
+			return nil
+		}
+		p.lock.Close()
+		p.lock = nil
+	}
+	c, err := p.db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	var got bool
+	if err := c.QueryRowContext(ctx, `SELECT pg_try_advisory_lock($1, hashtext(current_schema()))`, pgLock).Scan(&got); err != nil {
+		c.Close()
+		return err
+	}
+	if !got {
+		c.Close()
+		p.taken = true
+		return ErrTaken
+	}
+	p.lock = c
+	return nil
 }
 
 func (p *pg) close() error {
@@ -405,6 +447,9 @@ func (w *writer) exec(query string, args ...any) {
 func (p *pg) save(d *data, ch *changes) error {
 	if ch.empty() {
 		return nil
+	}
+	if p.taken {
+		return ErrTaken
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), pgTimeout)
 	defer cancel()

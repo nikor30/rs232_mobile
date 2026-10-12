@@ -377,3 +377,84 @@ func TestPostgresKeepsMoreAuditThanItShows(t *testing.T) {
 		t.Fatalf("%d rows", n)
 	}
 }
+
+func TestCheckNoticesALostBackend(t *testing.T) {
+	if os.Getenv(TestDatabase) != "" {
+		t.Skip("the file only: a database does not go away with a directory")
+	}
+	dir, c := filepath.Join(t.TempDir(), "data"), &clock{now: t0}
+	must(t, os.Mkdir(dir, 0o700))
+	s := openT(t, dir, c)
+	must(t, s.Check())
+	must(t, os.RemoveAll(dir))
+	if s.Check() == nil {
+		t.Fatal("the directory is gone and nobody noticed")
+	}
+	c.now = c.now.Add(time.Hour)
+	if s.Check() == nil {
+		t.Fatal("still gone")
+	}
+	if since, err := s.Health(); err == nil || !since.Equal(t0) {
+		t.Fatalf("health: since %v, %v", since, err)
+	}
+	if _, err := s.NewToken(time.Hour, "x"); err == nil {
+		t.Fatal("a token was saved into nothing")
+	}
+	// What could not be written goes out with the first check that works again.
+	must(t, os.Mkdir(dir, 0o700))
+	c.now = c.now.Add(time.Hour)
+	must(t, s.Check())
+	if since, err := s.Health(); err != nil || !since.IsZero() {
+		t.Fatalf("health after the repair: since %v, %v", since, err)
+	}
+	before := snapshot(t, s)
+	must(t, s.Close())
+	if after := snapshot(t, openT(t, dir, c)); after != before {
+		t.Fatalf("what was not written at first is missing:\n%s\n---\n%s", before, after)
+	}
+}
+
+// dropLock ends the connection that holds the server's lock, the way a
+// restart of the database does.
+func dropLock(t *testing.T, s *Store) {
+	t.Helper()
+	p := s.b.(*pg)
+	var pid int
+	must(t, p.lock.QueryRowContext(t.Context(), `SELECT pg_backend_pid()`).Scan(&pid))
+	_, err := p.db.Exec(`SELECT pg_terminate_backend($1)`, pid)
+	must(t, err)
+	time.Sleep(200 * time.Millisecond)
+}
+
+func TestPostgresTakesTheLockAgain(t *testing.T) {
+	onPostgres(t)
+	dir, c := t.TempDir(), &clock{now: t0}
+	s := openT(t, dir, c)
+	dropLock(t, s)
+	must(t, s.Check())
+	if _, err := OpenForTest(dir); err == nil || !strings.Contains(err.Error(), "another server") {
+		t.Fatalf("second server after the lock was taken again: %v", err)
+	}
+	if _, err := s.NewToken(time.Hour, "x"); err != nil {
+		t.Fatalf("save after the lock was taken again: %v", err)
+	}
+}
+
+func TestPostgresStopsWritingWhenAnotherServerTookOver(t *testing.T) {
+	onPostgres(t)
+	dir, c := t.TempDir(), &clock{now: t0}
+	s := openT(t, dir, c)
+	dropLock(t, s)
+	s2, err := OpenForTest(dir) // faster than the first one's next check
+	must(t, err)
+	defer s2.Close()
+	if err := s.Check(); !errors.Is(err, ErrTaken) {
+		t.Fatalf("check: %v", err)
+	}
+	if _, err := s.NewToken(time.Hour, "x"); !errors.Is(err, ErrTaken) {
+		t.Fatalf("the first server still writes: %v", err)
+	}
+	if _, err := s2.NewToken(time.Hour, "y"); err != nil {
+		t.Fatalf("the second server: %v", err)
+	}
+}
