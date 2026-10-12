@@ -1,0 +1,78 @@
+# The set-up for a server that others can reach: Caddy with a real certificate
+# in front, the state in PostgreSQL. Settings come from .env (see .env.example).
+#
+#   docker compose -f docker-compose.cloud.yml up -d --build      (README.md)
+services:
+  caddy:
+    image: caddy:2-alpine
+    environment:
+      C2_DOMAIN: ${C2_DOMAIN:?set C2_DOMAIN in .env}
+      C2_CADDY_TLS: ${C2_CADDY_TLS:?set C2_CADDY_TLS in .env}
+    ports:
+      - "${C2_BIND:-0.0.0.0}:${C2_HTTP_PORT:-80}:80"     # certificate renewal, redirect to https
+      - "${C2_BIND:-0.0.0.0}:${C2_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data          # certificates and their keys
+      - caddyconfig:/config
+    networks: [front]
+    depends_on: [c2server]
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+
+  c2server:
+    build: .
+    image: rs232-c2
+    environment:
+      C2_DATABASE_URL: postgres://c2:${C2_DB_PASSWORD:?set C2_DB_PASSWORD in .env}@db:5432/c2?sslmode=disable
+      C2_PUBLIC_URL: ${C2_PUBLIC_URL:-https://${C2_DOMAIN}}
+      C2_TLS: "off"              # Caddy does it; this port is not published
+      C2_LISTEN: ":8080"
+      C2_TRUST_PROXY: "1"        # the sender's address comes from Caddy
+      C2_ADMIN_TOKEN: ${C2_ADMIN_TOKEN:-}
+      C2_ENTRA_TENANT: ${C2_ENTRA_TENANT:-}
+      C2_ENTRA_CLIENT_ID: ${C2_ENTRA_CLIENT_ID:-}
+      C2_ENTRA_CLIENT_SECRET: ${C2_ENTRA_CLIENT_SECRET:-}
+      C2_POLL_S: ${C2_POLL_S:-30}
+    volumes:
+      - c2data:/data             # only read once: a state.json found here is taken over into the database
+    networks: [front, back]
+    depends_on:
+      db: { condition: service_healthy }
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: c2
+      POSTGRES_DB: c2
+      POSTGRES_PASSWORD: ${C2_DB_PASSWORD:?set C2_DB_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data     # holds the server key: losing it means enrolling every device again
+    networks: [back]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-q", "-U", "c2", "-d", "c2"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]   # the image's start script hands the data directory to "postgres"
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+
+networks:
+  front:
+  back:
+    internal: true               # the database has no way out and nobody a way in
+
+volumes:
+  c2data:
+  pgdata:
+  caddydata:
+  caddyconfig:

@@ -30,10 +30,11 @@ type env struct {
 
 func newEnv(t *testing.T) *env {
 	e := &env{t: t, dir: t.TempDir(), now: time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)}
-	st, err := store.Open(e.dir)
+	st, err := store.OpenForTest(e.dir)
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { e.sv.st.Close() })
 	e.sv = New(Config{AdminToken: adminToken}, st)
 	e.sv.SetClock(func() time.Time { return e.now })
 	e.ts = httptest.NewServer(e.sv.Handler())
@@ -276,14 +277,19 @@ func TestSessionExpiryAndServerRestart(t *testing.T) {
 	}
 
 	// restart: sessions are gone, devices and the server key are not
-	st, err := store.Open(e.dir)
+	e.sv.st.Close()
+	st, err := store.OpenForTest(e.dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	sv2 := New(Config{AdminToken: adminToken}, st)
+	e.sv = sv2
 	e.ts.Config.Handler = sv2.Handler()
 	if _, err := c.Poll(nil, nil); err != nil {
 		t.Fatalf("after restart: %v", err)
+	}
+	if os.Getenv(store.TestDatabase) != "" {
+		return
 	}
 	if fi, err := os.Stat(filepath.Join(e.dir, "state.json")); err != nil || fi.Mode().Perm() != 0o600 {
 		t.Fatalf("state file: %v %v", fi.Mode(), err)

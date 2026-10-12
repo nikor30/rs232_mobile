@@ -89,11 +89,22 @@ func main() {
 	}
 	pollS, _ := strconv.Atoi(env("C2_POLL_S", "30"))
 
-	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+	err := os.MkdirAll(dataDir, 0o700)
+	if err != nil {
 		log.Fatal(err)
 	}
-	st, err := store.Open(dataDir)
-	if err != nil {
+	var st *store.Store
+	if db := os.Getenv("C2_DATABASE_URL"); db != "" {
+		if st, err = store.OpenPostgres(db, dataDir); err != nil {
+			log.Fatalf("state: %v", err)
+		}
+		log.Print("state is kept in PostgreSQL")
+		if f := st.Imported(); f != "" {
+			log.Printf("took over the state of the file; it is now %s and still holds the server key - store it safely or delete it", f)
+		} else if _, err := os.Stat(filepath.Join(dataDir, "state.json")); err == nil {
+			log.Printf("%s is not used: the database has a state of its own", filepath.Join(dataDir, "state.json"))
+		}
+	} else if st, err = store.Open(dataDir); err != nil {
 		log.Fatalf("state: %v", err)
 	}
 	fp := proto.Fingerprint(st.ServerKey().Public())

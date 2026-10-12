@@ -1,0 +1,21 @@
+# Caddy in front of the server (docker-compose.cloud.yml): it holds the real
+# certificate and hands everything on. Both values come from .env.
+{
+	admin off
+	# with "internal": the authority's certificate stays in Caddy's volume
+	skip_install_trust
+	# Devices and scripts that name the server by its address send no server name.
+	default_sni {$C2_DOMAIN}
+}
+
+{$C2_DOMAIN} {
+	# an e-mail address: certificate from Let's Encrypt (the name must point here,
+	# ports 80 and 443 must be reachable); "internal": Caddy's own authority,
+	# for a test without the internet
+	tls {$C2_CADDY_TLS}
+
+	header Strict-Transport-Security "max-age=31536000"
+
+	# No "encode": the firmware needs answers with a Content-Length, not chunks.
+	reverse_proxy c2server:8080
+}

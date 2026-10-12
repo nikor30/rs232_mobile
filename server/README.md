@@ -2,7 +2,7 @@
 
 Server, bei dem sich die RS232-Konsolen anmelden und Aufträge abholen. Idee, Protokoll, Phasen und Grenzen: **[KONZEPT.md](KONZEPT.md)**. Stand: Phasen 1 bis 3 — Server mit Weboberfläche, Gerätesimulator, Client in der Firmware —, geprüft im Container und mit dem Waveshare-Board im lokalen Netz. Phase 4, die Fernkonsole, ist am Server mit dem Simulator und am Waveshare-Board getestet; am Board fehlt die Richtung Port → Server, weil dort nichts am seriellen Port hängt (KONZEPT.md §7).
 
-**Nicht ins Internet stellen.** Dafür fehlt Phase 5 (KONZEPT.md §6); die Compose-Datei bindet den Port deshalb nur an `127.0.0.1`, solange `C2_BIND` nichts anderes sagt.
+**Noch nicht ins Internet stellen.** Phase 5 ist nicht fertig (KONZEPT.md §6): Konten, Caddy und PostgreSQL gibt es, Sicherung, Wechsel des Serverschlüssels und Überwachung nicht. Die lokale Compose-Datei bindet den Port deshalb nur an `127.0.0.1`, solange `C2_BIND` nichts anderes sagt.
 
 ## Starten
 
@@ -18,6 +18,24 @@ Die **Weboberfläche** liegt unter <https://127.0.0.1:8443/> (selbstsigniertes Z
 **Das erste Konto:** auf der Anmeldeseite „Mit dem Admin-Token“ aufklappen und das Token eintippen, unter „Benutzer“ ein Konto anlegen — es erscheint ein Einrichtungscode, einmal. Abmelden, „Konto einrichten“: Name, Einrichtungscode, Passwort, dann den QR-Code mit einer Authenticator-App scannen und deren Code eintippen. Danach meldet man sich mit Name, Passwort und Code an. Wer will, nimmt anschließend `C2_ADMIN_TOKEN` aus der `.env` — dann kommen nur noch Konten herein. Wie das gedacht ist: KONZEPT.md §5.1.
 
 Der Container enthält nur die beiden Programme (`/c2server`, `/devsim`), läuft ohne Root und mit schreibgeschütztem Dateisystem; der Zustand liegt im Volume `c2data`.
+
+## Mit Caddy und PostgreSQL
+
+Für einen Server, den andere erreichen: `docker-compose.cloud.yml` stellt **Caddy** davor (echtes Zertifikat von Let's Encrypt, von selbst erneuert, Umleitung von http auf https, HSTS) und legt den Zustand in **PostgreSQL** statt in `state.json`. Nach außen offen sind nur die Ports 80 und 443 von Caddy; Server und Datenbank haben keinen veröffentlichten Port, die Datenbank hängt an einem Netz ohne Weg nach draußen.
+
+```bash
+cd server
+cp .env.example .env                # C2_DOMAIN, C2_CADDY_TLS, C2_DB_PASSWORD, C2_ADMIN_TOKEN eintragen
+docker compose -f docker-compose.cloud.yml up -d --build
+```
+
+- `C2_DOMAIN` ist der Name, unter dem der Server erreichbar ist; sein DNS-Eintrag muss auf diesen Rechner zeigen und die Ports 80 und 443 müssen von außen ankommen, sonst bekommt Caddy kein Zertifikat. `C2_CADDY_TLS` ist die E-Mail-Adresse für Let's Encrypt — oder `internal`, dann stellt Caddy das Zertifikat mit einer eigenen Zertifizierungsstelle aus (für einen Test ohne Internet; der Browser warnt).
+- **Umzug von der Datei:** Findet der Server beim ersten Start mit leerer Datenbank eine `state.json` im Volume `c2data`, übernimmt er sie — Serverschlüssel, Geräte, Aufträge, Konten, Protokoll — und benennt sie in `state.json.imported` um. Wer beide Compose-Dateien im selben Verzeichnis startet, hat dasselbe Volume; die Geräte merken vom Umzug nichts, solange `C2_PUBLIC_URL` gleich bleibt. Die umbenannte Datei enthält weiter den Serverschlüssel: sicher verwahren oder löschen.
+- **Ein Serverprozess je Datenbank.** Der Server rechnet im Speicher und schreibt jede Änderung in einer Transaktion in die Datenbank; ein zweiter Prozess an derselben Datenbank verweigert den Start.
+- Die Datenbank enthält den privaten Serverschlüssel, die Passwort-Hashes und die TOTP-Geheimnisse. Wer das Volume `pgdata` verliert, muss alle Geräte neu anmelden. Eine Sicherung gibt es noch nicht eingebaut (KONZEPT.md §6); von Hand: `docker compose -f docker-compose.cloud.yml exec db pg_dump -U c2 c2 > sicherung.sql`.
+- Hineinsehen: `docker compose -f docker-compose.cloud.yml exec db psql -U c2 c2` — Tabellen `devices`, `commands`, `consoles`, `users`, `audit`, `tokens`, `server`. Das Protokoll behält dort 200 000 Einträge; die Weboberfläche zeigt die neuesten.
+
+**Stand:** auf dem Raspberry Pi mit `C2_CADDY_TLS=internal` getestet (`test/cloud.sh`, und mit dem Waveshare-Board im lokalen Netz), nicht mit einem echten Zertifikat und nicht im Internet. Sicherung, Wechsel des Serverschlüssels und Überwachung fehlen noch — die Warnung oben gilt weiter.
 
 ## Ein simuliertes Gerät anmelden
 
@@ -90,22 +108,26 @@ Auf der Anmeldeseite erscheint dann „Mit Microsoft anmelden“. Den zweiten Fa
 |---|---|---|
 | `C2_ADMIN_TOKEN` | leer | Token der Admin-Schnittstelle, mindestens 16 Zeichen. Nötig, bis es ein Konto gibt; leer heißt: nur Konten |
 | `C2_ENTRA_TENANT`, `C2_ENTRA_CLIENT_ID`, `C2_ENTRA_CLIENT_SECRET` | leer | Anmeldung über Microsoft Entra ID (siehe oben); alle drei oder keine |
+| `C2_DATABASE_URL` | leer | `postgres://benutzer:passwort@host:5432/datenbank?sslmode=…`: Zustand in PostgreSQL statt in `state.json`. Die Cloud-Compose-Datei setzt das selbst aus `C2_DB_PASSWORD` |
+| `C2_DOMAIN`, `C2_CADDY_TLS`, `C2_DB_PASSWORD` | – | nur `docker-compose.cloud.yml` (siehe oben); dort auch `C2_HTTP_PORT`, `C2_HTTPS_PORT` (Vorgabe 80, 443) |
 | `C2_TRUST_PROXY` | leer | `1`: Absenderadresse aus `X-Forwarded-For` nehmen (für Anfragerate und Protokoll). Nur hinter einem Proxy, der diesen Kopf setzt |
 | `C2_PUBLIC_URL` | `https://c2server:8443` (Compose) | Adresse, unter der Geräte den Server erreichen; steht im Einladungs-Token |
 | `C2_TLS` | `selfsigned` | `selfsigned`, `files` (`C2_TLS_CERT`, `C2_TLS_KEY`) oder `off` (hinter einem Proxy, der TLS beendet) |
 | `C2_TLS_HOSTS` | `localhost,127.0.0.1,c2server` | Namen im selbstsignierten Zertifikat |
 | `C2_LISTEN` | `:8443` | Adresse und Port im Container |
 | `C2_BIND` | `127.0.0.1` | nur Compose: Adresse dieses Rechners, an die der Port gebunden wird |
-| `C2_DATA_DIR` | `/data` | Zustand: `state.json` (enthält den privaten Serverschlüssel), TLS-Zertifikat |
+| `C2_DATA_DIR` | `/data` | Zustand: `state.json` (enthält den privaten Serverschlüssel), TLS-Zertifikat. Mit `C2_DATABASE_URL` wird hier nur einmal eine `state.json` zum Übernehmen gesucht |
 | `C2_POLL_S` | `30` | Abstand, in dem Geräte sich melden sollen |
 
-Wer das Datenverzeichnis verliert, verliert den Serverschlüssel — alle Geräte müssten neu angemeldet werden.
+Wer das Datenverzeichnis (mit PostgreSQL: die Datenbank) verliert, verliert den Serverschlüssel — alle Geräte müssten neu angemeldet werden.
 
 ## Tests
 
 ```bash
 ./test/e2e.sh                       # alles: Unit-Tests, Image, Ende-zu-Ende im Container
 ./test/ui.sh                        # die Weboberfläche in einem Browser ohne Bildschirm (Playwright-Image, 3 GB)
+./test/pg.sh                        # die Unit-Tests noch einmal, mit dem Zustand in einem echten PostgreSQL
+./test/cloud.sh                     # Caddy + Server + PostgreSQL: Umzug von der Datei, Zertifikat, Konto, Neustart
 ../tests/c2/run.sh                  # der Protokollcode der Firmware auf dem PC gegen diesen Server
 docker build --target test .        # nur Formatierung, go vet und Unit-Tests
 ```
@@ -126,7 +148,11 @@ internal/server/auth.go      Konten, Sitzungen, TOTP, Protokoll;  entra.go: Anme
 internal/server/web/ Weboberfläche (eingebettet); qrcode.js ist qrcode-generator von Kazuhiko Arase, MIT, Commit 83b7e8f;
                      xterm.js, xterm.css und addon-fit.js sind unverändert übernommen (LICENSE-xterm.txt),
                      xterm-csp.js lässt xterm unter der strengen Content-Security-Policy laufen und muss vor xterm.js geladen werden
-internal/store/      Zustand (JSON-Datei)
+internal/store/      Zustand: store.go, users.go rechnen im Speicher; backend.go schreibt die JSON-Datei,
+                     postgres.go die Datenbank (Schema als Liste von Migrationen; Treiber pgx, das einzige fremde Paket)
+docker-compose.yml   lokal: der Server allein, selbstsigniert, Zustand in der Datei
+docker-compose.cloud.yml, Caddyfile, .env.example   Caddy davor, PostgreSQL dahinter
 test/e2e.sh          Ende-zu-Ende-Test gegen den Container
 test/ui.sh, ui_test.py   Browsertest der Weboberfläche
+test/pg.sh, cloud.sh     Zustand in PostgreSQL; der ganze Aufbau mit Caddy
 ```

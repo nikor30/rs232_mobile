@@ -1,9 +1,9 @@
 // Package store keeps the server's durable state: its own key, the enrollment
-// tokens, the devices and their command queues.
+// tokens, the devices and their command queues, the accounts and the audit log.
 //
-// Phase 1 keeps everything in one JSON file that is rewritten atomically on
-// every change. That is enough for a handful of devices and one server process;
-// KONZEPT.md lists the move to a database as part of the cloud phase.
+// The store works on the state in memory, under one lock, and writes every
+// change through to a backend (backend.go): a JSON file, or PostgreSQL
+// (postgres.go). Either way there is one server process per state.
 package store
 
 import (
@@ -12,8 +12,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -115,30 +113,36 @@ type data struct {
 }
 
 type Store struct {
-	mu   sync.Mutex
-	path string
-	d    data
-	key  *proto.StaticKey
-	now  func() time.Time
+	mu  sync.Mutex
+	b   backend
+	d   data
+	ch  changes // what the backend has not been given yet
+	key *proto.StaticKey
+	now func() time.Time
 	// "last seen" and the reported status change with every poll of every
 	// device. They are written with the next real change, or after seenFlush.
-	lastSave time.Time
+	lastSave  time.Time
+	tookFirst bool   // the state came from an import, not from the backend
+	imported  string // and this is the file it came from
 }
 
 const seenFlush = time.Minute
 
-// Open loads the state file in dir, creating it (and the server key) on first use.
-func Open(dir string) (*Store, error) {
-	s := &Store{path: filepath.Join(dir, "state.json"), now: time.Now}
-	b, err := os.ReadFile(s.path)
-	switch {
-	case err == nil:
-		if err := json.Unmarshal(b, &s.d); err != nil {
-			return nil, err
-		}
-	case !os.IsNotExist(err):
+// open loads the state from b. If there is none yet and first is given, the
+// state starts as first (an import); otherwise with a new server key.
+func open(b backend, first *data) (*Store, error) {
+	s := &Store{b: b, now: time.Now}
+	d, err := b.load()
+	if err != nil {
+		b.close()
 		return nil, err
 	}
+	if d.ServerKey == nil && first != nil && first.ServerKey != nil {
+		d = first
+		s.ch = everything(d)
+		s.tookFirst = true
+	}
+	s.d = *d
 	if s.d.Tokens == nil {
 		s.d.Tokens = map[string]*Token{}
 	}
@@ -151,34 +155,41 @@ func Open(dir string) (*Store, error) {
 	if s.d.ServerKey == nil {
 		k, err := proto.GenerateStatic()
 		if err != nil {
+			b.close()
 			return nil, err
 		}
 		s.d.ServerKey = k.Marshal()
-		if err := s.save(); err != nil {
-			return nil, err
-		}
+		s.ch.meta = true
 	}
 	if s.key, err = proto.ParseStatic(s.d.ServerKey); err != nil {
+		b.close()
 		return nil, err
 	}
 	// Console sessions live in memory: one that was open when the server
-	// stopped ended there, whatever the file says.
-	dangling := false
+	// stopped ended there, whatever the backend says.
 	for _, d := range s.d.Devices {
 		for _, c := range d.Consoles {
 			if c.End == nil {
 				now := s.now()
 				c.End, c.Reason = &now, "Server neu gestartet"
-				dangling = true
+				s.ch.con(d.ID, c.ID)
 			}
 		}
 	}
-	if dangling {
+	if !s.ch.empty() {
 		if err := s.save(); err != nil {
+			b.close()
 			return nil, err
 		}
 	}
 	return s, nil
+}
+
+// Close lets go of the backend. The store must not be used afterwards.
+func (s *Store) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.close()
 }
 
 // SetClock replaces the time source (tests).
@@ -186,17 +197,15 @@ func (s *Store) SetClock(now func() time.Time) { s.now = now }
 
 func (s *Store) ServerKey() *proto.StaticKey { return s.key }
 
+// save hands the changes to the backend. If that fails they stay noted and go
+// out with the next save. Callers hold the lock.
 func (s *Store) save() error {
-	b, err := json.MarshalIndent(&s.d, "", " ")
-	if err != nil {
+	if err := s.b.save(&s.d, &s.ch); err != nil {
 		return err
 	}
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return err
-	}
+	s.ch = changes{}
 	s.lastSave = s.now()
-	return os.Rename(tmp, s.path)
+	return nil
 }
 
 // ---------------------------------------------------------------- tokens
@@ -215,10 +224,12 @@ func (s *Store) NewToken(ttl time.Duration, note string) (*Token, error) {
 	for id, t := range s.d.Tokens { // forget what has expired
 		if s.now().After(t.Expires) {
 			delete(s.d.Tokens, id)
+			s.ch.token(id)
 		}
 	}
 	t := &Token{ID: hex.EncodeToString(id), Secret: secret, Note: note, Expires: s.now().Add(ttl)}
 	s.d.Tokens[t.ID] = t
+	s.ch.token(t.ID)
 	return t, s.save()
 }
 
@@ -261,6 +272,7 @@ func (s *Store) expire(d *Device) {
 		if (c.State == CmdQueued && now.Sub(c.Created) > queue) ||
 			(c.State == CmdSent && c.Sent != nil && now.Sub(*c.Sent) > answer) {
 			c.State, c.Done = CmdExpired, &now
+			s.ch.cmd(d.ID, c.ID) // written with the next save
 		}
 	}
 }
@@ -307,6 +319,8 @@ func (s *Store) Enroll(tokenID string, pub []byte, name string, info json.RawMes
 		s.d.Devices[id] = d
 	}
 	delete(s.d.Tokens, tokenID)
+	s.ch.token(tokenID)
+	s.ch.device(id)
 	d.Name, d.Info, d.State, d.SAS, d.SASAttempts, d.Enrolled = name, info, StatePending, sas, 0, s.now()
 	return s.save()
 }
@@ -322,6 +336,7 @@ func (s *Store) Approve(id, sas string) error {
 	if d.State != StatePending {
 		return ErrState
 	}
+	s.ch.device(id)
 	if subtle.ConstantTimeCompare([]byte(sas), []byte(d.SAS)) != 1 {
 		d.SASAttempts++
 		if d.SASAttempts >= MaxSASAttempts {
@@ -344,6 +359,7 @@ func (s *Store) Revoke(id string) error {
 		return ErrNotFound
 	}
 	d.State, d.SAS = StateRevoked, ""
+	s.ch.device(id)
 	return s.save()
 }
 
@@ -382,6 +398,8 @@ func (s *Store) Enqueue(id, typ string, args json.RawMessage) (*Command, error) 
 	s.d.NextCmd++
 	c := &Command{ID: s.d.NextCmd, Type: typ, Args: args, State: CmdQueued, Created: s.now()}
 	d.Commands = append(d.Commands, c)
+	s.ch.meta = true
+	s.ch.cmd(id, c.ID)
 	if len(d.Commands) > 2*MaxQueued { // keep the history bounded
 		d.Commands = d.Commands[len(d.Commands)-2*MaxQueued:]
 	}
@@ -406,6 +424,7 @@ func (s *Store) Poll(id string, status json.RawMessage, results []Result) (state
 	}
 	now := s.now()
 	d.LastSeen = &now
+	s.ch.device(id)
 	if status != nil {
 		d.Status = status
 	}
@@ -418,6 +437,7 @@ func (s *Store) Poll(id string, status json.RawMessage, results []Result) (state
 					if !r.OK {
 						c.State = CmdFailed
 					}
+					s.ch.cmd(id, c.ID)
 					changed = true
 				}
 			}
@@ -426,6 +446,7 @@ func (s *Store) Poll(id string, status json.RawMessage, results []Result) (state
 		for _, c := range d.Commands {
 			if c.State == CmdQueued {
 				c.State, c.Sent = CmdSent, &now
+				s.ch.cmd(id, c.ID)
 				cmds = append(cmds, *c)
 				changed = true
 			}
@@ -470,6 +491,7 @@ func (s *Store) ConsoleOpen(id string, cmdID uint64, maxAge time.Duration) (port
 		}
 		json.Unmarshal(c.Args, &a)
 		d.Consoles = append(d.Consoles, &ConsoleLog{ID: cmdID, Port: a.Port, Start: now})
+		s.ch.con(id, cmdID)
 		if len(d.Consoles) > maxConsoleLogs {
 			d.Consoles = d.Consoles[len(d.Consoles)-maxConsoleLogs:]
 		}
@@ -490,6 +512,7 @@ func (s *Store) ConsoleClose(id string, cmdID uint64, reason string, in, out int
 		if l.ID == cmdID && l.End == nil {
 			now := s.now()
 			l.End, l.Reason, l.In, l.Out = &now, reason, in, out
+			s.ch.con(id, cmdID)
 			return s.save()
 		}
 	}

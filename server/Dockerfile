@@ -2,14 +2,16 @@
 # Tests:  docker build --target test .
 FROM golang:1.25-alpine AS build
 WORKDIR /src
-COPY go.mod ./
+COPY go.mod go.sum ./
+# the PostgreSQL driver is the one thing that is not standard library
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY cmd ./cmd
 COPY internal ./internal
-RUN --mount=type=cache,target=/root/.cache/go-build \
+RUN --mount=type=cache,target=/root/.cache/go-build --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/ ./cmd/... && mkdir /data
 
 FROM build AS test
-RUN --mount=type=cache,target=/root/.cache/go-build \
+RUN --mount=type=cache,target=/root/.cache/go-build --mount=type=cache,target=/go/pkg/mod \
     test -z "$(gofmt -l .)" && go vet ./... && go test -count=1 ./...
 
 # No shell, no package manager: the two static binaries and nothing else.

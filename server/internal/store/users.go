@@ -98,6 +98,7 @@ func (s *Store) AddUser(u *User) error {
 	c := cloneUser(u)
 	c.Created = s.now()
 	s.d.Users[u.Name] = c
+	s.ch.user(u.Name)
 	return s.save()
 }
 
@@ -116,6 +117,7 @@ func (s *Store) UpdateUser(name string, change func(u *User) error) error {
 	}
 	c.Name, c.Created = u.Name, u.Created
 	s.d.Users[name] = c
+	s.ch.user(name)
 	return s.save()
 }
 
@@ -126,6 +128,7 @@ func (s *Store) DeleteUser(name string) error {
 		return ErrNotFound
 	}
 	delete(s.d.Users, name)
+	s.ch.user(name)
 	return s.save()
 }
 
@@ -135,6 +138,7 @@ func (s *Store) Audit(e AuditEntry) error {
 	defer s.mu.Unlock()
 	e.Time = s.now()
 	s.d.Audit = append(s.d.Audit, &e)
+	s.ch.audit = append(s.ch.audit, &e)
 	if over := len(s.d.Audit) - maxAudit; over > 0 {
 		s.d.Audit = append([]*AuditEntry(nil), s.d.Audit[over:]...)
 	}
