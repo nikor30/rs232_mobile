@@ -34,7 +34,15 @@ with sync_playwright() as p:
 
     def go(view):                                    # the places in the navigation
         page.click("#nav a[data-view=%s]" % view)
-        expect(page.locator("#v-" + view)).to_be_visible()
+        expect(page.locator("#v-" + ("devices" if view == "manage" else view))).to_be_visible()
+        expect(page.locator("#nav a[aria-current]")).to_have_attribute("data-view", view)
+
+    def pick(name, view="manage"):                   # a device: under "Devices" to use it, under "Manage" to look after it
+        go(view)
+        row = page.locator("#devices .dev", has_text=name)
+        row.click()
+        expect(page.locator("#detail")).to_be_visible()
+        return row
 
     def yes(text):                                   # the question before something that cannot be taken back
         expect(page.locator("#askDlg")).to_be_visible()
@@ -49,6 +57,10 @@ with sync_playwright() as p:
 
     page.goto(base + "/")
     expect(page.locator("#entraLogin")).to_be_hidden()   # not configured here
+    # the product's mark: large over the sign-in form, and a real picture
+    expect(page.locator(".hero")).to_contain_text("RS232 Control Center")
+    assert page.evaluate("document.querySelector('.hero img').naturalWidth") > 0, "the logo did not load"
+    expect(page.locator("header .brand")).to_be_hidden()
     page.click("#tokenBox summary")
     if stage == "invite":
         # a wrong token is refused and nothing is shown
@@ -63,9 +75,18 @@ with sync_playwright() as p:
     expect(page.locator("#whoami")).to_have_text("Admin token")
     expect(page.locator("#title")).to_have_text("Devices")
     expect(page.locator("#nav a[aria-current]")).to_have_text("Devices")
+    expect(page.locator("header .brand img")).to_be_visible()
+    if stage != "phone":
+        # a wide screen: mark, name and the places stand at the side, one under the other
+        expect(page.locator("header .brand")).to_contain_text("RS232 Control Center")
+        box = [page.locator("#nav a").nth(i).bounding_box() for i in (0, 1)]
+        assert box[1]["y"] > box[0]["y"] and abs(box[1]["x"] - box[0]["x"]) < 1, box
+        assert page.locator("main#app").bounding_box()["x"] >= page.locator("header").bounding_box()["width"], "the content lies under the side bar"
 
     if stage == "invite":
         expect(page.locator("#noDevices")).to_be_visible()
+        expect(page.locator("#invite")).to_be_hidden()   # inviting is the administrator's business: under "Manage"
+        go("manage")
         page.click("#invite")
         expect(page.locator("#inviteDlg")).to_be_visible()
         token = page.input_value("#tokenText")
@@ -82,9 +103,15 @@ with sync_playwright() as p:
         expect(page.locator("#pick")).to_be_visible()    # nothing picked yet, and the page says so
         row = page.locator("#devices .dev", has_text=arg.split(":")[0])
         expect(row).to_contain_text("waiting for confirmation")
+        # under "Devices" there is nothing to do with it yet, and the page says where to go
         row.click()
+        expect(page.locator("#dNotActive")).to_contain_text("waits for its confirmation")
+        expect(page.locator("#approveForm")).to_be_hidden()
+        expect(page.locator("#console")).to_be_hidden()
+        page.click("#toManage")
+        expect(page.locator("#nav a[aria-current]")).to_have_text("Manage")
         expect(row).to_have_attribute("aria-current", "true")
-        assert page.url.endswith("#devices/" + row.get_attribute("data-id")), page.url
+        assert page.url.endswith("#manage/" + row.get_attribute("data-id")), page.url
         expect(page.locator("#approveForm")).to_be_visible()
         expect(page.locator("#commands")).to_be_hidden()
         code = arg.split(":")[1]
@@ -138,13 +165,20 @@ with sync_playwright() as p:
         go("audit")
         expect(page.locator("#audit tbody")).to_contain_text("Server key changed")
         expect(page.locator("#audit tbody")).to_contain_text("Key change ended")
-        go("devices")
+        go("manage")
         row = page.locator("#devices .dev", has_text="Labor")
-        expect(row).to_contain_text("connected")
+        expect(row).to_contain_text("online")
         expect(row).not_to_contain_text("old server key")
 
     elif stage == "command":
-        page.locator("#devices .dev", has_text=arg).click()
+        # "Devices" is for using one: its ports and nothing of the rest
+        pick(arg, "devices")
+        expect(page.locator("#conForm")).to_be_visible()
+        for hidden in ("#commands", "#settings", "#backup", "#history", "#revoke", "#dId"):
+            expect(page.locator(hidden)).to_be_hidden()
+        shot(path="/out/ui-device.png")
+        pick(arg)
+        expect(page.locator("#conForm")).to_be_hidden()
         hist = page.locator("#history tbody")
         page.click("button[data-cmd=ping]")
         expect(hist).to_contain_text("pong", timeout=20000)
@@ -165,6 +199,148 @@ with sync_playwright() as p:
         assert page.evaluate("window.pwned === undefined"), "markup from a device name was executed"
         assert page.locator("#devices img").count() == 0
         shot(path="/out/ui-commands.png", full_page=True)
+        # settings: read from the device, change one, the device stores it; a wrong value is the device's to refuse
+        page.click("#setLoad")
+        host = page.locator("#setFields [data-path=hostname]")
+        expect(host).to_have_value("rs232", timeout=20000)
+        expect(page.locator("#setFields [data-path='ports.0.serial.baud']")).to_have_value("9600")
+        expect(page.locator("#setFields [data-path='ports.0.enabled']")).to_be_disabled()
+        shot(path="/out/ui-settings.png", full_page=True)
+        page.click("#setForm button[type=submit]")
+        expect(page.locator("#toast")).to_contain_text("Nothing was changed")
+        host.fill("not a name")
+        page.click("#setForm button[type=submit]")
+        yes("stores them and restarts")
+        expect(page.locator("#setState")).to_contain_text("Hostname", timeout=20000)
+        host.fill("lab-7")
+        page.fill("#setFields [data-path=apPass]", "geheim-geheim-1")
+        page.select_option("#setFields [data-path='ports.0.serial.baud']", "115200")
+        page.click("#setForm button[type=submit]")
+        yes("stores them and restarts")
+        expect(page.locator("#setState")).to_contain_text("Saved", timeout=20000)
+        row = hist.locator("tr", has_text="Change settings").first
+        expect(row).to_contain_text("done")
+        assert "geheim" not in page.content(), "a password stays in the history"
+        page.click("#setLoad")
+        expect(host).to_have_value("lab-7", timeout=20000)
+        expect(page.locator("#setFields [data-path='ports.0.serial.baud']")).to_have_value("115200")
+        # backup: one file with the settings and both configurations; restoring it writes them back
+        with page.expect_download(timeout=60000) as dl:
+            page.click("#bkSave")
+        expect(page.locator("#bkState")).to_contain_text("2 configurations")
+        import json
+        doc = json.load(open(dl.value.path()))
+        assert doc["kind"] == "rs232-backup" and doc["settings"]["hostname"] == "lab-7", doc
+        assert sorted(c["name"] for c in doc["configs"]) == ["Demo", "Uplink"] and "show version" in doc["configs"][0]["text"], doc["configs"]
+        assert dl.value.suggested_filename.startswith("rs232-Labor") and dl.value.suggested_filename.endswith(".json"), dl.value.suggested_filename
+        doc["settings"]["hostname"] = "lab-8"
+        doc["configs"].append({"name": "Neu", "text": "show inventory\n"})
+        page.set_input_files("#bkFile", {"name": "backup.json", "mimeType": "application/json", "buffer": json.dumps(doc).encode()})
+        yes("3 configurations")
+        expect(page.locator("#bkState")).to_contain_text("Restored", timeout=60000)
+        page.set_input_files("#bkFile", {"name": "x.json", "mimeType": "application/json", "buffer": b"{}"})
+        expect(page.locator("#bkState")).to_contain_text("not a backup")
+        page.click("button[data-cmd=configs]")
+        expect(hist.locator("tr", has_text="Configurations").first).to_contain_text("Neu", timeout=20000)
+        page.click("#setLoad")
+        expect(host).to_have_value("lab-8", timeout=20000)
+        shot(path="/out/ui-backup.png", full_page=True)
+        # firmware: a signed package goes onto the shelf, the (simulated) device fetches and "installs" it.
+        # The simulator does not check signatures - that is the firmware's part (tests/c2/run.sh).
+        image = bytes((i * 7) & 255 for i in range(30000))
+        manifest = json.dumps({"product": "rs232-console", "board": "waveshare-s3-lcd2", "fw": "9.9.9", "lang": "pt", "seq": 1791900000,
+                               "size": len(image), "sha256": hashlib.sha256(image).hexdigest()}, separators=(",", ":")).encode()
+        pkg = b"RSFW1\n" + manifest + b"\n" + base64.b64encode(b"\x5a" * 3309) + b"\n" + image
+        expect(page.locator("#fwNone")).to_be_visible()
+        page.set_input_files("#fwFile", {"name": "x.rsfw", "mimeType": "application/octet-stream", "buffer": b"hello"})
+        expect(page.locator("#fwState")).to_contain_text("not a firmware package")
+        page.set_input_files("#fwFile", {"name": "damaged.rsfw", "mimeType": "application/octet-stream", "buffer": pkg[:-1] + b"\x00"})
+        expect(page.locator("#fwState")).to_contain_text("damaged file")
+        assert len(errors) == 2, errors                  # the browser logs the two refusals, as intended
+        errors.clear()
+        page.set_input_files("#fwFile", {"name": "good.rsfw", "mimeType": "application/octet-stream", "buffer": pkg})
+        expect(page.locator("#fwState")).to_contain_text("Uploaded: version 9.9.9")
+        fwrow = page.locator("#fwList tbody tr")
+        expect(fwrow).to_have_count(1)
+        expect(fwrow).to_contain_text("Português")
+        shot(path="/out/ui-firmware.png", full_page=True)
+        fwrow.get_by_role("button", name="Install").click()
+        yes("9.9.9")
+        expect(page.locator("#fwState")).to_contain_text("Installed: version 9.9.9", timeout=60000)
+        expect(hist.locator("tr", has_text="Firmware update").first).to_contain_text("updated to 9.9.9 (pt), restarting", timeout=20000)
+        fwrow.get_by_role("button", name="Delete").click()
+        yes("9.9.9")
+        expect(page.locator("#fwNone")).to_be_visible(timeout=20000)
+        # where the device belongs: the list is grouped by it, and the search finds it
+        page.fill("#dRegion", "Nord")
+        page.fill("#dSite", "Werk 2")
+        page.click("#placeSave")
+        expect(page.locator("#devices .grp")).to_have_text("Nord · Werk 2")
+        expect(page.locator("#devices .dev")).to_contain_text("online")
+        # the library: a template is written, sorted into a folder, sent to the device and deleted
+        go("library")
+        expect(page.locator("#noTpls")).to_be_visible()
+        page.click("#tplNew")
+        page.fill("#tplName", "Uplink neu")
+        page.fill("#tplFolder", "Cisco")
+        page.fill("#tplText", "conf t\nint g0/1\n description uplink\n")
+        page.click("#tplForm button[type=submit]")
+        trow = page.locator("#tpls tbody tr", has_text="Uplink neu")
+        expect(trow).to_be_visible()
+        expect(page.locator("#tpls tr.grp")).to_have_text("Cisco")
+        trow.get_by_role("button", name="Edit").click()
+        expect(page.locator("#tplText")).to_have_value("conf t\nint g0/1\n description uplink\n")
+        page.fill("#tplFolder", "Cisco Edge")
+        page.click("#tplForm button[type=submit]")
+        expect(page.locator("#tpls tr.grp")).to_have_text("Cisco Edge")
+        trow.get_by_role("button", name="Send").click()
+        expect(page.locator("#pickDev")).to_contain_text("Nord · Werk 2")
+        page.click("#pickOk")
+        page.set_input_files("#fwFile", {"name": "good.rsfw", "mimeType": "application/octet-stream", "buffer": pkg})
+        frow = page.locator("#libFw tbody tr", has_text="9.9.9")
+        expect(frow).to_be_visible()
+        frow.get_by_role("button", name="Folder").click()
+        page.fill("#pickText", "Released")
+        page.click("#pickOk")
+        expect(page.locator("#libFw tr.grp")).to_have_text("Released")
+        shot(path="/out/ui-library.png", full_page=True)
+        frow.get_by_role("button", name="Delete").click()
+        yes("9.9.9")
+        expect(page.locator("#noLibFw")).to_be_visible()
+        # another image: kept, renamed, sorted, fetched again byte for byte, deleted
+        blob = bytes(range(256)) * 2000
+        page.set_input_files("#imgFile", {"name": "cat9k_lite.17.09.bin", "mimeType": "application/octet-stream", "buffer": blob})
+        irow = page.locator("#imgs tbody tr", has_text="cat9k")
+        expect(irow).to_contain_text("500 kB")
+        expect(page.locator("#imgState")).to_contain_text("per file")
+        irow.get_by_role("button", name="Rename").click()
+        page.fill("#pickText", "cat9k-lite.bin")
+        page.click("#pickOk")
+        irow = page.locator("#imgs tbody tr", has_text="cat9k-lite.bin")
+        irow.get_by_role("button", name="Folder").click()
+        page.fill("#pickText", "Catalyst")
+        page.click("#pickOk")
+        expect(page.locator("#imgs tr.grp")).to_have_text("Catalyst")
+        with page.expect_download() as dl:
+            irow.get_by_role("button", name="Download").click()
+        assert dl.value.suggested_filename == "cat9k-lite.bin", dl.value.suggested_filename
+        assert open(dl.value.path(), "rb").read() == blob, "the image came back changed"
+        shot(path="/out/ui-library.png", full_page=True)
+        irow.get_by_role("button", name="Delete").click()
+        yes("cat9k-lite.bin")
+        expect(page.locator("#noImgs")).to_be_visible()
+        pick(arg)
+        expect(hist.locator("tr", has_text="Write configuration").first).to_contain_text("stored", timeout=20000)
+        page.click("button[data-cmd=configs]")
+        expect(hist.locator("tr", has_text="Configurations").first).to_contain_text("Uplink neu", timeout=20000)
+        page.select_option("#tplPick", label="Cisco Edge / Uplink neu")
+        page.click("#tplSendForm button")
+        go("library")
+        trow.get_by_role("button", name="Delete").click()
+        yes("Uplink neu")
+        expect(page.locator("#noTpls")).to_be_visible()
+        pick(arg, "devices")
+        expect(page.locator("#dLine")).to_contain_text("Nord · Werk 2")
         # remote console: ask, the (simulated) device agrees, type, read, BREAK, close
         page.select_option("#conMinutes", "5")
         page.click("#conForm button")
@@ -185,22 +361,25 @@ with sync_playwright() as p:
         shot(path="/out/ui-console.png")
         page.click("#conClose")
         expect(term).to_contain_text("closed by the administrator", timeout=20000)
-        expect(page.locator("#conLog tbody tr").first).to_contain_text("closed by the administrator", timeout=20000)
         expect(page.locator("#conForm")).to_be_visible()
+        pick(arg)                                    # the record of it is the administrator's
+        expect(page.locator("#conLog tbody tr").first).to_contain_text("closed by the administrator", timeout=20000)
 
     elif stage == "language":
         # English unless somebody chose otherwise - also when the browser asks for German (locale de-DE)
         expect(page.locator("#lang")).to_have_value("en")
         assert page.evaluate("document.documentElement.lang") == "en"
-        page.locator("#devices .dev", has_text=arg).click()
+        pick(arg)
         expect(page.locator("#conLog tbody tr").first).to_contain_text("closed by the administrator")
+        go("devices")
         for lang, title, state, nav, reason, good, ask in (
                 ("de", "Geräte", "verbunden", "Protokoll", "vom Administrator beendet", "in Ordnung", "Gerät neu starten?"),
                 ("pt", "Dispositivos", "conectado", "Registro", "encerrado pelo administrador", "em ordem", "Reiniciar o dispositivo?")):
             page.select_option("#lang", lang)            # the page loads again in that language
             expect(page.locator("#title")).to_have_text(title)
             expect(page.locator("#lang")).to_have_value(lang)
-            page.locator("#devices .dev", has_text=arg).click()
+            expect(page.locator("#nav a[data-view=manage]")).to_have_text({"de": "Verwalten", "pt": "Gerenciar"}[lang])
+            pick(arg)
             assert page.evaluate("document.documentElement.lang") == lang
             expect(page.locator("#dState")).to_have_text(state)
             expect(page.locator("#nav a[data-view=audit]")).to_have_text(nav)
@@ -224,7 +403,7 @@ with sync_playwright() as p:
         expect(page.locator("#loginForm button[type=submit]")).to_have_text("Sign in")
 
     elif stage == "revoke":
-        page.locator("#devices .dev", has_text=arg).click()
+        pick(arg)
         page.click("#revoke")
         expect(page.locator("#askNo")).to_be_focused()   # Enter is not the dangerous answer
         page.keyboard.press("Escape")
@@ -240,7 +419,7 @@ with sync_playwright() as p:
             w = page.evaluate("[document.documentElement.scrollWidth, window.innerWidth]")
             assert w[0] <= w[1], "%s is %d wide on a screen of %d" % (what, w[0], w[1])
         def targets(what):                           # what a thumb has to hit is big enough for one
-            small = page.evaluate("""[...document.querySelectorAll('.btn, nav a, .dev, .back, select, input')]
+            small = page.evaluate("""[...document.querySelectorAll('.btn, nav a, .dev, .back, select, input:not([type=checkbox]), label.check')]
                 .filter(e => e.offsetParent && e.getBoundingClientRect().height < 43.5)
                 .map(e => (e.id || e.textContent.trim().slice(0, 20)) + ' ' + Math.round(e.getBoundingClientRect().height))""")
             assert not small, "%s: too small to tap: %s" % (what, small)
@@ -253,7 +432,7 @@ with sync_playwright() as p:
         expect(page.locator("#detail")).to_be_visible()
         expect(page.locator("#listCard")).to_be_hidden()
         expect(page.locator("#back")).to_be_visible()
-        expect(page.locator("#history")).to_be_visible()
+        expect(page.locator("#conForm")).to_be_visible()
         fits("a device"); targets("a device")
         shot(path="/out/phone-device.png", full_page=True)
         page.click("#back")
@@ -262,9 +441,19 @@ with sync_playwright() as p:
         page.go_back()                               # the browser's own way back leads to the device again
         expect(page.locator("#detail")).to_be_visible()
         page.click("#back")
-        for view in ("users", "audit", "server"):
+        # the same device, looked after: with its settings
+        pick(arg)
+        expect(page.locator("#back")).to_have_text("Manage")
+        expect(page.locator("#history")).to_be_visible()
+        page.click("#setLoad")
+        expect(page.locator("#setForm")).to_be_visible(timeout=20000)
+        fits("managing a device"); targets("managing a device")
+        shot(path="/out/phone-manage.png", full_page=True)
+        page.click("#back")
+        expect(page.locator("#listCard")).to_be_visible()
+        for view in ("library", "users", "audit", "server"):
             go(view)
-            expect(page.locator("#title")).to_have_text({"users": "Users", "audit": "Audit log", "server": "Server"}[view])
+            expect(page.locator("#title")).to_have_text({"library": "Library", "users": "Users", "audit": "Audit log", "server": "Server"}[view])
             fits(view); targets(view)
             shot(path="/out/phone-%s.png" % view, full_page=True)
         # a dialog comes up from the bottom edge, as wide as the screen
@@ -276,7 +465,7 @@ with sync_playwright() as p:
         targets("the dialog")
         shot(path="/out/phone-dialog.png")
         page.click("#rotateCancel")
-        go("devices")
+        go("manage")
         page.click("#invite")
         expect(page.locator("#inviteDlg")).to_be_visible()
         page.wait_for_timeout(500)
@@ -286,6 +475,7 @@ with sync_playwright() as p:
         # and in the dark
         page.emulate_media(color_scheme="dark")
         shot(path="/out/phone-devices-dark.png")
+        go("devices")
         page.locator("#devices .dev", has_text=arg).click()
         shot(path="/out/phone-device-dark.png")
         page.emulate_media(color_scheme="light")
@@ -349,6 +539,7 @@ with sync_playwright() as p:
         expect(page.locator("#whoami")).to_have_text("anna")
         expect(page.locator("#title")).to_have_text("Audit log")   # a reload stays where one was
         go("devices")
+        go("manage")
         page.click("#invite")
         expect(page.locator("#inviteDlg")).to_be_visible()
         assert page.input_value("#tokenText").startswith("c2e1:")

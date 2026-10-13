@@ -5,6 +5,7 @@ package device
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -264,4 +265,48 @@ func (c *Client) sessionHandshake() error {
 	}
 	c.State.NextPub = nil
 	return nil
+}
+
+// Firmware fetches the package behind an "update" command the way the firmware
+// does: manifest and signature first, then the image piece by piece. It checks
+// size and hash against the manifest. The signature is returned unchecked -
+// only a real device carries the code and the key for that.
+func (c *Client) Firmware(cmdID uint64) (manifest string, sig, image []byte, err error) {
+	type msg struct {
+		T    string `json:"t"`
+		ID   uint64 `json:"id"`
+		Off  int64  `json:"off"`
+		Head bool   `json:"head,omitempty"`
+	}
+	var r struct {
+		M   string `json:"m"`
+		Sig []byte `json:"sig"`
+		D   []byte `json:"d"`
+	}
+	if err = c.exchangeInto(msg{T: "fw", ID: cmdID, Head: true}, &r); err != nil {
+		return
+	}
+	manifest, sig = r.M, r.Sig
+	var m struct {
+		Size   int    `json:"size"`
+		SHA256 string `json:"sha256"`
+	}
+	if err = json.Unmarshal([]byte(manifest), &m); err != nil {
+		return
+	}
+	for len(image) < m.Size {
+		r.D = nil
+		if err = c.exchangeInto(msg{T: "fw", ID: cmdID, Off: int64(len(image))}, &r); err != nil {
+			return
+		}
+		if len(r.D) == 0 {
+			break
+		}
+		image = append(image, r.D...)
+	}
+	sum := sha256.Sum256(image)
+	if len(image) != m.Size || hex.EncodeToString(sum[:]) != m.SHA256 {
+		err = errors.New("the image does not match the manifest")
+	}
+	return
 }

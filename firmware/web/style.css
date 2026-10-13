@@ -5,10 +5,10 @@
    motion or transparency for people who asked for that. */
 :root {
   --bg: #000;                 /* the terminal: nothing competes with it */
-  --bar: #161618;             /* bars around it */
-  --panel: #000;              /* the settings sheet: grouped cards on black */
-  --card: #1c1c1e;
-  --line: rgba(84, 84, 88, .6);
+  --bar: #111318;             /* bars around it */
+  --panel: #0b0c10;           /* the settings sheet: grouped cards on the brand's near-black */
+  --card: #17191f;
+  --line: rgba(120, 124, 136, .3);
   --text: #f5f5f7;
   --muted: #98989d;
   --accent: #0a84ff;
@@ -59,6 +59,11 @@ button { font: inherit; color: inherit; touch-action: manipulation; -webkit-tap-
   border-bottom: 1px solid var(--line);
   min-height: 50px;
 }
+/* The administrator's tabs stay out of sight until the device says they are wanted. */
+body:not(.admin) .tabs button[data-admin] { display: none; }
+/* the product's mark, as in the control center and on the touch display */
+.mark { flex: 0 0 auto; display: block; }
+@media (max-width: 519px) { .mark { display: none; } }      /* on a phone the bar belongs to the host name and the port */
 .dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; background: var(--bad); }
 .dot.on { background: var(--ok); }
 .dot.wait { background: var(--warn); animation: pulse 1s infinite; }

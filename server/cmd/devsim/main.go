@@ -13,12 +13,34 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"maps"
 	"net/http"
 	"os"
+	"slices"
+	"strings"
 	"time"
 
 	"rs232c2/internal/device"
 )
+
+// What the firmware reports as its settings (Net::deviceSettings), in
+// miniature, and the configurations it has stored.
+var simSettings = map[string]any{
+	"hostname": "rs232", "apSsid": "RS232-SIM", "apChannel": 0, "txPower": 44, "webPassSet": false,
+	"staSsid": "", "staAuth": 0, "staIdentity": "", "staUser": "", "staPassSet": false, "staCaCheck": true, "staPhase2": 0,
+	"httpsEnabled": false, "httpsLanOnly": false, "httpsCert": 0,
+	"displayFlip": false, "displayTimeout": 60, "displayBrightness": 255, "tcpEnabled": true, "tcpLan": false, "tcpPort": 2000,
+	"batPin": 5, "batType": 0, "batDiv": 20, "hwPorts": 2, "swMaxBaud": 38400,
+	"pinsRx": []int{16, 18}, "pinsTx": []int{17, 21}, "pinsAdc": []int{5}, "pinPrefix": "IO",
+	"ports": []map[string]any{
+		{"enabled": true, "name": "Core-SW", "rx": 16, "tx": 17, "hw": true, "serial": map[string]any{"baud": 9600, "bits": 8, "parity": "N", "stop": 1, "swap": false}},
+		{"enabled": false, "name": "", "rx": 18, "tx": 21, "hw": true, "serial": map[string]any{"baud": 9600, "bits": 8, "parity": "N", "stop": 1, "swap": false}},
+	},
+}
+var simConfigs = map[string]string{
+	"Demo":   "show version\n@pause 1\nshow clock\n",
+	"Uplink": "configure terminal\ninterface GigabitEthernet0/1\n description Uplink\n no shutdown\nend\n",
+}
 
 func main() {
 	log.SetFlags(0)
@@ -114,9 +136,14 @@ func main() {
 					case "status":
 						res.Out = status
 					case "settings":
-						res.Out = map[string]any{"hostname": "rs232", "apSsid": "RS232-SIM", "webPassSet": false}
+						simSettings["c2Control"] = *control
+						res.Out = simSettings
 					case "configs":
-						res.Out = map[string]any{"ok": true, "configs": []map[string]any{{"name": "Demo", "size": 38}, {"name": "Uplink", "size": 211}}}
+						list := []map[string]any{}
+						for _, n := range slices.Sorted(maps.Keys(simConfigs)) {
+							list = append(list, map[string]any{"name": n, "size": len(simConfigs[n])})
+						}
+						res.Out = map[string]any{"ok": true, "configs": list}
 					case "play":
 						var a struct {
 							Name string `json:"name"`
@@ -126,10 +153,55 @@ func main() {
 						switch {
 						case !*control:
 							res.OK, res.Out = false, denied
-						case a.Name != "Demo" && a.Name != "Uplink":
+						case simConfigs[a.Name] == "":
 							res.OK, res.Out = false, "configuration not found"
 						default:
 							res.Out = map[string]any{"name": a.Name, "port": a.Port, "line": 3, "lines": 3, "result": "done"}
+						}
+					case "set":
+						var a map[string]any
+						json.Unmarshal(cmd.Args, &a)
+						switch h, _ := a["hostname"].(string); {
+						case !*control:
+							res.OK, res.Out = false, denied
+						case a["hostname"] != nil && (h == "" || strings.ContainsAny(h, " _.")):
+							res.OK, res.Out = false, "Hostname: a-z, 0-9, '-' (max. 31)"
+						default:
+							for k, v := range a {
+								if !strings.HasSuffix(k, "Pass") {
+									simSettings[k] = v
+								}
+							}
+							res.Out = "saved, restarting"
+						}
+					case "config_get", "config_put", "config_delete":
+						var a struct{ Name, Text string }
+						json.Unmarshal(cmd.Args, &a)
+						text, have := simConfigs[a.Name]
+						switch {
+						case !*control:
+							res.OK, res.Out = false, denied
+						case cmd.Type == "config_put":
+							simConfigs[a.Name] = a.Text
+							res.Out = "stored"
+						case !have:
+							res.OK, res.Out = false, "configuration not found"
+						case cmd.Type == "config_get":
+							res.Out = map[string]any{"name": a.Name, "text": text}
+						default:
+							delete(simConfigs, a.Name)
+							res.Out = "deleted"
+						}
+					case "update":
+						if !*control {
+							res.OK, res.Out = false, denied
+						} else if m, _, img, err := c.Firmware(cmd.ID); err != nil {
+							res.OK, res.Out = false, "download failed: "+err.Error()
+						} else {
+							var mf struct{ FW, Lang string }
+							json.Unmarshal([]byte(m), &mf)
+							fmt.Printf("FIRMWARE %s %s %d bytes\n", mf.FW, mf.Lang, len(img))
+							res.Out = "updated to " + mf.FW + " (" + mf.Lang + "), restarting"
 						}
 					case "reboot":
 						if *control {

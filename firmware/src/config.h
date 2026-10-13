@@ -7,6 +7,7 @@
 
 #define FW_NAME     "RS232 Web Console"
 #define FW_VERSION  "1.8.0"
+#define FW_BOARD_ID "waveshare-s3-lcd2"   // what a signed firmware package has to name (tools/fw_sign.py)
 
 // --------------------------------------- Waveshare ESP32-S3-Touch-LCD-2 (2", 240x320)
 // ESP32-S3R8, 16 MB flash, ST7789T3 on SPI, CST816D touch, USB-C on the native

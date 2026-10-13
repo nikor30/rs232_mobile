@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
-<meta name="theme-color" content="#161618">
+<meta name="theme-color" content="#111318">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="format-detection" content="telephone=no,address=no,email=no">
@@ -14,6 +14,7 @@
 </head>
 <body>
 <header id="bar">
+  <svg class="mark" viewBox="0 0 64 64" width="26" height="26" aria-hidden="true"><defs><linearGradient id="markFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3b9eff"/><stop offset="1" stop-color="#0066d6"/></linearGradient></defs><rect width="64" height="64" rx="15" fill="url(#markFill)"/><path d="M14.5 23.5h35l-4.6 17H19.1z" fill="#fff" stroke="#fff" stroke-width="7" stroke-linejoin="round"/><path d="M22.5 26.5l5.5 5.5-5.5 5.5" fill="none" stroke="#0a6fe0" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M32.5 37.5h9" stroke="#0a6fe0" stroke-width="3.4" stroke-linecap="round"/></svg>
   <span id="dot" class="dot off" title="Connection"></span>
   <span id="host" class="host">rs232</span>
   <button id="serChip" class="chip" type="button" title="Serial settings">-- ---</button>
@@ -65,10 +66,10 @@
       <button type="button" data-tab="serial" class="active">Serial</button>
       <button type="button" data-tab="session">Session</button>
       <button type="button" data-tab="configs">Config</button>
-      <button type="button" data-tab="ports">Ports</button>
-      <button type="button" data-tab="net">Network</button>
+      <button type="button" data-tab="ports" data-admin>Ports</button>
+      <button type="button" data-tab="net" data-admin>Network</button>
       <button type="button" data-tab="device">Device</button>
-      <button type="button" data-tab="setup">Setup</button>
+      <button type="button" data-tab="setup" data-admin>Setup</button>
     </div>
     <button id="btnClose" class="icon" type="button" aria-label="Close">
       <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
@@ -278,13 +279,13 @@
       <p class="hint">Through the Wi-Fi client the device reports to a server in the network that manages it and can give it commands. The server invites it with an <b>invitation token</b> ; after that the device shows a six-digit code which the administrator types in at the server.</p>
       <table class="kv">
         <tr><th>State</th><td id="c2State">–</td></tr>
-        <tr id="c2CodeRow" hidden><th>Code</th><td><b id="c2Code" style="font-size:1.6em;letter-spacing:.15em"></b><br><span class="hint">Enter this code at the server. It is on the display too (page Info).</span></td></tr>
+        <tr id="c2CodeRow" hidden><th>Code</th><td><b id="c2Code" style="font-size:2.8em;line-height:1.2;letter-spacing:.12em"></b><br><span class="hint">Enter this code at the server. It is on the display too (page Info).</span></td></tr>
         <tr><th>Server</th><td id="c2Url">–</td></tr>
         <tr><th>Device ID</th><td id="c2Id">–</td></tr>
         <tr id="c2ConRow" hidden><th>Remote console</th><td><span id="c2Con"></span> <button id="c2ConEnd" class="btn danger" type="button" hidden>End</button></td></tr>
       </table>
       <label>invitation token <input id="c2Token" maxlength="1024" placeholder="c2e1:…" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
-      <label class="check"><input id="c2Control" type="checkbox"> The control center may play configurations and restart the device</label>
+      <label class="check"><input id="c2Control" type="checkbox"> The control center may change settings, read and write configurations, play them and restart the device</label>
       <p class="hint">Unticked, the server can only read: state, settings (without passwords) and the list of configurations. The box can be ticked only here, never from the server.</p>
       <p class="hint">The <b>Remote console</b> – the administrator operates a serial port through the server – does not depend on this box: every session has to be allowed on the device's touch display, runs for the requested time at most and can be ended there and here at any moment.</p>
       <div class="row">
@@ -331,10 +332,15 @@
         <tr><th>Firmware</th><td id="dFw">–</td></tr>
         <tr><th>Hardware</th><td id="dBoard">–</td></tr>
         <tr><th>Free RAM</th><td id="dHeap">–</td></tr>
+        <tr><th>SD card</th><td id="dSd">–</td></tr>
       </table>
+      <label class="check"><input id="adminUi" type="checkbox"> Show the administrator settings (Ports, Network, Setup)</label>
       <div class="row">
+        <button id="devStick" class="btn" type="button" hidden>Use the SD card as a USB stick</button>
         <button id="devReboot" class="btn" type="button">Restart</button>
       </div>
+      <p class="hint" id="stickNote" hidden>The SD card belongs to the USB port now: the switch, firewall or computer it is plugged into sees a USB stick. Eject it there, then restart this device to get the card back.</p>
+      <p class="hint" id="stickHint" hidden>As a USB stick the card can be read by a switch or firewall (firmware images, configurations) and filled from a computer. The USB port moves about half a megabyte per second.</p>
     </div>
 
     <!-- ============ Setup ============ -->

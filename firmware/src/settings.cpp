@@ -130,6 +130,7 @@ void load() {
   settings.httpsCert    = prefs.getUChar("httpsCrt", 0);
   settings.bleEnabled   = prefs.getBool("ble", true);
   settings.c2Control    = prefs.getBool("c2ctl", false);
+  settings.adminUi      = prefs.getBool("admui", false);
   settings.hostname = prefs.getString("host", DEFAULT_HOSTNAME);
   settings.webPass  = prefs.getString("webPass", "");
   settings.displayFlip = prefs.getBool("flip", false);
@@ -210,6 +211,7 @@ void save() {
   prefs.putUChar("httpsCrt", settings.httpsCert);
   prefs.putBool("ble", settings.bleEnabled);
   prefs.putBool("c2ctl", settings.c2Control);
+  prefs.putBool("admui", settings.adminUi);
   prefs.putString("host", settings.hostname);
   prefs.putString("webPass", settings.webPass);
   prefs.putBool("flip", settings.displayFlip);

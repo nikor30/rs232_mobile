@@ -37,8 +37,10 @@ services:
       C2_ENTRA_CLIENT_ID: ${C2_ENTRA_CLIENT_ID:-}
       C2_ENTRA_CLIENT_SECRET: ${C2_ENTRA_CLIENT_SECRET:-}
       C2_POLL_S: ${C2_POLL_S:-30}
+      C2_IMAGE_MAX_MB: ${C2_IMAGE_MAX_MB:-2048}        # other images in the library: one file, and all together
+      C2_IMAGE_TOTAL_MB: ${C2_IMAGE_TOTAL_MB:-20480}
     volumes:
-      - c2data:/data             # only read once: a state.json found here is taken over into the database
+      - c2data:/data             # firmware packages and images of the library; a state.json found here is taken over into the database once
     networks: [front, back]
     depends_on:
       db: { condition: service_healthy }

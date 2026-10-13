@@ -9,6 +9,10 @@
 //   c2host console STATEFILE           says yes to a request for the remote console and plays the
 //                                      serial port -> "CONSOLE <id> open", "CLOSED <reason>",
 //                                      "TYPED <hex>", "BRK <count>"
+//   c2host update STATEFILE KEYFILE SEQ  takes an "update" command the way the firmware does:
+//                                      signature and manifest (firmware/src/c2_update.cpp, KEYFILE
+//                                      is the raw public key, SEQ what is "installed"), then the
+//                                      image -> "UPDATE ok <fw> <lang> <bytes>" or "UPDATE refused: <why>"
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <sys/random.h>
@@ -26,6 +30,9 @@
 #include <ArduinoJson.h>
 #include "c2_console.h"
 #include "c2_proto.h"
+#include "c2_update.h"
+#include <mbedtls/base64.h>
+#include <mbedtls/sha256.h>
 
 extern "C" void c2_randombytes(uint8_t *out, size_t len) {
   while (len) {
@@ -220,6 +227,65 @@ int main(int argc, char **argv) {
       r["out"] = "pong from firmware code";
     }
     if (results.size()) exchange(d, s, next);     // second record on the same session
+    return 0;
+  }
+  if (cmd == "update" && argc == 5) {
+    Device d = load(argv[2]);
+    std::ifstream kf(argv[3], std::ios::binary);
+    Bytes key((std::istreambuf_iterator<char>(kf)), std::istreambuf_iterator<char>());
+    if (key.size() != C2Update::KEY_SIZE) die("the key file is not a raw ML-DSA-65 public key");
+    C2Proto::Session s = sessionHandshake(d, argv[2]);
+    JsonDocument msg;
+    msg["t"] = "poll";
+    JsonDocument reply = exchange(d, s, msg);
+    unsigned long id = 0;
+    for (JsonObject c : reply["cmds"].as<JsonArray>())
+      if (!strcmp(c["type"] | "", "update")) id = c["id"] | 0UL;
+    if (!id) die("no update command waiting");
+    auto ask = [&](long off) {
+      JsonDocument m;
+      m["t"] = "fw";
+      m["id"] = id;
+      if (off < 0) m["head"] = true;
+      else m["off"] = off;
+      return exchange(d, s, m);
+    };
+    std::string why;
+    C2Update::Manifest m;
+    Bytes image;
+    {
+      JsonDocument head = ask(-1);
+      std::string manifest = head["m"] | "";
+      const char *sig64 = head["sig"] | "";
+      Bytes sig(C2Update::SIG_SIZE + 16);
+      size_t sigLen = 0;
+      if (mbedtls_base64_decode(sig.data(), sig.size(), &sigLen, (const uint8_t *)sig64, strlen(sig64))) why = "the package is not readable";
+      else if (const char *err = C2Update::check(manifest.data(), manifest.size(), sig.data(), sigLen, key.data(), "waveshare-s3-lcd2",
+                                                 (uint32_t)strtoul(argv[4], nullptr, 10), 6 << 20, m))
+        why = err;
+    }
+    while (why.empty() && image.size() < m.size) {
+      JsonDocument part = ask((long)image.size());
+      const char *b64 = part["d"] | "";
+      uint8_t buf[4096];
+      size_t n = 0;
+      if (mbedtls_base64_decode(buf, sizeof(buf), &n, (const uint8_t *)b64, strlen(b64)) || !n || image.size() + n > m.size) why = "the download is damaged";
+      else image.insert(image.end(), buf, buf + n);
+    }
+    if (why.empty()) {
+      uint8_t hash[32];
+      mbedtls_sha256_ret(image.data(), image.size(), hash, 0);
+      if (memcmp(hash, m.sha256, 32)) why = "the image is not the one that was signed";
+    }
+    JsonDocument next;
+    next["t"] = "poll";
+    JsonObject r = next["results"].to<JsonArray>().add<JsonObject>();
+    r["id"] = id;
+    r["ok"] = why.empty();
+    r["out"] = why.empty() ? std::string("updated to ") + m.fw + " (" + m.lang + "), restarting" : why;
+    exchange(d, s, next);
+    if (why.empty()) printf("UPDATE ok %s %s %zu\n", m.fw, m.lang, image.size());
+    else printf("UPDATE refused: %s\n", why.c_str());
     return 0;
   }
   if (cmd == "console" && argc == 3) {

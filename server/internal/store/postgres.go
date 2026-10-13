@@ -99,6 +99,19 @@ var migrations = [][]string{{
 	// and which devices have not confirmed the new one
 	`ALTER TABLE server ADD COLUMN old_key bytea, ADD COLUMN old_until timestamptz`,
 	`ALTER TABLE devices ADD COLUMN old_key boolean NOT NULL DEFAULT false`,
+}, {
+	// where a device belongs, who queued a command, and the templates
+	`ALTER TABLE devices ADD COLUMN region text NOT NULL DEFAULT '', ADD COLUMN site text NOT NULL DEFAULT ''`,
+	`ALTER TABLE commands ADD COLUMN by_user text NOT NULL DEFAULT ''`,
+	`ALTER TABLE server ADD COLUMN next_tpl bigint NOT NULL DEFAULT 0`,
+	`CREATE TABLE templates (
+		id      bigint PRIMARY KEY,
+		name    text NOT NULL,
+		folder  text NOT NULL DEFAULT '',
+		body    text NOT NULL,
+		updated timestamptz NOT NULL,
+		by_user text NOT NULL DEFAULT ''
+	)`,
 }}
 
 const (
@@ -315,10 +328,10 @@ func (p *pg) load() (*data, error) {
 		return nil, err
 	}
 	defer tx.Rollback()
-	d := &data{Tokens: map[string]*Token{}, Devices: map[string]*Device{}, Users: map[string]*User{}}
+	d := &data{Tokens: map[string]*Token{}, Devices: map[string]*Device{}, Users: map[string]*User{}, Templates: map[uint64]*Template{}}
 
 	var oldUntil sql.NullTime
-	err = tx.QueryRowContext(ctx, `SELECT server_key, next_cmd, old_key, old_until FROM server`).Scan(&d.ServerKey, &d.NextCmd, &d.OldKey, &oldUntil)
+	err = tx.QueryRowContext(ctx, `SELECT server_key, next_cmd, old_key, old_until, next_tpl FROM server`).Scan(&d.ServerKey, &d.NextCmd, &d.OldKey, &oldUntil, &d.NextTpl)
 	if errors.Is(err, sql.ErrNoRows) {
 		return d, nil // a new database
 	} else if err != nil {
@@ -353,11 +366,24 @@ func (p *pg) load() (*data, error) {
 		return nil, err
 	}
 
-	err = each(`SELECT id, pub, name, info, state, sas, sas_attempts, enrolled, last_seen, status, old_key FROM devices`, func(r *sql.Rows) error {
+	err = each(`SELECT id, name, folder, body, updated, by_user FROM templates`, func(r *sql.Rows) error {
+		t := &Template{}
+		if err := r.Scan(&t.ID, &t.Name, &t.Folder, &t.Text, &t.Updated, &t.By); err != nil {
+			return err
+		}
+		t.Updated = t.Updated.UTC()
+		d.Templates[t.ID] = t
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	err = each(`SELECT id, pub, name, info, state, sas, sas_attempts, enrolled, last_seen, status, old_key, region, site FROM devices`, func(r *sql.Rows) error {
 		v := &Device{}
 		var info, status []byte
 		var seen sql.NullTime
-		if err := r.Scan(&v.ID, &v.Pub, &v.Name, &info, &v.State, &v.SAS, &v.SASAttempts, &v.Enrolled, &seen, &status, &v.OldKey); err != nil {
+		if err := r.Scan(&v.ID, &v.Pub, &v.Name, &info, &v.State, &v.SAS, &v.SASAttempts, &v.Enrolled, &seen, &status, &v.OldKey, &v.Region, &v.Site); err != nil {
 			return err
 		}
 		v.Info, v.Status, v.Enrolled, v.LastSeen = raw(info), raw(status), v.Enrolled.UTC(), tp(seen)
@@ -368,12 +394,12 @@ func (p *pg) load() (*data, error) {
 		return nil, err
 	}
 
-	err = each(`SELECT id, device, type, args, state, created, sent, done, result FROM commands ORDER BY id`, func(r *sql.Rows) error {
+	err = each(`SELECT id, device, type, args, state, created, sent, done, result, by_user FROM commands ORDER BY id`, func(r *sql.Rows) error {
 		c := &Command{}
 		var dev string
 		var args, result []byte
 		var sent, done sql.NullTime
-		if err := r.Scan(&c.ID, &dev, &c.Type, &args, &c.State, &c.Created, &sent, &done, &result); err != nil {
+		if err := r.Scan(&c.ID, &dev, &c.Type, &args, &c.State, &c.Created, &sent, &done, &result, &c.By); err != nil {
 			return err
 		}
 		c.Args, c.Result, c.Created, c.Sent, c.Done = raw(args), raw(result), c.Created.UTC(), tp(sent), tp(done)
@@ -468,10 +494,21 @@ func (p *pg) save(d *data, ch *changes) error {
 	w := &writer{ctx: ctx, tx: tx}
 
 	if ch.meta {
-		w.exec(`INSERT INTO server (server_key, next_cmd, old_key, old_until) VALUES ($1, $2, $3, $4)
+		w.exec(`INSERT INTO server (server_key, next_cmd, old_key, old_until, next_tpl) VALUES ($1, $2, $3, $4, $5)
 		        ON CONFLICT (only_row) DO UPDATE SET server_key = excluded.server_key, next_cmd = excluded.next_cmd,
-		          old_key = excluded.old_key, old_until = excluded.old_until`,
-			d.ServerKey, int64(d.NextCmd), d.OldKey, d.OldUntil)
+		          old_key = excluded.old_key, old_until = excluded.old_until, next_tpl = excluded.next_tpl`,
+			d.ServerKey, int64(d.NextCmd), d.OldKey, d.OldUntil, int64(d.NextTpl))
+	}
+	for id := range ch.tpls {
+		t := d.Templates[id]
+		if t == nil {
+			w.exec(`DELETE FROM templates WHERE id = $1`, int64(id))
+			continue
+		}
+		w.exec(`INSERT INTO templates (id, name, folder, body, updated, by_user) VALUES ($1, $2, $3, $4, $5, $6)
+		        ON CONFLICT (id) DO UPDATE SET name = excluded.name, folder = excluded.folder, body = excluded.body,
+		          updated = excluded.updated, by_user = excluded.by_user`,
+			int64(t.ID), txt(t.Name), txt(t.Folder), txt(t.Text), t.Updated, txt(t.By))
 	}
 	for id := range ch.tokens {
 		t := d.Tokens[id]
@@ -491,23 +528,23 @@ func (p *pg) save(d *data, ch *changes) error {
 		}
 		// The row first, also when only a command changed: on an import, and
 		// after a save that failed, it may not be there yet.
-		w.exec(`INSERT INTO devices (id, pub, name, info, state, sas, sas_attempts, enrolled, last_seen, status, old_key)
-		        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		w.exec(`INSERT INTO devices (id, pub, name, info, state, sas, sas_attempts, enrolled, last_seen, status, old_key, region, site)
+		        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		        ON CONFLICT (id) DO UPDATE SET pub = excluded.pub, name = excluded.name, info = excluded.info,
 		          state = excluded.state, sas = excluded.sas, sas_attempts = excluded.sas_attempts,
 		          enrolled = excluded.enrolled, last_seen = excluded.last_seen, status = excluded.status,
-		          old_key = excluded.old_key`,
-			v.ID, v.Pub, txt(v.Name), js(v.Info), v.State, v.SAS, v.SASAttempts, v.Enrolled, v.LastSeen, js(v.Status), v.OldKey)
+		          old_key = excluded.old_key, region = excluded.region, site = excluded.site`,
+			v.ID, v.Pub, txt(v.Name), js(v.Info), v.State, v.SAS, v.SASAttempts, v.Enrolled, v.LastSeen, js(v.Status), v.OldKey, txt(v.Region), txt(v.Site))
 		if len(dc.cmds) > 0 {
 			for _, c := range v.Commands {
 				if !dc.cmds[c.ID] {
 					continue
 				}
-				w.exec(`INSERT INTO commands (id, device, type, args, state, created, sent, done, result)
-				        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+				w.exec(`INSERT INTO commands (id, device, type, args, state, created, sent, done, result, by_user)
+				        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 				        ON CONFLICT (id) DO UPDATE SET state = excluded.state, sent = excluded.sent,
 				          done = excluded.done, result = excluded.result`,
-					int64(c.ID), v.ID, c.Type, js(c.Args), c.State, c.Created, c.Sent, c.Done, js(c.Result))
+					int64(c.ID), v.ID, c.Type, js(c.Args), c.State, c.Created, c.Sent, c.Done, js(c.Result), txt(c.By))
 			}
 			// the history is bounded: what the store dropped from the front goes here too
 			if len(v.Commands) > 0 {

@@ -37,6 +37,13 @@ type Config struct {
 	// a reverse proxy that sets it; otherwise anybody could choose an address.
 	TrustProxy bool
 	Entra      *EntraConfig // sign-in with Microsoft Entra ID, if set
+	// FirmwareDir keeps the signed firmware packages an administrator has
+	// uploaded. Empty: no firmware update through this server.
+	FirmwareDir string
+	// ImageDir keeps other images an administrator has uploaded (images.go):
+	// at most ImageMax bytes each and ImageTotal together (0: 2 and 20 GB).
+	ImageDir             string
+	ImageMax, ImageTotal int64
 }
 
 const (
@@ -68,6 +75,32 @@ var commandArgs = map[string]func(args json.RawMessage) error{
 	"settings": noArgs, // settings without passwords or keys
 	"configs":  noArgs, // stored configurations
 	"reboot":   noArgs,
+	// The settings of the device's own web interface, from here: the same
+	// JSON object it posts to itself. The device checks every value.
+	"set": func(args json.RawMessage) error {
+		var a map[string]json.RawMessage
+		if err := json.Unmarshal(args, &a); err != nil || len(a) == 0 {
+			return errors.New("set needs an object of settings")
+		}
+		return nil
+	},
+	// Stored configurations: read one out, write one back, remove one.
+	"config_get":    configArgs(false),
+	"config_put":    configArgs(true),
+	"config_delete": configArgs(false),
+	// A firmware package from the shelf (firmware.go). The device fetches it,
+	// checks the owner's signature and only then installs it.
+	"update": func(args json.RawMessage) error {
+		var a struct {
+			FW string `json:"fw"`
+		}
+		dec := json.NewDecoder(bytes.NewReader(args))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&a); err != nil || !fwIDPattern.MatchString(a.FW) {
+			return errors.New(`update needs {"fw": "<id of a package>"}`)
+		}
+		return nil
+	},
 	// Remote console on a serial port. Somebody at the device has to agree on
 	// its touch display, each time; minutes is the most they are asked for.
 	"console": func(args json.RawMessage) error {
@@ -108,6 +141,27 @@ var commandArgs = map[string]func(args json.RawMessage) error{
 	},
 }
 
+func configArgs(text bool) func(json.RawMessage) error {
+	return func(args json.RawMessage) error {
+		var a struct {
+			Name string  `json:"name"`
+			Text *string `json:"text"`
+		}
+		dec := json.NewDecoder(bytes.NewReader(args))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&a); err != nil || (a.Text != nil) != text {
+			if text {
+				return errors.New(`needs {"name": "...", "text": "..."}`)
+			}
+			return errors.New(`needs {"name": "..."}`)
+		}
+		if a.Name == "" || len(a.Name) > 48 {
+			return errors.New("name: 1 to 48 characters")
+		}
+		return nil
+	}
+}
+
 func noArgs(args json.RawMessage) error {
 	if t := bytes.TrimSpace(args); len(t) != 0 && string(t) != "null" && string(t) != "{}" {
 		return errors.New("this command takes no arguments")
@@ -143,6 +197,9 @@ type Server struct {
 	// exchange, a sign-in a password hash; neither is free for the asking.
 	limHandshake, limAuth, limFail *limiter
 
+	fw  *firmwareShelf
+	img *imageShelf
+
 	started   time.Time
 	healthMu  sync.Mutex
 	healthAt  time.Time // when the state was last checked
@@ -160,6 +217,8 @@ func New(cfg Config, st *store.Store) *Server {
 		web: map[[32]byte]*webSession{}, fails: map[string]*failCount{}, dummySalt: make([]byte, 16),
 		limHandshake: newLimiter(30, time.Second), limAuth: newLimiter(10, 6*time.Second), limFail: newLimiter(30, 2*time.Second)}
 	rand.Read(sv.dummySalt)
+	sv.fw = newShelf(cfg.FirmwareDir)
+	sv.img = newImageShelf(cfg.ImageDir, cfg.ImageMax, cfg.ImageTotal)
 	sv.started = time.Now()
 	if cfg.Entra != nil {
 		sv.entra = newEntra(*cfg.Entra, cfg.PublicURL)
@@ -196,6 +255,22 @@ func (sv *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /admin/v1/server/rotate-key", sv.admin(sv.rotateKey))
 	mux.HandleFunc("POST /admin/v1/server/rotate-key/end", sv.admin(sv.endKeyChange))
 	mux.HandleFunc("POST /admin/v1/enroll-tokens", sv.admin(sv.newToken))
+	mux.HandleFunc("GET /admin/v1/firmware", sv.admin(sv.listFirmware))
+	mux.HandleFunc("POST /admin/v1/firmware", sv.adminMax(sv.addFirmware, fwMaxPkg))
+	mux.HandleFunc("DELETE /admin/v1/firmware/{id}", sv.admin(sv.deleteFirmware))
+	mux.HandleFunc("POST /admin/v1/firmware/{id}/folder", sv.admin(sv.fileFirmware))
+	mux.HandleFunc("GET /admin/v1/images", sv.admin(sv.listImages))
+	mux.HandleFunc("POST /admin/v1/images", sv.adminMax(sv.addImage, sv.img.max))
+	mux.HandleFunc("PUT /admin/v1/images/{id}", sv.admin(sv.editImage))
+	mux.HandleFunc("DELETE /admin/v1/images/{id}", sv.admin(sv.deleteImage))
+	mux.HandleFunc("POST /admin/v1/images/{id}/link", sv.admin(sv.linkImage))
+	mux.HandleFunc("GET /admin/v1/images/file/{ticket}", sv.sendImage)
+	mux.HandleFunc("GET /admin/v1/templates", sv.admin(sv.listTemplates))
+	mux.HandleFunc("POST /admin/v1/templates", sv.admin(sv.putTemplate))
+	mux.HandleFunc("PUT /admin/v1/templates/{id}", sv.admin(sv.putTemplate))
+	mux.HandleFunc("DELETE /admin/v1/templates/{id}", sv.admin(sv.deleteTemplate))
+	mux.HandleFunc("POST /admin/v1/templates/{id}/send", sv.admin(sv.sendTemplate))
+	mux.HandleFunc("POST /admin/v1/devices/{id}/place", sv.admin(sv.place))
 	mux.HandleFunc("GET /admin/v1/devices", sv.admin(sv.listDevices))
 	mux.HandleFunc("POST /admin/v1/devices/{id}/approve", sv.admin(sv.approve))
 	mux.HandleFunc("POST /admin/v1/devices/{id}/revoke", sv.admin(sv.revoke))
@@ -301,13 +376,14 @@ func (sv *Server) handshake(w http.ResponseWriter, r *http.Request) {
 }
 
 type deviceMsg struct {
-	T       string          `json:"t"` // "enroll", "poll" or "con"
+	T       string          `json:"t"` // "enroll", "poll", "con" or "fw"
 	Name    string          `json:"name,omitempty"`
 	Info    json.RawMessage `json:"info,omitempty"`
 	Status  json.RawMessage `json:"status,omitempty"`
 	Results []store.Result  `json:"results,omitempty"`
 	SK      string          `json:"sk,omitempty"` // "poll": the server key the device holds (store.KeyTag)
-	conMsg                  // "con": the remote console
+	conMsg                  // "con": the remote console; "fw" uses its id and off
+	Head    bool            `json:"head,omitempty"` // "fw": manifest and signature instead of a piece of the image
 }
 
 type serverCmd struct {
@@ -421,6 +497,18 @@ func (sv *Server) msg(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		reply = r
+	case !e.enroll && m.T == "fw":
+		if d, err := sv.st.Device(e.deviceID); err != nil || d.State != store.StateActive {
+			sv.drop(sid)
+			http.Error(w, "", http.StatusForbidden)
+			return
+		}
+		r, err := sv.fwDevice(e.deviceID, m.ID, m.Off, m.Head)
+		if err != nil {
+			http.Error(w, "", http.StatusBadRequest)
+			return
+		}
+		reply = r
 	default:
 		http.Error(w, "", http.StatusBadRequest)
 		return
@@ -453,6 +541,8 @@ func fail(w http.ResponseWriter, err error) {
 		code = http.StatusConflict
 	case errors.Is(err, store.ErrSAS):
 		code = http.StatusForbidden
+	case errors.Is(err, store.ErrArgs):
+		code = http.StatusBadRequest
 	}
 	writeJSON(w, code, map[string]string{"error": err.Error()})
 }
@@ -661,6 +751,18 @@ type deviceView struct {
 	Status      json.RawMessage `json:"status,omitempty"`
 	Open        int             `json:"open_commands"`
 	OldKey      bool            `json:"old_key,omitempty"` // has not confirmed the server's new key yet
+	Update      *fwProgress     `json:"update,omitempty"`  // how far a firmware update has got
+	Region      string          `json:"region,omitempty"`
+	Site        string          `json:"site,omitempty"`
+	Online      bool            `json:"online"`            // has reported in within the last few polls
+	Console     *conUse         `json:"console,omitempty"` // a remote console is open: on which port, and whose it is
+}
+
+// conUse says who is on a serial port of a device through this server.
+type conUse struct {
+	Port  int       `json:"port"`
+	By    string    `json:"by,omitempty"`
+	Since time.Time `json:"since"`
 }
 
 func (sv *Server) listDevices(w http.ResponseWriter, _ *http.Request) {
@@ -668,10 +770,29 @@ func (sv *Server) listDevices(w http.ResponseWriter, _ *http.Request) {
 	for _, d := range sv.st.Devices() {
 		fp := proto.Fingerprint(d.Pub)
 		v := deviceView{ID: d.ID, Fingerprint: hex.EncodeToString(fp[:]), Name: d.Name, State: d.State,
-			Info: d.Info, Enrolled: d.Enrolled, LastSeen: d.LastSeen, Status: d.Status, OldKey: d.OldKey && d.State != store.StateRevoked}
+			Info: d.Info, Enrolled: d.Enrolled, LastSeen: d.LastSeen, Status: d.Status, OldKey: d.OldKey && d.State != store.StateRevoked,
+			Region: d.Region, Site: d.Site}
+		v.Online = d.State == store.StateActive && d.LastSeen != nil && sv.now().Sub(*d.LastSeen) < time.Duration(3*sv.cfg.PollS+15)*time.Second
+		sv.mu.Lock()
+		if c := sv.conGet(d.ID); c != nil && c.ended == nil {
+			v.Console = &conUse{Port: c.port, Since: c.opened}
+			for _, cmd := range d.Commands {
+				if cmd.ID == c.id {
+					v.Console.By = cmd.By
+				}
+			}
+		}
+		sv.mu.Unlock()
 		for _, c := range d.Commands {
 			if c.State == store.CmdQueued || c.State == store.CmdSent {
 				v.Open++
+			}
+		}
+		if p := sv.fw.progress(d.ID); p != nil {
+			for _, c := range d.Commands {
+				if c.ID == p.Cmd && c.State == store.CmdSent {
+					v.Update = p
+				}
 			}
 		}
 		out = append(out, v)
@@ -731,7 +852,7 @@ func (sv *Server) enqueue(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown command type"})
 		return
 	}
-	if len(in.Args) > 4096 {
+	if len(in.Args) > 6144 { // the device takes 8 kB per answer, all commands of one poll together
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "args too large"})
 		return
 	}
@@ -739,7 +860,19 @@ func (sv *Server) enqueue(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	c, err := sv.st.Enqueue(r.PathValue("id"), in.Type, in.Args)
+	if in.Type == "update" {
+		var a struct {
+			FW string `json:"fw"`
+		}
+		json.Unmarshal(in.Args, &a)
+		p := sv.fw.get(a.FW)
+		if p == nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown firmware package"})
+			return
+		}
+		note(r).detail = "update " + p.info.FW + " " + p.info.Lang
+	}
+	c, err := sv.st.EnqueueBy(r.PathValue("id"), in.Type, in.Args, who(r).Name)
 	if err != nil {
 		fail(w, err)
 		return

@@ -152,7 +152,7 @@ Alle Aufrufe mit `Authorization: Bearer <C2_ADMIN_TOKEN>` oder mit dem Cookie ei
 | `GET /admin/v1/devices` | Geräte mit Zustand (`pending`, `active`, `revoked`), zuletzt gesehen, letzter Status; `old_key`, wenn ein Gerät den neuen Serverschlüssel noch nicht bestätigt hat |
 | `POST /admin/v1/devices/{id}/approve` `{"sas":"123456"}` | bestätigen mit dem Code vom Gerätedisplay; fünf falsche Eingaben verwerfen die Anmeldung |
 | `POST /admin/v1/devices/{id}/revoke` | sperren, sofort und endgültig |
-| `POST /admin/v1/devices/{id}/commands` `{"type":"play","args":{"name":"Demo","port":1}}` | Auftrag einreihen. Arten: `ping`, `status`, `settings`, `configs` (lesen), `play`, `reboot` (nur mit Freigabe am Gerät) — KONZEPT.md §4.3 |
+| `POST /admin/v1/devices/{id}/commands` `{"type":"play","args":{"name":"Demo","port":1}}` | Auftrag einreihen. Arten: `ping`, `status`, `settings`, `configs` (lesen), `play`, `reboot`, `set`, `config_get`, `config_put`, `config_delete` (nur mit Freigabe am Gerät) — KONZEPT.md §4.3 |
 | `POST /admin/v1/devices/{id}/commands` `{"type":"console","args":{"port":1,"minutes":15}}` | Fernkonsole anfragen; am Gerät muss jemand auf dem Display zustimmen — KONZEPT.md §4.5 |
 | `GET /admin/v1/devices/{id}/console` | Zustand der Fernkonsole (`requested`, `granted`, `open`, `ended`, `refused`) und das Sitzungsprotokoll |
 | `GET /admin/v1/devices/{id}/console/{sitzung}/output?from=0` | Ausgabe des Ports ab einem Offset, base64; wartet bis zu 20 s auf Neues (`wait=` in Sekunden verkürzt das) |
@@ -196,6 +196,7 @@ Auf der Anmeldeseite erscheint dann „Mit Microsoft anmelden“. Den zweiten Fa
 | `C2_BIND` | `127.0.0.1` | nur Compose: Adresse dieses Rechners, an die der Port gebunden wird |
 | `C2_DATA_DIR` | `/data` | Zustand: `state.json` (enthält den privaten Serverschlüssel), TLS-Zertifikat. Mit `C2_DATABASE_URL` wird hier nur einmal eine `state.json` zum Übernehmen gesucht |
 | `C2_POLL_S` | `30` | Abstand, in dem Geräte sich melden sollen |
+| `C2_IMAGE_MAX_MB`, `C2_IMAGE_TOTAL_MB` | `2048`, `20480` | andere Images in der Bibliothek: größte Datei und alle zusammen, in Megabyte. Sie liegen unter `C2_DATA_DIR/images` |
 
 Wer das Datenverzeichnis (mit PostgreSQL: die Datenbank und ihre Sicherungen) verliert, verliert den Serverschlüssel — alle Geräte müssten neu angemeldet werden. Für den Betrieb mit der Datei gibt es keine eingebaute Sicherung: `state.json` bei gestopptem Server kopieren.
 
@@ -237,3 +238,29 @@ test/ui.sh, ui_test.py   Browsertest der Weboberfläche
 test/pg.sh, cloud.sh     Zustand in PostgreSQL; der ganze Aufbau mit Caddy
 test/backup.sh           Sicherung und Wiederherstellung
 ```
+
+## Standorte und Bibliothek
+
+- `POST /admin/v1/devices/{id}/place` `{"region":"…","site":"…"}` — wohin ein Gerät gehört (freier Text, bis 48 Zeichen; leer nimmt es heraus).
+- `GET /admin/v1/templates`, `POST /admin/v1/templates` `{"name","folder","text"}`, `PUT`/`DELETE /admin/v1/templates/{id}`, `POST /admin/v1/templates/{id}/send` `{"device":"<id>"}` — Vorlagen; gesendet wird als gespeicherte Konfiguration gleichen Namens (`config_put`).
+- `POST /admin/v1/firmware/{id}/folder` `{"folder":"…"}` — ein Firmware-Paket in einen Ordner sortieren.
+- `GET /admin/v1/images` (`images`, dazu `used`, `total`, `max` in Byte), `POST /admin/v1/images?name=…&folder=…` (die Datei als Rumpf, wird auf die Platte durchgereicht), `PUT /admin/v1/images/{id}` `{"name","folder"}`, `DELETE /admin/v1/images/{id}` — andere Images, etwa das Betriebssystem eines Switches. Herunterladen: `POST /admin/v1/images/{id}/link` gibt eine Adresse, die zwei Minuten lang ohne Anmeldung gilt (ein Link kann kein Token tragen); sie beantwortet auch `Range`, ein abgebrochener Download lässt sich fortsetzen. Der Server prüft an diesen Dateien nichts und schickt sie an kein Gerät; er nennt ihre SHA-256-Summe zum Vergleich mit der des Herstellers. Die Sicherung der Datenbank enthält sie nicht.
+- `GET /admin/v1/devices` nennt je Gerät `online`, `region`, `site` und bei offener Fernkonsole `console` (`port`, `by`, `since`).
+
+## Firmware-Update über die Leitstelle
+
+Konzept: `KONZEPT.md` §4.7. Kurz: signiert wird auf dem Rechner des Besitzers, der Server reicht weiter, das Gerät prüft.
+
+```bash
+cd firmware
+tools/fw_sign.py keygen                 # einmal: Schlüssel anlegen, schreibt src/update_key.h
+pio run -e waveshare-s3-lcd2-de -t upload   # einmal per USB: erst diese Firmware kennt den Schlüssel
+# später, für jedes Update:
+pio run -e waveshare-s3-lcd2-de
+tools/fw_sign.py sign de                # -> dist/rs232-console-<Version>-de-<Zeit>.rsfw
+tools/fw_sign.py show dist/….rsfw       # was drinsteht, ob die Signatur hält
+```
+
+Das Paket in der Admin-Weboberfläche unter „Verwalten“ → Gerät → „Firmware“ hochladen und installieren (am Gerät muss der Haken für die Leitstelle gesetzt sein). Per API: `POST /admin/v1/firmware` (Paket als Rumpf), `GET /admin/v1/firmware`, `DELETE /admin/v1/firmware/{id}`, dann der Auftrag `{"type":"update","args":{"fw":"<id>"}}`. Die Pakete liegen unter `C2_DATA_DIR/firmware`; die Sicherung der Datenbank enthält sie nicht (sie lassen sich neu erzeugen).
+
+Der Schlüssel (`~/.config/rs232-console/firmware-signing-key.pem`, anderer Ort: `RS232_FW_KEY`) ist unverschlüsselt und gehört gesichert — an einem Ort, der weder dieser Rechner noch der Server ist.

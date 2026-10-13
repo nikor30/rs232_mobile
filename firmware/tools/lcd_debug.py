@@ -9,8 +9,9 @@ Talks to the firmware over the USB serial port without resetting the board:
     lcd_debug.py drag 160 200 160 80    a finger moved from one position to another (scrolls, swipes)
     lcd_debug.py hold 300 120 200 120   the same, but the finger stays down where it arrived - to see
                                         what the screen shows during a gesture; "lift" lets go
-    lcd_debug.py screen 1               0 Status, 1 Terminal, 2 Skripte, 3 WLAN, 4 Web-UI, 5 Bluetooth,
-                                        6 System, 7 Info, 8 Setup
+    lcd_debug.py screen 1               0 Status, 1 Netz, 2 Terminal, 3 Skripte, 4 Bluetooth,
+                                        5 Info, 6 System, 7 Setup
+    lcd_debug.py splash 5               show the start-up picture (mark and name) again for 5 seconds
     lcd_debug.py cfgtest                store a small configuration "Demo" to try the Skripte page
     lcd_debug.py rot 0                  force a rotation (0..3); "rot auto" hands it back to the sensor
     lcd_debug.py wake | off
@@ -19,6 +20,7 @@ Talks to the firmware over the USB serial port without resetting the board:
                                         "3400 4050": both points in mV, 0 = the curve's own)
     lcd_debug.py c2                     command-and-control server: state, code, timings, stack and heap
     lcd_debug.py saver 1                power saving as on battery: 1 on, 0 off, -1 automatic
+    lcd_debug.py stick                  SD card as a USB memory stick (the console ends; back: restart at the device).
     lcd_debug.py poweroff 15            switch off, wake by timer after 15 s (waits for the board to return).
                                         Without a time only the BOOT button switches it on again.
     lcd_debug.py listen 20              print the log for 20 seconds
@@ -156,6 +158,12 @@ def main(argv):
         elif c == "lift":
             s.write(b"lift\n")
             sys.stdout.write(read_until(s, lambda b: False, 1.2).decode("utf8", "replace"))
+        elif c == "stickui":                         # the stick dialog alone, to look at it
+            s.write(f"stickui {argv[i + 1]}\n".encode()); i += 1
+            time.sleep(0.5)
+        elif c == "splash":
+            s.write(f"splash {argv[i + 1]}\n".encode()); i += 1
+            time.sleep(0.4)
         elif c == "saver":
             s.write(f"saver {argv[i + 1]}\n".encode()); i += 1
             time.sleep(0.3)
@@ -201,6 +209,14 @@ def main(argv):
         elif c == "cfgtest":
             s.write(b"cfgtest\n")
             sys.stdout.write(read_until(s, lambda b: False, 1.0).decode("utf8", "replace"))
+        elif c == "stick":                           # the card becomes a USB memory stick; this console is gone then
+            s.write(b"stick\n")
+            try:
+                sys.stdout.write(read_until(s, lambda b: False, 2.0).decode("utf8", "replace"))
+                s.close()
+            except (serial.SerialException, OSError):
+                pass
+            return
         elif c in ("wake", "off"):
             s.write(c.encode() + b"\n"); time.sleep(0.5)
         elif c == "listen":

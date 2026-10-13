@@ -35,6 +35,14 @@ func env(key, def string) string {
 	return def
 }
 
+// mb reads a size in megabytes from the environment and returns bytes.
+func mb(key string, def int64) int64 {
+	if n, err := strconv.ParseInt(os.Getenv(key), 10, 64); err == nil && n > 0 {
+		return n << 20
+	}
+	return def << 20
+}
+
 // selfSigned returns a certificate for local use, kept in dir so it stays the
 // same across restarts.
 func selfSigned(dir string, hosts []string) (tls.Certificate, error) {
@@ -164,7 +172,8 @@ func main() {
 	if admin == "" && len(st.Users()) == 0 {
 		log.Fatal("no account exists yet: start once with C2_ADMIN_TOKEN set and create one (README.md)")
 	}
-	cfg := server.Config{AdminToken: admin, PublicURL: publicURL, PollS: pollS,
+	cfg := server.Config{AdminToken: admin, PublicURL: publicURL, PollS: pollS, FirmwareDir: filepath.Join(dataDir, "firmware"),
+		ImageDir: filepath.Join(dataDir, "images"), ImageMax: mb("C2_IMAGE_MAX_MB", 2048), ImageTotal: mb("C2_IMAGE_TOTAL_MB", 20480),
 		SecureCookies: strings.HasPrefix(publicURL, "https://"), TrustProxy: os.Getenv("C2_TRUST_PROXY") == "1"}
 	if tenant := os.Getenv("C2_ENTRA_TENANT"); tenant != "" {
 		cfg.Entra = &server.EntraConfig{Tenant: strings.ToLower(tenant), ClientID: os.Getenv("C2_ENTRA_CLIENT_ID"), ClientSecret: os.Getenv("C2_ENTRA_CLIENT_SECRET")}

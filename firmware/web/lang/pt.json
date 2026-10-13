@@ -125,7 +125,8 @@
   "Device ID": "ID do dispositivo",
   "Remote console": "Console remoto",
   "End": "Encerrar",
-  "The control center may play configurations and restart the device": "A central pode reproduzir configurações e reiniciar o dispositivo",
+  "The control center may change settings, read and write configurations, play them and restart the device": "A central pode alterar ajustes, ler, gravar e reproduzir configurações e reiniciar o dispositivo",
+  "Show the administrator settings (Ports, Network, Setup)": "Mostrar os ajustes de administrador (Portas, Rede, Ajustes)",
   "Unticked, the server can only read: state, settings (without passwords) and the list of configurations. The box can be ticked only here, never from the server.": "Desmarcado, o servidor só pode ler: estado, configurações (sem senhas) e a lista de configurações salvas. A opção só pode ser marcada aqui, nunca pelo servidor.",
   "The": "O",
   "– the administrator operates a serial port through the server – does not depend on this box: every session has to be allowed on the device's touch display, runs for the requested time at most and can be ended there and here at any moment.": "– o administrador opera uma porta serial pelo servidor – não depende desta opção: cada sessão precisa ser permitida na tela do dispositivo, dura no máximo o tempo solicitado e pode ser encerrada lá e aqui a qualquer momento.",
@@ -183,7 +184,11 @@
   "Factory reset": "Restaurar padrões",
   "Erases all settings and creates a new hotspot password (it is on the display afterwards). Stored configurations are kept.": "Apaga todas as configurações e gera uma nova senha do ponto de acesso (aparece depois na tela). As configurações salvas são mantidas.",
   "Pause (ms)": "Pausa (ms)",
-  "Code": "Código"
+  "Code": "Código",
+  "SD card": "Cartão SD",
+  "Use the SD card as a USB stick": "Usar o cartão SD como pendrive",
+  "The SD card belongs to the USB port now: the switch, firewall or computer it is plugged into sees a USB stick. Eject it there, then restart this device to get the card back.": "O cartão SD pertence agora à porta USB: o switch, o firewall ou o computador ao qual ela está ligada vê um pendrive. Ejete-o lá e depois reinicie este dispositivo para ter o cartão de volta.",
+  "As a USB stick the card can be read by a switch or firewall (firmware images, configurations) and filled from a computer. The USB port moves about half a megabyte per second.": "Como pendrive, o cartão pode ser lido por um switch ou firewall (imagens de firmware, configurações) e preenchido a partir de um computador. A porta USB transfere cerca de meio megabyte por segundo."
  },
  "script": {
   "Port ": "Porta ",
@@ -370,6 +375,14 @@
   "Port {0}": "Porta {0}",
   "Play on {0}": "Reproduzir em {0}",
   "{0} recorded ({1})": "{0} gravados ({1})",
-  "0 B recorded": "0 B gravados"
+  "0 B recorded": "0 B gravados",
+  "Hand the SD card to the USB port as a USB stick? Recordings stop, and the way back is a restart.": "Entregar o cartão SD à porta USB como pendrive? As gravações param, e a volta é só com uma reinicialização.",
+  "USB stick mode is on": "O modo pendrive está ligado",
+  "USB stick: {0} · read {1}, written {2}": "Pendrive: {0} · lido {1}, gravado {2}",
+  "ejected": "ejetado",
+  "connected": "conectado",
+  "waiting for the USB port": "aguardando a porta USB",
+  "inserted": "inserido",
+  "none": "nenhum"
  }
 }

@@ -132,6 +132,7 @@ static void onSerial(uint8_t port, const uint8_t *data, size_t len) {
 // ------------------------------------------------------------------ setup / loop
 void setup() {
   setCpuFrequencyMhz(CPU_MHZ);
+  Sd::usbRestore();
   Serial.begin(115200);
 #if ARDUINO_USB_CDC_ON_BOOT
   // Never wait for a USB host that is not reading. Not 0: the core's write loop

@@ -35,7 +35,8 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { e.sv.st.Close() })
-	e.sv = New(Config{AdminToken: adminToken}, st)
+	e.sv = New(Config{AdminToken: adminToken, FirmwareDir: filepath.Join(e.dir, "firmware"),
+		ImageDir: filepath.Join(e.dir, "images"), ImageMax: 1 << 20, ImageTotal: 3 << 19}, st)
 	e.sv.SetClock(func() time.Time { return e.now })
 	e.ts = httptest.NewServer(e.sv.Handler())
 	e.sv.cfg.PublicURL = e.ts.URL
@@ -369,18 +370,25 @@ func TestCommandTypesAndArguments(t *testing.T) {
 		return resp.StatusCode
 	}
 	for body, want := range map[string]int{
-		`{"type":"status"}`:                                     201,
-		`{"type":"settings","args":{}}`:                         201,
-		`{"type":"configs"}`:                                    201,
-		`{"type":"reboot"}`:                                     201,
-		`{"type":"play","args":{"name":"Demo","port":1}}`:       201,
-		`{"type":"reboot","args":{"force":true}}`:               400, // takes no arguments
-		`{"type":"play"}`:                                       400,
-		`{"type":"play","args":{"name":"","port":1}}`:           400,
-		`{"type":"play","args":{"name":"Demo","port":9}}`:       400,
-		`{"type":"play","args":{"name":"Demo","port":1,"x":1}}`: 400, // nothing the device does not expect
-		`{"type":"shell","args":{"cmd":"reload"}}`:              400,
-		`{"type":"play","args":{"name":"Demo","port":"1; rm"}}`: 400,
+		`{"type":"status"}`:                                      201,
+		`{"type":"settings","args":{}}`:                          201,
+		`{"type":"configs"}`:                                     201,
+		`{"type":"reboot"}`:                                      201,
+		`{"type":"play","args":{"name":"Demo","port":1}}`:        201,
+		`{"type":"reboot","args":{"force":true}}`:                400, // takes no arguments
+		`{"type":"play"}`:                                        400,
+		`{"type":"play","args":{"name":"","port":1}}`:            400,
+		`{"type":"play","args":{"name":"Demo","port":9}}`:        400,
+		`{"type":"play","args":{"name":"Demo","port":1,"x":1}}`:  400, // nothing the device does not expect
+		`{"type":"shell","args":{"cmd":"reload"}}`:               400,
+		`{"type":"set","args":{"hostname":"lab-1"}}`:             201,
+		`{"type":"set"}`:                                         400, // nothing to set
+		`{"type":"set","args":[1]}`:                              400,
+		`{"type":"config_get","args":{"name":"Demo"}}`:           201,
+		`{"type":"config_get","args":{"name":"Demo","text":""}}`: 400,
+		`{"type":"config_put","args":{"name":"Demo"}}`:           400, // no text
+		`{"type":"config_delete","args":{"name":""}}`:            400,
+		`{"type":"play","args":{"name":"Demo","port":"1; rm"}}`:  400,
 	} {
 		if got := post(body); got != want {
 			t.Errorf("%s: HTTP %d, want %d", body, got, want)
@@ -388,8 +396,24 @@ func TestCommandTypesAndArguments(t *testing.T) {
 	}
 	// the device gets exactly what was accepted
 	r, err := c.Poll(nil, nil)
-	if err != nil || len(r.Cmds) != 5 {
+	if err != nil || len(r.Cmds) != 7 {
 		t.Fatalf("poll: %+v %v", r, err)
+	}
+	// Settings may carry passwords: the device got them, the history does not keep them.
+	var hist []struct {
+		Type string
+		Args json.RawMessage
+	}
+	e.admin("GET", "/admin/v1/devices/"+c.ID()+"/commands", nil, &hist)
+	for _, h := range hist {
+		if (h.Type == "set") != (len(h.Args) == 0) && h.Type != "status" && h.Type != "configs" && h.Type != "reboot" {
+			t.Errorf("history keeps %s with args %q", h.Type, h.Args)
+		}
+	}
+	for _, cmd := range r.Cmds {
+		if cmd.Type == "set" && !strings.Contains(string(cmd.Args), "lab-1") {
+			t.Errorf("the device did not get the settings: %q", cmd.Args)
+		}
 	}
 }
 
@@ -462,7 +486,7 @@ func TestWebInterface(t *testing.T) {
 		Fingerprint string
 		Commands    []string
 	}
-	if code := e.admin("GET", "/admin/v1/server", nil, &info); code != 200 || len(info.Fingerprint) != 64 || len(info.Commands) != 7 {
+	if code := e.admin("GET", "/admin/v1/server", nil, &info); code != 200 || len(info.Fingerprint) != 64 || len(info.Commands) != 12 {
 		t.Fatalf("server info: HTTP %d %+v", code, info)
 	}
 }

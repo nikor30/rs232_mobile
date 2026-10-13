@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Runs the firmware's protocol code (firmware/src/c2_proto.cpp and
-# c2_console.cpp, with the vendored ML-KEM) on this machine against the real
-# server container: known-answer self-test, enrollment, approval, a command and
-# its result, a remote console.
+# Runs the firmware's protocol code (firmware/src/c2_proto.cpp, c2_console.cpp
+# and c2_update.cpp, with the vendored ML-KEM and ML-DSA) on this machine
+# against the real server container: known-answer self-test, enrollment,
+# approval, a command and its result, a remote console, a signed firmware update.
 #
-#   tests/c2/run.sh     (needs docker, curl, python3, and ArduinoJson from a
-#                        firmware build: firmware/.pio/libdeps/...)
+#   tests/c2/run.sh     (needs docker, curl, python3, openssl 3.5+ and ArduinoJson
+#                        from a firmware build: firmware/.pio/libdeps/...)
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -32,9 +32,11 @@ host() { docker run --rm --network $P -v "$PWD":/src:ro -v $P-build:/build -w /s
 host sh -c '
   set -e
   M=firmware/lib/mlkem_native/src
+  D=firmware/lib/mldsa_native/src/mldsa
   for f in $M/mlkem/*.c $M/mlkem/fips202/*.c; do gcc -O2 -Wall -c "$f" -o /build/$(basename "$f").o; done
-  g++ -std=c++17 -O1 -Wall -Wextra -Ifirmware/src -I$M -I'"$AJ"' \
-      tests/c2/host_client.cpp firmware/src/c2_proto.cpp firmware/src/c2_console.cpp /build/*.o -lmbedcrypto -o /build/c2host' || fail "compile"
+  for f in $D/src/*.c $D/src/fips202/*.c; do gcc -O2 -Wall -I$D -c "$f" -o /build/mldsa-$(basename "$f").o; done
+  g++ -std=c++17 -O1 -Wall -Wextra -Ifirmware/src -I$M -I$D -I'"$AJ"' \
+      tests/c2/host_client.cpp firmware/src/c2_proto.cpp firmware/src/c2_console.cpp firmware/src/c2_update.cpp /build/*.o -lmbedcrypto -o /build/c2host' || fail "compile"
 echo "ok   firmware protocol code compiled against mbedTLS $(host sh -c "dpkg-query -W -f='\${Version}' libmbedtls-dev")"
 
 echo "== known answers"
@@ -115,5 +117,47 @@ expect "third poll: the old key fails, the new one is pinned" "$(host /build/c2h
 expect "fourth poll: nothing left to do" "$(host /build/c2host poll /build/device.bin | tr '\n' ' ')" "STATE active "
 expect "end of the change" "$(admin POST /admin/v1/server/rotate-key/end | json 'd["key_change"]')" None
 expect "the device stays" "$(host /build/c2host poll /build/device.bin | tr '\n' ' ')" "STATE active "
+
+echo "== signed firmware update"
+# A key made here, for this run only; packages built the way tools/fw_sign.py
+# builds them. The device code has to take the good one and nothing else.
+W=$(mktemp -d); trap 'rm -rf "$W"; cleanup' EXIT
+openssl genpkey -algorithm ML-DSA-65 -out $W/key.pem 2>/dev/null || fail "openssl cannot make an ML-DSA-65 key (3.5 or newer needed)"
+openssl genpkey -algorithm ML-DSA-65 -out $W/other.pem 2>/dev/null
+openssl pkey -in $W/key.pem -pubout -outform DER | tail -c 1952 >$W/pub.bin
+docker run --rm -v $P-build:/build -v $W:/w:ro $P-env cp /w/pub.bin /build/pub.bin
+head -c 70000 /dev/urandom >$W/image.bin
+pkg() { # NAME KEY SEQ BOARD [tamper]
+  python3 - "$W" "$@" <<'PY'
+import sys, json, hashlib, base64, subprocess
+w, name, key, seq, board = sys.argv[1:6]
+image = open(w + "/image.bin", "rb").read()
+manifest = json.dumps({"product": "rs232-console", "board": board, "fw": "9.9.9", "lang": "en", "seq": int(seq),
+                       "size": len(image), "sha256": hashlib.sha256(image).hexdigest()}, separators=(",", ":")).encode()
+open(w + "/m", "wb").write(manifest)
+subprocess.run(["openssl", "pkeyutl", "-sign", "-inkey", w + "/" + key, "-in", w + "/m", "-out", w + "/s",
+                "-pkeyopt", "context-string:rs232-console firmware"], check=True)
+if len(sys.argv) > 6:      # the manifest changed after signing: another version, same length
+    manifest = manifest.replace(b"9.9.9", b"6.6.6")
+open(w + "/" + name, "wb").write(b"RSFW1\n" + manifest + b"\n" + base64.b64encode(open(w + "/s", "rb").read()) + b"\n" + image)
+PY
+}
+update() { # PACKAGE INSTALLED-SEQ -> what the device code says
+  local FW CMD
+  FW=$(curl -s -X POST "$API/admin/v1/firmware" -H "Authorization: Bearer $TOKEN_ADMIN" --data-binary @"$W/$1" | json 'd["id"]')
+  CMD=$(admin POST /admin/v1/devices/$ID/commands "{\"type\":\"update\",\"args\":{\"fw\":\"$FW\"}}" | json 'd["id"]')
+  host /build/c2host update /build/device.bin /build/pub.bin "$2"
+  admin DELETE /admin/v1/firmware/$FW >/dev/null
+}
+pkg good.rsfw key.pem 2000 waveshare-s3-lcd2
+pkg forged.rsfw other.pem 2001 waveshare-s3-lcd2
+pkg changed.rsfw key.pem 2002 waveshare-s3-lcd2 tamper
+pkg board.rsfw key.pem 2003 some-other-board
+expect "package signed with the owner's key" "$(update good.rsfw 1000)" "UPDATE ok 9.9.9 en 70000"
+expect "result at the server" "$(admin GET /admin/v1/devices/$ID/commands | json '[(c["state"],c["result"]) for c in d][-1]')" "('done', 'updated to 9.9.9 (en), restarting')"
+expect "the same package once it is installed" "$(update good.rsfw 2000)" "UPDATE refused: the package is not newer than what this device has installed"
+expect "package signed with another key" "$(update forged.rsfw 1000)" "UPDATE refused: the signature does not match the key of this device"
+expect "manifest changed after signing" "$(update changed.rsfw 1000)" "UPDATE refused: the signature does not match the key of this device"
+expect "package for another board" "$(update board.rsfw 1000)" "UPDATE refused: the package is for another board"
 
 printf '\nFIRMWARE PROTOCOL CODE INTEROPERATES WITH THE SERVER\n'

@@ -22,4 +22,5 @@ namespace Net {
   // What the web UI shows, as JSON - also handed to the command-and-control server.
   String deviceStatus();        // ports, counters, network, battery
   String deviceSettings();      // settings without any password or key
+  const char *applySettings(const String &json, bool wire);   // check and store; nullptr or the error (wire: in English)
 }

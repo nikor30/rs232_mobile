@@ -18,21 +18,23 @@ Stand 2. Oktober 2026: gebaut, geflasht und am Board geprüft, soweit unten ange
 | Serielle Konsole über Bluetooth LE | `src/ble.cpp` | Kopplung mit PIN, Verschlüsselung und Schreiben vom Raspberry Pi aus; Ein-/Ausschalten mehrfach; Richtung Gerät → Handy ungetestet (kein Loopback verdrahtet) |
 | Akkuanzeige mit Ladeerkennung | `src/power.cpp` | Messung an IO5 mit 1000-mAh-LiPo bestätigt (6. Oktober 2026); „lädt" am USB-Port eines Rechners gesehen; Akkubetrieb, Netzteil und Ab-/Anstecken **ungeprüft** — siehe unten |
 | Stromsparen im Akkubetrieb, Ausschalten | `src/power.cpp`, `src/lcd_ui.cpp`, `src/main.cpp` | Sparmodus erzwungen (`lcd_debug.py saver 1`): 80 MHz, Abdunkeln nach 15 s, Aufhellen bei Berührung gesehen; Ausschalten und Wecken per Zeitablauf dreimal durchlaufen. **Ungeprüft:** echter Akkubetrieb ohne USB, Wecken mit der BOOT-Taste, Abschalten bei leerem Akku, jede Stromaufnahme (kein Messgerät) — siehe unten |
-| Mitschnitt auf SD-Karte | `src/sdcard.cpp` | Karte wird nach dem Einschalten erkannt (CS = IO41), **nach jedem Reset ohne Stromunterbrechung nicht mehr** — offen, siehe unten |
+| Mitschnitt auf SD-Karte | `src/sdcard.cpp` | mit einer 32-GB-SDHC-Karte am Gerät geprüft (CS = IO41), auch über Resets; eine alte 1-GB-SDSC-Karte fiel aus, siehe unten |
+| SD-Karte als USB-Stick | `src/sdcard.cpp` | am Gerät geprüft (12. Oktober 2026), siehe unten |
 
 ## Bedienung
 
 - **Ziehen nach oben/unten** verschiebt eine Seite, die länger ist als der Bildschirm; der Balken am rechten Rand zeigt, dass es weitergeht und wo man steht. Die Seite behält beim Loslassen die Geschwindigkeit des Fingers und wird von selbst langsamer; an ihren Enden gibt sie nach — je weiter gezogen, desto weniger — und kehrt ohne Nachschwingen zurück. Eine Berührung hält sie an, wo sie gerade ist, und drückt dabei nichts. Nichts wird mehr abgeschnitten: lange Werte laufen in die nächste Zeile, Listeneinträge und Titel, die einzeilig bleiben müssen, wandern langsam hin und her.
-- **Tasten** sind 46 Pixel hoch (6 mm), Listenzeilen 32. Passen die Beschriftungen einer Tastenreihe nicht nebeneinander (hochkant), stehen sie in zwei Reihen.
-- **Wischen** oder die Pfeile oben wechseln die Seite: Status, Terminal, Skripte, WLAN (QR), Web-UI (QR), Bluetooth, System, Info, Setup. Die BOOT-Taste blättert ebenfalls. Während der Finger seitwärts zieht, kommt der Name der Seite, zu der es geht, von diesem Rand herein und bleibt unter dem Finger; er wird blau, sobald Loslassen die Seite wechselt (ab 50 Pixel, oder mit Schwung). Wer den Finger zurückbewegt, nimmt es zurück.
-- **Der Titel** öffnet die Übersicht: alle neun Seiten als Kacheln, jede mit dem einen Wert, den man vorher wissen will (Baudrate, Hotspot-Name, Bluetooth-Zustand, Akku …). Ein Tipp führt direkt hin — statt bis zu acht Mal zu wischen. Noch ein Tipp auf den Titel schließt sie.
-- **Status**: Schnittstelle, RX/TX-Zähler, Netz. Tasten: Baudrate weiterschalten, Auto-Baud, BREAK.
+- **Tasten** sind 56 Pixel hoch (7 mm), Listenzeilen 44, die Pfeile in der Titelzeile haben je 78 × 46 Pixel (10 mm breit) — für große Daumen und Handschuhe in der Fertigung. Die Beschriftung einer Tastenreihe ist so groß, wie es die längste zulässt. Passen die Beschriftungen einer Tastenreihe nicht nebeneinander (hochkant), stehen sie in zwei Reihen.
+- **Wischen** oder die Pfeile oben wechseln die Seite: Status, Netz, Terminal, Skripte, Bluetooth, Info, Setup — und System, wenn in der Weboberfläche „Einstellungen für Administratoren zeigen“ gesetzt ist. Die BOOT-Taste blättert ebenfalls. Während der Finger seitwärts zieht, kommt der Name der Seite, zu der es geht, von diesem Rand herein und bleibt unter dem Finger; er wird blau, sobald Loslassen die Seite wechselt (ab 50 Pixel, oder mit Schwung). Wer den Finger zurückbewegt, nimmt es zurück.
+- **Der Titel** öffnet die Übersicht: alle Seiten als Kacheln, jede mit dem einen Wert, den man vorher wissen will (Baudrate, Hotspot-Name, Bluetooth-Zustand, Akku …). Ein Tipp führt direkt hin — statt bis zu acht Mal zu wischen. Noch ein Tipp auf den Titel schließt sie.
+- **Status** beantwortet eine Frage: Kann ich an diesem Port arbeiten? Ein Wort, groß (Bereit / In Benutzung / Auto-Baud / Skript läuft / Fernkonsole), darunter die Leitungseinstellung und die RX/TX-Zähler. Sonst nichts. Tasten: Baud weiterschalten, Auto, BREAK.
+- **Netz**: QR-Code für den Hotspot (das Handy öffnet danach die Weboberfläche von selbst — einen eigenen QR-Code dafür gibt es nicht mehr), daneben WLAN-Name, Passwort, IP und die Adresse im LAN.
 - **Terminal**: Live-Ansicht der seriellen Leitung (52×19 Zeichen quer, 39×29 hoch), gespeist aus dem Replay-Puffer. Escape-Sequenzen werden verworfen, nicht ausgewertet. Tasten: Enter, Ctrl-C, BREAK, REC (nur mit SD-Karte).
 - **Skripte**: die in der Weboberfläche (Reiter Konfig) gespeicherten Konfigurationen. Antippen wählt aus, erst „Senden an Port N" spielt ab — zeilenweise, mit Warten auf den Prompt, Stopp bei Fehlermeldung, Steuerzeilen `@pause`, `@expect`, `@break`, `@timeout` wie im Browser (`src/player.cpp`). Konfigurationen mit `{{Variablen}}` gehen nur in der Weboberfläche.
 - **Bluetooth**: zeigt die sechsstellige PIN und schaltet Bluetooth ein/aus (wird gespeichert).
 - **System**: CPU-Last je Kern, RAM, PSRAM als Balken; dazu freier Speicher, größter Block, längste Pause der Hauptschleife, Zeichenzeit, Chip-Temperatur, Laufzeit. Die CPU-Last ist eine Schätzung aus der Leerlaufzeit (Auflösung 1 ms).
 - **Info**: Firmware, Hostname, Clients, Raw-TCP, Leitstelle (Zustand oder der Code zum Bestätigen, siehe [README.md](README.md#leitstelle)), Akku, SD-Karte, Lage, Board.
-- **Setup**: Helligkeit, Abschaltzeit des Displays, WLAN-Client, ganz unten **Ausschalten** (mit Nachfrage; quer dafür nach oben ziehen). „Netz waehlen" sucht Netze; ein verschlüsseltes Netz öffnet die Bildschirmtastatur (QWERTZ, drei Ebenen), ein offenes fragt nach. Gespeichert wird wie in der Weboberfläche, mit Neustart. 802.1X bleibt der Weboberfläche vorbehalten.
+- **Setup**: Helligkeit, Abschaltzeit des Displays, WLAN-Client (die Akku-Kalibrierung steht nur noch in der Weboberfläche und an der Debug-Konsole), ganz unten **Ausschalten** (mit Nachfrage; quer dafür nach oben ziehen). „Netz waehlen" sucht Netze; ein verschlüsseltes Netz öffnet die Bildschirmtastatur (QWERTZ, drei Ebenen), ein offenes fragt nach. Gespeichert wird wie in der Weboberfläche, mit Neustart. 802.1X bleibt der Weboberfläche vorbehalten.
 - Das Display dreht sich zur oberen Kante; liegt das Board flach, bleibt die letzte Lage. Bewegung und Berührung wecken das dunkle Display; die erste Berührung weckt nur.
 - Helligkeit und Abschaltzeit kommen aus den vorhandenen Display-Einstellungen der Weboberfläche.
 
@@ -137,6 +139,7 @@ Gemessen: Die Hauptschleife pausiert im Betrieb 2–3 ms; die längste Pause ist
 
 ```bash
 tools/lcd_debug.py status                  # Laufzeiten beider Tasks, Touch, SD-Verlauf, Bluetooth
+tools/lcd_debug.py stick                   # SD-Karte als USB-Stick (die Konsole endet; zurück: Neustart am Gerät)
 tools/lcd_debug.py shot bild.png           # Screenshot dessen, was das Display zeigt
 tools/lcd_debug.py screen 1 tap 54 205     # Seite wählen, Berührung simulieren
 tools/lcd_debug.py rot 0 shot hoch.png     # Drehung erzwingen (bleibt, bis "rot auto" sie dem Sensor zurückgibt)
@@ -171,7 +174,22 @@ Bleibt die Hauptschleife länger als 3 s stehen, meldet der UI-Task das von sich
 - **`rot N` wurde vom Lagesensor nach 0,6 s überstimmt**, sobald das Board nicht flach lag — die Screenshots zeigten dann immer dieselbe Lage. Eine erzwungene Drehung bleibt jetzt bis `rot auto`.
 - **Erster Build auf dem Raspberry Pi dauert lange** (2,4 GB Pakete auf die SD-Karte). PlatformIO liegt in `/root/.local/share/pio-venv`.
 
-## Das SD-Karten-Problem (offen)
+## SD-Karte als USB-Stick (seit 12. Oktober 2026)
+
+Die Karte lässt sich an den USB-Port verleihen: Was dort steckt — ein Switch, eine Firewall, ein Rechner — sieht einen USB-Stick (`RS232 Console SD card`) und kann Firmware-Images oder Konfigurationen davon lesen und darauf schreiben. Einschalten: Seite Info am Display („SD-Karte als USB-Stick“), Tab Gerät der Weboberfläche (`POST /api/stick`) oder `lcd_debug.py stick`. Zurück geht es nur mit einem Neustart (Taste im Dialog am Display, „Neustart“ in der Weboberfläche).
+
+- **Die Karte gehört dann allein dem USB-Port.** Die Firmware fasst das Dateisystem nicht mehr an (`Sd::mounted()` ist falsch, Mitschnitte enden) — zwei Herren über eine FAT würden sie zerstören. Die Sektoranfragen des Hosts kommen im USB-Task an und gehen über `disk_read`/`disk_write` direkt zur Karte, mit `Display::busLock()`, weil das LCD dieselben Leitungen benutzt.
+- **Der USB-Port ist so lange keine Debug-Konsole.** Im Normalbetrieb gehört er der USB-Serial/JTAG-Einheit (Flashen, `lcd_debug.py`), im Stick-Modus dem USB-OTG-Controller mit TinyUSB (`USB.begin()` schaltet um). Welche Einheit die Pins hat, steht im RTC-Bereich und **überlebt jeden Neustart**; `Sd::usbRestore()` stellt es als Erstes in `setup()` zurück. Ohne das blieb der Port nach dem Stick-Modus tot, bis der Strom weg war.
+- **Tempo:** gemessen 470–540 kB/s lesen, rund 370 kB/s schreiben (USB Full Speed, SPI mit dem Display geteilt). 100 MB brauchen also um vier Minuten.
+- **Was der Host sieht, ist die ganze Karte** mit ihrer Partitionstabelle. Switches und Firewalls lesen in aller Regel nur FAT/FAT32 auf der ersten Partition; die Firmware selbst benutzt ebenfalls die erste FAT-Partition.
+- Der Dialog am Display zeigt, ob ein Host da ist, was gelesen und geschrieben wurde und ob der Host die Karte ausgeworfen hat. `lcd_debug.py stickui 20` zeigt nur den Dialog (zum Ansehen per Screenshot — im echten Stick-Modus gibt es keine Screenshots).
+- Im Stick-Modus hält die Akkuanzeige den USB-Port für ein Netzteil (die Host-Erkennung zählt die Rahmen der Serial/JTAG-Einheit); der Sparmodus ist so lange abgeschaltet.
+
+Geprüft am Board gegen einen Linux-Rechner: Einschalten per Tipp, per Weboberfläche und per Debug-Konsole; 4 MB geschrieben und Byte für Byte zurückgelesen; eine im Stick-Modus geschriebene Datei nach Neustart und erneutem Stick-Modus wieder gelesen; Auswerfen wird angezeigt; nach dem Neustart ist die Debug-Konsole wieder da und die Karte eingebunden. **Nicht geprüft:** an einem echten Switch oder einer Firewall, an Windows/macOS, mit großen Dateien, im Akkubetrieb (das Board wird dann aus dem USB-Port des Switches versorgt).
+
+## Das SD-Karten-Problem (nur mit der alten Karte)
+
+Mit einer 32-GB-SDHC-Karte tritt es nicht auf: über 50 Starts nach einem Reset in Folge eingebunden (`R+`), in zwei Stunden Betrieb kein Ausfall (Stand 12. Oktober 2026). Der Fehler gehört damit zu der alten Karte, nicht zum Aufbau.
 
 Beobachtet mit einer 1-GB-SDSC-Karte:
 
@@ -185,7 +203,7 @@ Beide naheliegenden Erklärungen sind inzwischen widerlegt:
 1. *Der LCD-Takt von 40 MHz ist zu schnell für die Karte.* Mit 20 MHz fiel sie genauso aus.
 2. *Der Reset bringt sie aus dem Tritt.* Sie fiel auch im laufenden Betrieb aus, ohne jeden Reset: eingeschaltet, eingebunden, nach spätestens 254 s tot (`K+ !254s` im Verlauf).
 
-Was bleibt: Diese Karte verträgt den Datenverkehr des Displays auf den gemeinsamen Leitungen nicht, obwohl ihr Chip-Select dabei inaktiv ist. Ob das an dieser einen (alten) Karte liegt oder am Aufbau, ist offen — **als Nächstes eine andere Karte probieren (SDHC, 8–32 GB)**.
+Was bleibt: Diese Karte verträgt den Datenverkehr des Displays auf den gemeinsamen Leitungen nicht, obwohl ihr Chip-Select dabei inaktiv ist. Es lag an dieser einen (alten) Karte: Die SDHC-Karte danach läuft am selben Aufbau ohne Ausfall.
 
 Die Firmware führt Buch (`[DIAG] SD: ... Verlauf:` in `lcd_debug.py status`, im Flash gespeichert): `K+`/`K-xx` Start nach Einschalten, `R+`/`R-xx` Start nach Reset (xx = Antwort der Karte), `!<n>s` Karte fiel nach n Sekunden Betrieb aus (geprüft wird alle 20 s mit einem Sektor-Lesen).
 
@@ -193,7 +211,7 @@ Weitere Regeln, die dabei entstanden sind: Die Karte wird **vor** dem LCD gestar
 
 ## Offen
 
-1. SD-Karte: mit einer anderen Karte gegenprüfen (siehe oben).
+1. USB-Stick-Modus an einem echten Switch oder einer Firewall ausprobieren; Dateien über die Weboberfläche auf die Karte laden (gibt es noch nicht — gefüllt wird sie im Stick-Modus am Rechner).
 2. Der Fix für das Blockieren ohne USB-Leser ist aus dem Code der USB-Klasse hergeleitet und im Betrieb ohne geöffneten Port geprüft, aber nicht mit einem echten Aus- und Einstecken.
 3. WLAN-Beitritt: Suchen, Tastatur, Nachfrage, Speichern und Wieder-Ausschalten sind geprüft; ein erfolgreicher Verbindungsaufbau mit einem echten Schlüssel nicht.
 4. Skripte: Ablauf geprüft, aber ohne angeschlossenes Gerät (jede Zeile wartet dann 2 s auf eine Antwort).

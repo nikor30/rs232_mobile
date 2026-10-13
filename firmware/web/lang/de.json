@@ -127,7 +127,8 @@
   "Device ID": "Geräte-ID",
   "Remote console": "Fernkonsole",
   "End": "Beenden",
-  "The control center may play configurations and restart the device": "Die Leitstelle darf Konfigurationen abspielen und das Gerät neu starten",
+  "The control center may change settings, read and write configurations, play them and restart the device": "Die Leitstelle darf Einstellungen ändern, Konfigurationen lesen, schreiben und abspielen und das Gerät neu starten",
+  "Show the administrator settings (Ports, Network, Setup)": "Einstellungen für Administratoren zeigen (Ports, Netz, Setup)",
   "Unticked, the server can only read: state, settings (without passwords) and the list of configurations. The box can be ticked only here, never from the server.": "Ohne Haken kann der Server nur lesen: Zustand, Einstellungen (ohne Passwörter) und die Liste der Konfigurationen. Der Haken lässt sich nur hier setzen, nie vom Server aus.",
   "The": "Die",
   "– the administrator operates a serial port through the server – does not depend on this box: every session has to be allowed on the device's touch display, runs for the requested time at most and can be ended there and here at any moment.": "– der Administrator bedient einen seriellen Port über den Server – hängt nicht an diesem Haken: Jede Sitzung muss am Touch-Display des Geräts erlaubt werden, läuft höchstens die angefragte Zeit und lässt sich dort und hier jederzeit beenden.",
@@ -185,7 +186,11 @@
   ").": ") auswählen.",
   "Upload": "Hochladen",
   "Factory reset": "Werksreset",
-  "Erases all settings and creates a new hotspot password (it is on the display afterwards). Stored configurations are kept.": "Löscht alle Einstellungen, erzeugt ein neues Hotspot-Passwort (steht danach auf dem Display). Gespeicherte Konfigurationen bleiben erhalten."
+  "Erases all settings and creates a new hotspot password (it is on the display afterwards). Stored configurations are kept.": "Löscht alle Einstellungen, erzeugt ein neues Hotspot-Passwort (steht danach auf dem Display). Gespeicherte Konfigurationen bleiben erhalten.",
+  "SD card": "SD-Karte",
+  "Use the SD card as a USB stick": "SD-Karte als USB-Stick benutzen",
+  "The SD card belongs to the USB port now: the switch, firewall or computer it is plugged into sees a USB stick. Eject it there, then restart this device to get the card back.": "Die SD-Karte gehört jetzt dem USB-Port: Der Switch, die Firewall oder der Rechner, an dem er steckt, sieht einen USB-Stick. Dort auswerfen, dann dieses Gerät neu starten, um die Karte zurückzubekommen.",
+  "As a USB stick the card can be read by a switch or firewall (firmware images, configurations) and filled from a computer. The USB port moves about half a megabyte per second.": "Als USB-Stick lässt sich die Karte von einem Switch oder einer Firewall lesen (Firmware-Images, Konfigurationen) und von einem Rechner aus füllen. Der USB-Port schafft etwa ein halbes Megabyte je Sekunde."
  },
  "script": {
   "Not connected": "Nicht verbunden",
@@ -368,6 +373,14 @@
   "<div class=\"pcard\">\n        <div class=\"pcard-head\"><b>{0}</b><span class=\"chip static\">{1}{2}</span></div>\n        <p class=\"hint\">{3}</p>\n        {4}\n        {5}\n        <div class=\"row\">\n          <input type=\"file\" data-file=\"{6}\" accept=\".p12,.pfx,.pem,.crt,.cer,.der,.key,.p7b,application/x-pkcs12,application/x-pem-file\">\n          <input type=\"password\" data-pass=\"{7}\" placeholder=\"The file's password\" maxlength=\"64\" style=\"max-width:190px\">\n          <button class=\"btn\" type=\"button\" data-up=\"{8}\">Upload</button>\n          {9}\n        </div>\n      </div>": "<div class=\"pcard\">\n        <div class=\"pcard-head\"><b>{0}</b><span class=\"chip static\">{1}{2}</span></div>\n        <p class=\"hint\">{3}</p>\n        {4}\n        {5}\n        <div class=\"row\">\n          <input type=\"file\" data-file=\"{6}\" accept=\".p12,.pfx,.pem,.crt,.cer,.der,.key,.p7b,application/x-pkcs12,application/x-pem-file\">\n          <input type=\"password\" data-pass=\"{7}\" placeholder=\"Passwort der Datei\" maxlength=\"64\" style=\"max-width:190px\">\n          <button class=\"btn\" type=\"button\" data-up=\"{8}\">Hochladen</button>\n          {9}\n        </div>\n      </div>",
   "Play on {0}": "Auf {0} abspielen",
   "{0} recorded ({1})": "{0} aufgezeichnet ({1})",
-  "0 B recorded": "0 B aufgezeichnet"
+  "0 B recorded": "0 B aufgezeichnet",
+  "Hand the SD card to the USB port as a USB stick? Recordings stop, and the way back is a restart.": "Die SD-Karte als USB-Stick an den USB-Port geben? Mitschnitte enden, und zurück geht es nur mit einem Neustart.",
+  "USB stick mode is on": "USB-Stick-Modus ist an",
+  "USB stick: {0} · read {1}, written {2}": "USB-Stick: {0} · gelesen {1}, geschrieben {2}",
+  "ejected": "ausgeworfen",
+  "connected": "verbunden",
+  "waiting for the USB port": "wartet auf den USB-Port",
+  "inserted": "eingelegt",
+  "none": "keine"
  }
 }

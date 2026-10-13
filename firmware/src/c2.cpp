@@ -1,12 +1,16 @@
 #include "c2.h"
 #include "c2_proto.h"
 #include "c2_console.h"
+#include "c2_update.h"
+#include "update_key.h"
+#include "xfer.h"
 #include "serial_bridge.h"
 #include "config.h"
 #include "settings.h"
 #include "power.h"
 #include "display.h"
 #include "net.h"
+#include "ble.h"
 #include "configs.h"
 #include "player.h"
 
@@ -15,6 +19,11 @@
 #include "lang.h"
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+#include <Update.h>
+#include <esp_ota_ops.h>
+#include <soc/soc_memory_layout.h>
+#include <mbedtls/base64.h>
+#include <mbedtls/sha256.h>
 #include <esp_heap_caps.h>
 #include <esp_random.h>
 #include <functional>
@@ -54,6 +63,7 @@ static std::vector<MainJob> jobs;        // under mux: task -> main loop
 static std::vector<String> jobResults;   // under mux: main loop -> task, one JSON object each
 static const size_t MAX_JOBS = 8;
 static volatile bool rebootWanted = false, rebootNow = false;
+static volatile uint32_t updateJob = 0;  // the "update" command the task is to carry out (main loop -> task)
 static char devName[33];
 
 struct Lock {
@@ -124,6 +134,16 @@ static bool big(const std::function<void()> &fn) {
   return h != nullptr;
 }
 
+// Memory for buffers that live across a call of big(): from the external RAM
+// if there is any. Small blocks from the internal heap, taken before the TLS
+// connection and still held after it, cut the free space into pieces - 74 kB
+// free, yet no 28 kB in one piece for the key exchange. That left the device
+// without a session for as long as it ran (seen after about every other start).
+static uint8_t *ext(size_t n) {
+  void *p = heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  return (uint8_t *)(p ? p : malloc(n));
+}
+
 // ---- task state (touched by the task only)
 static uint8_t priv[C2Proto::PRIV_SIZE];
 static bool haveKey = false;
@@ -180,7 +200,7 @@ static void loadStored() {
       state = st == ACTIVE ? ACTIVE : PENDING;
       publish("", sas.c_str());
       C2Proto::keyTag(serverPub, skTag);
-      uint8_t *next = (uint8_t *)malloc(C2Proto::PUB_SIZE);
+      uint8_t *next = ext(C2Proto::PUB_SIZE);
       if (next && p.getBytes("spub2", next, C2Proto::PUB_SIZE) == C2Proto::PUB_SIZE &&
           memcmp(next, serverPub, C2Proto::PUB_SIZE) != 0) {
         haveNext = true;
@@ -388,7 +408,7 @@ static Ex fromHttp(int code) {
 
 static Ex handshake(C2Proto::Kind kind, const C2Proto::Token *tok) {
   haveSession = confirmFailed = false;
-  uint8_t *req = (uint8_t *)malloc(C2Proto::REQ_ENROLL), *resp = (uint8_t *)malloc(C2Proto::RESP_SIZE);
+  uint8_t *req = ext(C2Proto::REQ_ENROLL), *resp = ext(C2Proto::RESP_SIZE);
   C2Proto::Handshake hs;
   size_t n = 0, got = 0;
   Ex ex = EX_BAD;
@@ -396,9 +416,14 @@ static Ex handshake(C2Proto::Kind kind, const C2Proto::Token *tok) {
   C2Proto::Result r = C2Proto::ERR_CRYPTO;
   if (req && resp)
     big([&] { r = hs.begin(kind, priv, serverPub, tok ? tok->id : nullptr, tok ? tok->secret : nullptr, req, n); });
+  if (r != C2Proto::OK)
+    Serial.printf("[C2]   Handshake nicht begonnen: Heap %u B, groesster Block %u B\n", (unsigned)ESP.getFreeHeap(),
+                  (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
   if (r == C2Proto::OK) {
     crypto = millis() - t0;
-    ex = fromHttp(request(serverUrl, "/v1/handshake", req, n, resp, C2Proto::RESP_SIZE, got));
+    int code = request(serverUrl, "/v1/handshake", req, n, resp, C2Proto::RESP_SIZE, got);
+    ex = fromHttp(code);
+    if (ex == EX_BAD) Serial.printf("[C2]   Handshake: HTTP %d\n", code);
     if (ex == EX_OK) {
       uint32_t t1 = millis();
       r = C2Proto::ERR_CRYPTO;
@@ -407,6 +432,8 @@ static Ex handshake(C2Proto::Kind kind, const C2Proto::Token *tok) {
       if (r == C2Proto::OK) haveSession = true;
       else {
         ex = EX_BAD;
+        Serial.printf("[C2]   Handshake nicht abgeschlossen (%d, Antwort %u B): Heap %u B, groesster Block %u B\n", (int)r, (unsigned)got,
+                      (unsigned)ESP.getFreeHeap(), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
         confirmFailed = r == C2Proto::ERR_CONFIRM;
         publish(r == C2Proto::ERR_CONFIRM ? TR("the server did not prove its key", "Server hat seinen Schluessel nicht bewiesen", "o servidor nao provou sua chave")
                 : r == C2Proto::ERR_CRYPTO ? TR("not enough memory for the handshake", "zu wenig Speicher fuer den Handshake", "memoria insuficiente para o handshake") : TR("handshake: unusable answer", "Handshake: Antwort unbrauchbar", "handshake: resposta invalida"));
@@ -429,7 +456,7 @@ static Ex handshake(C2Proto::Kind kind, const C2Proto::Token *tok) {
 static Ex sessionHandshake() {
   Ex ex = handshake(C2Proto::KIND_SESSION, nullptr);
   if (ex != EX_BAD || !confirmFailed || !haveNext) return ex;
-  uint8_t *next = (uint8_t *)malloc(C2Proto::PUB_SIZE);
+  uint8_t *next = ext(C2Proto::PUB_SIZE);
   bool ok = false;
   {
     Preferences p;
@@ -466,7 +493,7 @@ static Ex sessionHandshake() {
 // What a poll's answer says about a new server key: kept for the handshake
 // that will need it. True if this is news.
 static bool noteNewKey(const char *b64) {
-  uint8_t *next = (uint8_t *)malloc(C2Proto::PUB_SIZE);
+  uint8_t *next = ext(C2Proto::PUB_SIZE);
   char tag[C2Proto::KEY_TAG_SIZE];
   bool news = false;
   if (next && serverPub && C2Proto::announcedKey(b64, serverPub, next)) {
@@ -518,6 +545,11 @@ static Ex exchange(JsonDocument &msg, JsonDocument &reply, bool once = false) {
 
 static void fillStatus(JsonObject o) {
   o["fw"] = FW_VERSION;
+  o["lang"] = LANG_CODE;
+  // who is on the serial ports here, at the device: the control center shows it
+  o["web"] = Net::webClients();
+  o["tcp"] = Net::tcpConnected();
+  o["bt"] = Ble::state() == Ble::CONNECTED;
   o["uptime_s"] = millis() / 1000;
   o["heap"] = ESP.getFreeHeap();
   o["rssi"] = WiFi.RSSI();
@@ -808,6 +840,132 @@ static void conStep() {
   else if (end) conFinish(end);
 }
 
+// ---------------------------------------------------------------- firmware update, task side
+
+static void answer(uint32_t id, bool ok, const String &outJson);
+static String quoted(const char *text);
+
+// One question to the server about the package, with patience: a weak WLAN
+// loses requests, and the session may run out in the middle of a download.
+static bool updAsk(uint32_t id, int32_t off, JsonDocument &reply) {
+  uint32_t t0 = millis();
+  for (;;) {
+    JsonDocument msg;
+    msg["t"] = "fw";
+    msg["id"] = id;
+    if (off < 0) msg["head"] = true;
+    else msg["off"] = off;
+    keepAlive = true;
+    Ex ex = haveSession ? exchange(msg, reply, true) : EX_REHANDSHAKE;
+    if (ex == EX_OK) return true;
+    if (ex == EX_REHANDSHAKE) ex = sessionHandshake();
+    if (ex == EX_REFUSED || ex == EX_BAD || millis() - t0 > 90000) return false;
+    if (ex != EX_OK) vTaskDelay(pdMS_TO_TICKS(1500));
+  }
+}
+
+// Fetches the package behind an "update" command, checks it and installs it.
+// Nothing is made bootable before the signature over the manifest has held
+// and the image has the hash the manifest names.
+static void doUpdate(uint32_t id) {
+  auto refuse = [&](const char *why) {
+    Serial.printf("[C2]   Firmware-Update abgelehnt: %s\n", why);
+    Display::message("Firmware", TR("update refused", "Update abgelehnt", "atualizacao recusada"), 4000);
+    answer(id, false, quoted(why));
+    nextPollAt = millis();
+  };
+#ifndef UPDATE_KEY_PRESENT
+  return refuse("this firmware was built without an update key");
+#else
+  JsonDocument reply;
+  if (!updAsk(id, -1, reply)) return refuse("the package could not be fetched");
+  // Everything kept across the signature check lives in the external RAM: the
+  // check needs 28 kB of internal heap in one piece (big()), and blocks left
+  // behind from the time the TLS connection stood would cut it up.
+  const char *m64 = reply["m"] | "", *sig64 = reply["sig"] | "";
+  size_t manifestLen = strlen(m64), sigLen = 0;
+  uint8_t *work = ext(C2Update::MAX_MANIFEST + C2Update::SIG_SIZE + 4096);
+  char *manifest = (char *)work;
+  uint8_t *sig = work + C2Update::MAX_MANIFEST, *buf = sig + C2Update::SIG_SIZE;
+  const char *err = work ? nullptr : "not enough memory";
+  if (!err && (!manifestLen || manifestLen >= C2Update::MAX_MANIFEST ||
+               mbedtls_base64_decode(sig, C2Update::SIG_SIZE, &sigLen, (const uint8_t *)sig64, strlen(sig64))))
+    err = "the package is not readable";
+  if (!err) memcpy(manifest, m64, manifestLen);
+  reply.clear();
+  C2Update::Manifest m;
+  if (!err) {
+    Preferences p;
+    p.begin(NVS, true);
+    uint32_t installed = p.getUInt("fwseq", 0);
+    p.end();
+    const esp_partition_t *next = esp_ota_get_next_update_partition(nullptr);
+    uint32_t room = next ? next->size : 0;
+    const char *verdict = "not enough memory for the signature check";
+    connClose();
+    Serial.printf("[C2]   Firmware-Update: Signatur wird geprueft (Heap %u B, groesster Block %u B, Puffer %s)\n", (unsigned)ESP.getFreeHeap(),
+                  (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT), esp_ptr_external_ram(work) ? "extern" : "intern");
+    big([&] { verdict = C2Update::check(manifest, manifestLen, sig, sigLen, UPDATE_KEY, FW_BOARD_ID, installed, room, m); });
+    err = verdict;
+  }
+  if (err) {
+    free(work);
+    return refuse(err);
+  }
+  Serial.printf("[C2]   Firmware-Update: Signatur gueltig, %s (%s), %lu Bytes\n", m.fw, m.lang, (unsigned long)m.size);
+  if (!Update.begin(m.size)) {
+    free(work);
+    return refuse("the device cannot take an update right now");
+  }
+  mbedtls_sha256_context sha;
+  mbedtls_sha256_init(&sha);
+  mbedtls_sha256_starts_ret(&sha, 0);
+  uint32_t off = 0;
+  int shown = -1;
+  err = nullptr;
+  while (off < m.size && !err) {
+    int pct = (int)((uint64_t)off * 100 / m.size);
+    if (pct / 5 != shown) {
+      shown = pct / 5;
+      char line[24];
+      snprintf(line, sizeof(line), "%s  %d %%", m.fw, pct);
+      Display::message(TR("Firmware update", "Firmware-Update", "Atualizacao"), line, 120000);
+    }
+    if (!updAsk(id, (int32_t)off, reply)) { err = "the download broke off"; break; }
+    const char *d = reply["d"] | "";
+    size_t n = 0;
+    if (mbedtls_base64_decode(buf, 4096, &n, (const uint8_t *)d, strlen(d)) || !n || off + n > m.size) err = "the download is damaged";
+    else if (Update.write(buf, n) != n) err = "writing to the flash failed";
+    else {
+      mbedtls_sha256_update_ret(&sha, buf, n);
+      off += n;
+    }
+    reply.clear();
+  }
+  uint8_t hash[32];
+  mbedtls_sha256_finish_ret(&sha, hash);
+  mbedtls_sha256_free(&sha);
+  free(work);
+  if (!err && memcmp(hash, m.sha256, 32)) err = "the image is not the one that was signed";
+  if (err || !Update.end(true)) {
+    Update.abort();
+    return refuse(err ? err : "the image was not accepted by the flash");
+  }
+  Preferences p;
+  if (p.begin(NVS, false)) {
+    p.putUInt("fwseq", m.seq);
+    p.end();
+  }
+  Serial.printf("[C2]   Firmware-Update: %s (%s) installiert, Neustart\n", m.fw, m.lang);
+  Display::message(TR("Firmware update", "Firmware-Update", "Atualizacao"), TR("installed, restarting", "installiert, Neustart", "instalada, reiniciando"), 10000);
+  char out[80];
+  snprintf(out, sizeof(out), "updated to %s (%s), restarting", m.fw, m.lang);
+  answer(id, true, quoted(out));
+  rebootWanted = true;                   // carried out once the answer has reached the server
+  nextPollAt = millis();
+#endif
+}
+
 static void task(void *) {
   const char *failed = TR("not enough memory", "zu wenig Speicher", "memoria insuficiente");
   big([&] { failed = C2Proto::selfTest(); });
@@ -822,6 +980,8 @@ static void task(void *) {
   loadStored();
   publishId();
   publish();
+  // tools/fw_sign.py looks for this marker in an image, to not sign one language as another
+  Serial.printf("[C2]   %s\n", "UI_LANG=" LANG_CODE ";");
   Serial.printf("[C2]   Selbsttest ok, %s%s%s\n", stateName(state), serverUrl.empty() ? "" : " bei ", serverUrl.c_str());
   nextPollAt = millis() + 8000;          // give the WLAN client time to join
   for (;;) {
@@ -844,6 +1004,11 @@ static void task(void *) {
     if (answers && state == ACTIVE) nextPollAt = millis();   // answers go back at once
     bool online = serverPub && WiFi.status() == WL_CONNECTED;
     if (online && (int32_t)(millis() - nextPollAt) >= 0) doPoll();
+    if (updateJob && online && state == ACTIVE) {
+      uint32_t id = updateJob;
+      doUpdate(id);
+      updateJob = 0;
+    }
     // While a console is open the task asks without pause; the server holds
     // each question for a moment when there is nothing to say.
     bool conLive = false, conClosed = false;
@@ -933,6 +1098,55 @@ static void execute(const MainJob &job) {
     else {
       answer(job.id, true, quoted("restarting"));
       rebootWanted = true;               // carried out once the answer has reached the server
+    }
+  } else if (job.type == "update") {
+    // A signed firmware package. Whether it is the owner's is decided by the
+    // signature (doUpdate), whether now is a good moment, here.
+    if (!settings.c2Control) answer(job.id, false, quoted(denied));
+    else if (updateJob) answer(job.id, false, quoted("an update is under way already"));
+    else if (conBusy || Player::state() == Player::RUNNING || Xfer::active()) answer(job.id, false, quoted("the device is busy (console, playback or file transfer)"));
+    else if (Power::low()) answer(job.id, false, quoted("the battery is too low for an update"));
+    else {
+      Serial.println("[C2]   Firmware-Update angefragt");
+      updateJob = job.id;
+    }
+  } else if (job.type == "set") {
+    // The settings of the web interface, from afar. Whether the server may
+    // change things at all (c2Control) is not among them: that stays here.
+    if (!settings.c2Control) answer(job.id, false, quoted(denied));
+    else {
+      const char *err = Net::applySettings(job.args, true);
+      if (err) answer(job.id, false, quoted(err));
+      else {
+        Serial.println("[C2]   Einstellungen von der Leitstelle gespeichert, Neustart");
+        answer(job.id, true, quoted("saved, restarting"));
+        rebootWanted = true;
+      }
+    }
+  } else if (job.type == "config_get" || job.type == "config_put" || job.type == "config_delete") {
+    // Stored configurations may hold passwords: reading one out needs the same
+    // permission as changing something.
+    const char *name = args["name"] | "";
+    String text;
+    if (!settings.c2Control) answer(job.id, false, quoted(denied));
+    else if (job.type == "config_get") {
+      if (!Configs::read(name, text)) answer(job.id, false, quoted("configuration not found"));
+      else if (text.length() > 12000) answer(job.id, false, quoted("configuration too large for the control center"));
+      else {
+        JsonDocument d;
+        d["name"] = name;
+        d["text"] = text;
+        String out;
+        serializeJson(d, out);
+        answer(job.id, true, out);
+      }
+    } else if (job.type == "config_put") {
+      const char *err = Configs::save(name, args["text"] | "", name);
+      answer(job.id, !err, quoted(err ? err : "stored"));
+      Serial.printf("[C2]   Konfiguration \"%s\" von der Leitstelle: %s\n", name, err ? err : "gespeichert");
+    } else {
+      bool gone = Configs::remove(name);
+      answer(job.id, gone, quoted(gone ? "deleted" : "configuration not found"));
     }
   } else if (job.type == "console") {
     // Never without a tap on the display, whatever the settings say.

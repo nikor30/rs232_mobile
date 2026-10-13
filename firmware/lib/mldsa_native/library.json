@@ -1,0 +1,7 @@
+{
+  "name": "mldsa_native",
+  "version": "2.0.0",
+  "description": "ML-DSA (FIPS 204), C backend, verification only. Vendored from pq-code-package/mldsa-native v2.0.0, see README.md.",
+  "license": "Apache-2.0 OR ISC OR MIT",
+  "build": { "includeDir": "src/mldsa", "srcDir": "src/mldsa/src" }
+}

@@ -463,7 +463,18 @@
 
   function updateStatus(s) {
     state.status = s;
+    // the administrator's tabs: shown only where the device says so
+    document.body.classList.toggle('admin', !!s.adminUi);
+    if (document.activeElement !== $('#adminUi')) $('#adminUi').checked = !!s.adminUi;
+    const open = $('.tabs button.active');
+    if (!s.adminUi && open && open.hasAttribute('data-admin')) showTab('serial');
     $('#host').textContent = s.host;
+    const k = s.stick;
+    $('#dSd').textContent = k ? tr('USB stick: {0} · read {1}, written {2}', [k.ejected ? tr('ejected') : k.host ? tr('connected') : tr('waiting for the USB port'), fmtBytes(k.readKb * 1024), fmtBytes(k.writtenKb * 1024)])
+      : s.sd ? tr('inserted') : tr('none');
+    $('#devStick').hidden = !s.sd || !!k;
+    $('#stickHint').hidden = !s.sd || !!k;
+    $('#stickNote').hidden = !k;
     document.title = s.host + ' · RS232';
     const list = s.ports || [];
     for (const info of list) {
@@ -566,6 +577,15 @@
     if (tab === 'serial') fillSerialForm();
   }
   $$('.tabs button').forEach((b) => b.addEventListener('click', () => showTab(b.dataset.tab)));
+  $('#adminUi').addEventListener('change', async (e) => {
+    const on = e.target.checked;
+    try {
+      const r = await fetch('/api/adminui', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on }) });
+      if (!r.ok) throw new Error();
+      document.body.classList.toggle('admin', on);
+      if (state.status) state.status.adminUi = on;
+    } catch (err) { e.target.checked = !on; toast(tr('Device not reachable')); }
+  });
   $('#btnMenu').addEventListener('click', () => openPanel());
   $('#btnClose').addEventListener('click', closePanel);
   $('#serChip').addEventListener('click', () => openPanel('serial'));
@@ -1195,6 +1215,14 @@
   });
 
   // ------------------------------------------------------------------ device tab
+  $('#devStick').addEventListener('click', async () => {
+    if (!confirm(tr('Hand the SD card to the USB port as a USB stick? Recordings stop, and the way back is a restart.'))) return;
+    try {
+      const r = await fetch('/api/stick', { method: 'POST' });
+      const j = await r.json();
+      toast(j.ok ? tr('USB stick mode is on') : j.error || tr('Error'));
+    } catch (e) { toast(tr('Error')); }
+  });
   $('#devReboot').addEventListener('click', async () => {
     if (!confirm(tr('Restart the device?'))) return;
     try { await fetch('/api/reboot', { method: 'POST' }); toast(tr('Restarting …')); } catch (e) { toast(tr('Error')); }

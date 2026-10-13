@@ -138,13 +138,19 @@ static const uint32_t C_BG = 0x000000, C_PANEL = 0x2C2C2E, C_LINE = 0x48484A, C_
                       C_RED = 0xFF453A, C_BLUE = 0x0A84FF, C_BTN = 0x3A3A3C, C_BTN_DOWN = 0x0A84FF,
                       C_TINT = 0x0A84FF, C_TERM = 0x9AE6B4;
 
-enum Screen : uint8_t { S_STATUS = 0, S_TERM, S_SCRIPTS, S_WIFI, S_URL, S_BT, S_SYSTEM, S_INFO, S_SETUP, S_COUNT };
-static const char *const TITLES[S_COUNT] = {TR("Status", "Status", "Estado"), "Terminal", TR("Scripts", "Skripte", "Scripts"), TR("Wi-Fi", "WLAN", "Wi-Fi"), TR("Web UI", "Web-UI", "Web UI"), "Bluetooth",
-                                            TR("System", "System", "Sistema"), TR("Info", "Info", "Info"), TR("Setup", "Setup", "Ajustes")};
+// The order is the order of use: is the port ready, how does one get onto the
+// device, then the tools. "System" is for whoever looks after the device and
+// only shows with the administrator switch of the web interface (shown()).
+enum Screen : uint8_t { S_STATUS = 0, S_WIFI, S_TERM, S_SCRIPTS, S_BT, S_INFO, S_SYSTEM, S_SETUP, S_COUNT };
+static const char *const TITLES[S_COUNT] = {TR("Status", "Status", "Estado"), TR("Network", "Netz", "Rede"), "Terminal", TR("Scripts", "Skripte", "Scripts"), "Bluetooth",
+                                            TR("Info", "Info", "Info"), TR("System", "System", "Sistema"), TR("Setup", "Setup", "Ajustes")};
 static const int MAX_CFG = 16, MAX_NETS = 12;
 
 // 7.8 pixels are a millimetre on this panel: buttons are 6 mm high, list rows 4 mm.
-static const int HEAD_H = 30, NAV_H = 12, BTN_H = 46, BTN_GAP = 4;
+// 7.8 pixels are a millimetre on this panel. The device is used on a shop
+// floor, with big thumbs and sometimes gloves: buttons are 7 mm high, the arrows
+// in the title bar have 10 mm each.
+static const int HEAD_H = 40, NAV_H = 12, BTN_H = 56, BTN_GAP = 4, HEAD_HIT = 78;
 static const int TERM_MAX_COLS = 53, TERM_MAX_ROWS = 30, TERM_CW = 6, TERM_CH = 8;
 
 // ============================================================ shared between the tasks
@@ -159,6 +165,10 @@ struct Snapshot {
   uint8_t ports;
   char    apSsid[33], apPass[65], apIp[16], staIp[16], hostname[33];
   char    c2[32];              // command-and-control server: state, or the code to confirm
+  char    c2Code[8];           // the code alone while the server waits for it, else empty
+  bool    adminUi;             // the administrator's pages are shown (settings.adminUi)
+  bool    stick, stickHost, stickEjected;   // the card is lent to the USB port as a memory stick
+  uint32_t stickReadKb, stickWrittenKb;
   uint8_t conState;            // remote console: 0 none, 1 the server asks, 2 open
   uint16_t conMinutes;
   char    conPort[20], conLeft[12];
@@ -216,6 +226,7 @@ static volatile uint32_t msgVersion = 0;
 static volatile bool reqWake = false, reqOff = false, reqNext = false, reqBrightness = false, reqShot = false;
 static volatile int16_t reqTapX = -1, reqTapY = -1, reqShotFrom = 0, reqShotTo = 999;
 static volatile int8_t reqScreen = -1, reqRot = -1;
+static volatile int16_t reqSplash = 0;   // seconds for which the start-up picture is to be shown again
 static volatile int16_t reqDrag[4];                // simulated finger: from x,y to x,y
 static volatile bool reqDragGo = false, reqDragHold = false, reqLift = false;   // hold: the finger stays down at the end
 static volatile bool reqHalt = false, uiHalted = false;   // power-off: the UI task puts panel and sensor to sleep, then stops
@@ -263,7 +274,7 @@ enum Cmd : uint8_t {
   // carried out by the main loop
   B_BAUD, B_AUTO, B_BREAK, B_ENTER, B_CTRLC, B_REC, B_BT, B_SD, B_PLAY, B_STOP, B_SCAN, B_JOIN, B_FORGET,
   B_BRIGHT_DOWN, B_BRIGHT_UP, B_TIMEOUT, B_POWEROFF, B_CAL_FULL, B_CAL_EMPTY, B_CAL_RESET,
-  B_CON_ALLOW, B_CON_DENY, B_CON_END
+  B_CON_ALLOW, B_CON_DENY, B_CON_END, B_STICK, B_STICK_END
 };
 static const uint8_t FIRST_LOOP_CMD = B_BAUD;
 
@@ -397,6 +408,7 @@ static void fillSystem(Snapshot &s);
 static void fillScripts(Snapshot &s);
 static void fillNets(Snapshot &s);
 
+static uint32_t stickDemoUntil = 0;      // show the stick dialog without lending the card (debug console)
 static void buildSnapshot() {
   static Snapshot s;                               // static: too big for comfort on the stack
   memset(&s, 0, sizeof(s));
@@ -419,6 +431,10 @@ static void buildSnapshot() {
   copyStr(s.apIp, sizeof(s.apIp), Net::apIp());
   copyStr(s.hostname, sizeof(s.hostname), settings.hostname);
   copyStr(s.c2, sizeof(s.c2), C2::line());
+  {
+    C2::Info ci = C2::info();
+    copyStr(s.c2Code, sizeof(s.c2Code), ci.state == C2::PENDING ? ci.code : "");
+  }
   C2::Console rc = C2::console();
   s.conState = rc.state;
   if (rc.state) {
@@ -447,7 +463,15 @@ static void buildSnapshot() {
   s.batFullMv = Power::calFullMv() ? Power::calFullMv() : BatCurve::defaultFullMv(settings.batType);
   s.saver = Power::saver();
   s.cpuMhz = (uint8_t)getCpuFrequencyMhz();
+  s.adminUi = settings.adminUi;
   s.sdMounted = Sd::mounted();
+  Sd::Stick st = Sd::stick();
+  if (stickDemoUntil && (int32_t)(millis() - stickDemoUntil) < 0) st = {true, true, false, 5321, 48};   // debug: "stickui N"
+  s.stick = st.on;
+  s.stickHost = st.host;
+  s.stickEjected = st.ejected;
+  s.stickReadKb = st.readKb;
+  s.stickWrittenKb = st.writtenKb;
   strlcpy(s.sdType, Sd::typeName(), sizeof(s.sdType));
   s.sdUsedMb = Sd::usedMb();
   s.sdTotalMb = Sd::totalMb();
@@ -645,6 +669,15 @@ static void runCommand(uint8_t id, uint8_t arg, uint8_t port) {
       if (Sd::begin()) message(TR("SD card", "SD-Karte", "Cartao SD"), TR("mounted", "eingebunden", "montado"), 2000);
       else message(TR("SD card", "SD-Karte", "Cartao SD"), TR("not found", "nicht gefunden", "nao encontrado"), 2000);
       break;
+    case B_STICK: {
+      const char *err = Sd::stickStart();
+      if (err) message(TR("USB stick", "USB-Stick", "Pendrive USB"), err, 2500);
+      break;
+    }
+    case B_STICK_END:                    // the USB port only comes back with a restart
+      message(TR("Restarting ...", "Neustart ...", "Reiniciando ..."), "", 4000);
+      rebootAt = millis() + 600;
+      break;
   }
 }
 
@@ -659,6 +692,7 @@ static void runCommand(uint8_t id, uint8_t arg, uint8_t port) {
 //   drag X Y X Y a finger moved from the first to the second position
 //   saver N      power saving: 1 on, 0 off, -1 automatic (on battery)
 //   poweroff N   switch off, and on again after N seconds (without N: BOOT button only)
+//   stick        the SD card as a USB memory stick (this console ends; back: restart),  stickui N  only its dialog for N s
 static void printStatus() {
   uint32_t now = millis();
   Serial.printf("[DIAG] up %lu s, Heap %u kB (min %u kB), Reset-Grund %d\n", (unsigned long)(now / 1000),
@@ -703,6 +737,7 @@ static void console() {
     }
     else if (sscanf(line, "tap %d %d", &a, &b) == 2) { reqTapX = a; reqTapY = b; }
     else if (sscanf(line, "screen %d", &a) == 1) reqScreen = a;
+    else if (sscanf(line, "splash %d", &a) == 1) reqSplash = constrain(a, 1, 60);
     else if (!strcmp(line, "rot auto")) reqRot = 4;
     else if (sscanf(line, "rot %d", &a) == 1) reqRot = a & 3;
     else if (!strcmp(line, "cfgtest")) {             // a small configuration to try the Skripte page with
@@ -712,11 +747,12 @@ static void console() {
     else if (!strcmp(line, "bat")) Serial.printf("[DIAG] Akku: %s\n", Power::diag().c_str());
     else if (!strcmp(line, "c2")) {
       C2::Info c = C2::info();
-      Serial.printf("[DIAG] Leitstelle: %s%s%s | Server %s | ID %s | %lu Abfragen, letzte vor %ld s | Handshake %lu ms (davon Rechnen %lu ms) | Stack frei %lu B (ML-KEM) / %lu B (Netz), Heap %u kB (min %u kB)%s%s\n",
+      Serial.printf("[DIAG] Leitstelle: %s%s%s | Server %s | ID %s | %lu Abfragen, letzte vor %ld s | Handshake %lu ms (davon Rechnen %lu ms) | Stack frei %lu B (ML-KEM) / %lu B (Netz), Heap %u kB (min %u kB, groesster Block %u kB)%s%s\n",
                     C2::stateName(c.state), c.code[0] ? ", Code " : "", c.code, c.url[0] ? c.url : "-", c.id[0] ? c.id : "-",
                     (unsigned long)c.polls, c.lastOkMs ? (long)((millis() - c.lastOkMs) / 1000) : -1L,
                     (unsigned long)c.handshakeMs, (unsigned long)c.cryptoMs, (unsigned long)c.stackFree, (unsigned long)c.taskStackFree,
                     (unsigned)(ESP.getFreeHeap() / 1024), (unsigned)(ESP.getMinFreeHeap() / 1024),
+                    (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) / 1024),
                     c.error[0] ? " | Fehler: " : "", c.error);
     }
     else if (!strncmp(line, "batcal ", 7)) {
@@ -735,6 +771,11 @@ static void console() {
     else if (!strcmp(line, "lift")) reqLift = true;
     else if (sscanf(line, "saver %d", &a) == 1) Power::forceSaver(a < 0 ? -1 : a ? 1 : 0);
     else if (!strncmp(line, "poweroff", 8)) powerOff("Debug-Konsole", sscanf(line, "poweroff %d", &a) == 1 ? a : 0);
+    else if (sscanf(line, "stickui %d", &a) == 1) stickDemoUntil = (millis() + constrain(a, 1, 60) * 1000UL) | 1;
+    else if (!strcmp(line, "stick")) {               // the card as a USB memory stick; this console ends with it
+      const char *err = Sd::stickStart();
+      if (err) Serial.printf("[DIAG] USB-Stick: %s\n", err);
+    }
     else if (!strcmp(line, "wake")) reqWake = true;
     else if (!strcmp(line, "off")) reqOff = true;
   }
@@ -770,7 +811,7 @@ static uint8_t kbLayer = 0;              // 0 lower, 1 upper, 2 symbols
 static bool modal() { return screen == S_SETUP && setupMode != SETUP_MAIN; }
 static bool conMenu = false;             // "close the remote console?" is on the screen
 // A question about the remote console lies over the page: nothing else reacts.
-static bool overlay() { return S.conState == 1 || (S.conState == 2 && conMenu); }
+static bool overlay() { return S.stick || S.conState == 1 || (S.conState == 2 && conMenu); }
 static bool menu = false;                // the overview of all pages is on the screen
 
 static String fmtBytes(uint32_t b) {
@@ -1093,12 +1134,13 @@ static bool isDown(int x, int y, int w, int h) {
 }
 
 static void button(int x, int y, int w, int h, const char *label, uint8_t id, uint32_t textColor = C_TEXT,
-                   uint8_t arg = 0, const lgfx::IFont *font = &fonts::DejaVu12) {
+                   uint8_t arg = 0, const lgfx::IFont *font = &fonts::DejaVu18) {
   bool down = isDown(x, y, w, h);
   // under the finger it takes the tint and gives way a little - at once, not on release
   if (down) g->fillRoundRect(x + 2, y + 1, w - 4, h - 2, 10, C_BTN_DOWN);
   else g->fillRoundRect(x, y, w, h, 10, C_BTN);
-  g->setFont(font);
+  g->setFont(font);                      // as large as the label allows
+  if (g->textWidth(label) > w - 8) g->setFont(&fonts::DejaVu12);
   if (g->textWidth(label) > w - 6) g->setFont(&fonts::DejaVu9);      // a long label on a narrow button
   g->setTextDatum(lgfx::middle_center);
   g->setTextColor(down ? C_TEXT : textColor);
@@ -1123,11 +1165,23 @@ static int buttonRow(const BtnDef *defs, int n, int maxRows = 2) {
   for (int r = 0; r < rows; r++) {
     int from = r ? first : 0, cnt = r ? n - first : first;
     w = (W - BTN_GAP * (cnt + 1)) / cnt;
+    // one size for the whole row: the largest in which every label fits
+    const lgfx::IFont *font = &fonts::DejaVu18;
+    g->setFont(font);
+    for (int i = 0; i < cnt; i++)
+      if (g->textWidth(defs[from + i].label) > w - 8) font = &fonts::DejaVu12;
     for (int i = 0; i < cnt; i++)
       button(BTN_GAP + i * (w + BTN_GAP), top + r * (BTN_H + BTN_GAP), w, BTN_H, defs[from + i].label, defs[from + i].id,
-             defs[from + i].color, defs[from + i].arg);
+             defs[from + i].color, defs[from + i].arg, font);
   }
   return top;
+}
+
+static bool shown(int i) { return i != S_SYSTEM || S.adminUi; }
+static int stepScreen(int from, bool next) {
+  int s = from;
+  do s = (s + (next ? 1 : S_COUNT - 1)) % S_COUNT; while (!shown(s) && s != from);
+  return s;
 }
 
 static void gotoScreen(uint8_t s) {
@@ -1146,8 +1200,8 @@ static void sendCmd(uint8_t id, uint8_t arg = 0) {
 
 static void pressed(uint8_t id, uint8_t arg) {
   switch (id) {
-    case B_PREV: gotoScreen(screen + S_COUNT - 1); return;
-    case B_NEXT: gotoScreen(screen + 1); return;
+    case B_PREV: gotoScreen(stepScreen(screen, false)); return;
+    case B_NEXT: gotoScreen(stepScreen(screen, true)); return;
     case B_PORT: nextPort(); return;
     case B_MENU: menu = !menu; return;
     case B_GOTO: gotoScreen(arg); return;
@@ -1401,11 +1455,47 @@ static void chevron(int x, int y, uint8_t dir, uint32_t color, int r = 6) {
   }
 }
 
+// The product's mark, the same as in both web interfaces: the shell of a serial
+// connector with a prompt in it, on a tile in the accent colour. s is the side.
+static void drawMark(int x, int y, int s) {
+  g->fillRoundRect(x, y, s, s, s * 15 / 64, C_TINT);
+  // the shell: wider at the top than at the bottom, its corners rounded
+  int top = y + s * 20 / 64, h = s * 24 / 64, r = max(2, s * 4 / 64);
+  for (int i = 0; i < h; i++) {
+    int inset = s * 11 / 64 + s * 5 * i / (64 * (h - 1));
+    int d = i < r ? r - i : i >= h - r ? i - (h - 1 - r) : 0;        // how far into a corner
+    if (d) inset += r - (int)sqrtf((float)(r * r - d * d));
+    g->drawFastHLine(x + inset, top + i, s - 2 * inset, 0xFFFFFF);
+  }
+  // the prompt: ">" and the cursor waiting next to it
+  int th = max(3, s * 7 / 128), cx = x + s * 25 / 64, cy = y + s / 2, a = max(3, s * 11 / 128);
+  for (int t = -(th / 2); t <= th / 2; t++) {
+    g->drawLine(cx - a / 2 + t, cy - a, cx + a / 2 + t, cy, C_TINT);
+    g->drawLine(cx + a / 2 + t, cy, cx - a / 2 + t, cy + a, C_TINT);
+  }
+  g->fillRoundRect(x + s * 31 / 64, cy + a - th + 1, s * 12 / 64, th, th / 2, C_TINT);
+}
+
+// Mark and name together, centred on (cx, cy): what the display shows first.
+static void drawSplash() {
+  const int s = 84;
+  drawMark((W - s) / 2, H / 2 - s / 2 - 26, s);
+  g->setTextDatum(lgfx::middle_center);
+  g->setFont(&fonts::DejaVu18);
+  g->setTextColor(C_TEXT);
+  g->drawString("RS232 Console", W / 2, H / 2 + s / 2 - 2);
+  g->setFont(&fonts::DejaVu12);
+  g->setTextColor(C_DIM);
+  g->drawString("v" FW_VERSION, W / 2, H / 2 + s / 2 + 22);
+}
+
+static uint32_t splashUntil = 0;         // the start-up picture stays until then
+
 static void drawHeader() {
   g->fillRect(0, 0, W, HEAD_H, C_PANEL);
   g->setFont(&fonts::DejaVu18);
   g->setTextDatum(lgfx::middle_center);
-  bool backDown = isDown(0, 0, 64, HEAD_H + 6);
+  bool backDown = isDown(0, 0, HEAD_HIT, HEAD_H + 6);
   chevron(15, HEAD_H / 2, 0, backDown ? C_TEXT : C_TINT);   // the arrows lead somewhere: they carry the tint
   if (modal()) {                         // a sub-page: the arrow leads back, nothing else leaves it
     g->setTextColor(C_TEXT);
@@ -1415,23 +1505,23 @@ static void drawHeader() {
                       : setupMode == SETUP_CONFIRM && confirmId >= B_CAL_FULL && confirmId <= B_CAL_RESET ? TR("Calibrate battery", "Akku kalibrieren", "Calibrar bateria") : netSsid;
     if (g->textWidth(title) <= W - 88) g->drawString(title, W / 2, HEAD_H / 2);
     else drawMarquee(title, 44, HEAD_H / 2, W - 52);
-    addHotspot(0, 0, 64, HEAD_H + 6, B_BACK);
+    addHotspot(0, 0, HEAD_HIT, HEAD_H + 6, B_BACK);
     return;
   }
-  chevron(W - 15, HEAD_H / 2, 1, isDown(W - 64, 0, 64, HEAD_H + 6) ? C_TEXT : C_TINT);
+  chevron(W - 15, HEAD_H / 2, 1, isDown(W - HEAD_HIT, 0, HEAD_HIT, HEAD_H + 6) ? C_TEXT : C_TINT);
   // While the server has a console open, every page says so in place of its
   // title; a tap there leads to "Beenden". Otherwise the title opens the
   // overview of all pages, and the small arrowhead beside it says so.
   const char *title = S.conState == 2 ? TR("Remote console", "Fernkonsole", "Console remoto") : menu ? TR("Pages", "Seiten", "Paginas") : TITLES[screen];
-  bool titleDown = isDown(64, 0, W - 128, HEAD_H + 6);
+  bool titleDown = isDown(HEAD_HIT, 0, W - 2 * HEAD_HIT, HEAD_H + 6);
   g->setTextColor(S.conState == 2 ? C_RED : titleDown ? C_TINT : C_TEXT);
   int tw = g->textWidth(title), mark = S.conState == 2 ? 0 : 14;
   g->drawString(title, W / 2 - mark / 2, HEAD_H / 2);
   if (mark) chevron(W / 2 - mark / 2 + tw / 2 + 9, HEAD_H / 2 + 1, menu ? 3 : 2, titleDown ? C_TINT : C_DIM, 4);
   int titleLeft = W / 2 - (tw + mark) / 2;
-  addHotspot(0, 0, 64, HEAD_H + 6, B_PREV);
-  addHotspot(W - 64, 0, 64, HEAD_H + 6, B_NEXT);
-  addHotspot(64, 0, W - 128, HEAD_H + 6, S.conState == 2 ? B_CON_MENU : B_MENU);
+  addHotspot(0, 0, HEAD_HIT, HEAD_H + 6, B_PREV);
+  addHotspot(W - HEAD_HIT, 0, HEAD_HIT, HEAD_H + 6, B_NEXT);
+  addHotspot(HEAD_HIT, 0, W - 2 * HEAD_HIT, HEAD_H + 6, S.conState == 2 ? B_CON_MENU : B_MENU);
 
   // link lamps: web/TCP client, Bluetooth, recording
   int x = W - 44;
@@ -1466,14 +1556,19 @@ static void drawHeader() {
 // The page a sideways drag is leading to, if it is far enough to count.
 static int swipeTarget() {
   if (!swiping || abs(swipeDx) < SWIPE_COMMIT) return -1;
-  return (screen + (swipeDx < 0 ? 1 : S_COUNT - 1)) % S_COUNT;
+  return stepScreen(screen, swipeDx < 0);
 }
 
 static void drawNav() {
   if (modal()) return;
-  int y = H - NAV_H / 2, x0 = W / 2 - (S_COUNT - 1) * 7, to = swipeTarget();
-  for (int i = 0; i < S_COUNT; i++)
-    g->fillCircle(x0 + i * 14, y, i == screen || i == to ? 3 : 2, i == to ? C_TINT : i == screen ? C_ACCENT : C_LINE);
+  int count = 0;
+  for (int i = 0; i < S_COUNT; i++) count += shown(i);
+  int y = H - NAV_H / 2, x = W / 2 - (count - 1) * 7, to = swipeTarget();
+  for (int i = 0; i < S_COUNT; i++) {
+    if (!shown(i)) continue;
+    g->fillCircle(x, y, i == screen || i == to ? 3 : 2, i == to ? C_TINT : i == screen ? C_ACCENT : C_LINE);
+    x += 14;
+  }
 }
 
 // While the finger drags sideways, the name of the page it leads to comes in
@@ -1482,7 +1577,7 @@ static void drawNav() {
 static void drawSwipe() {
   if (!swiping || !swipeDx) return;
   bool next = swipeDx < 0;
-  const char *name = TITLES[(screen + (next ? 1 : S_COUNT - 1)) % S_COUNT];
+  const char *name = TITLES[stepScreen(screen, next)];
   g->setFont(&fonts::DejaVu18);
   int full = g->textWidth(name) + 44, pull = abs(swipeDx);
   int w = pull <= full ? pull : full + (int)rubber(pull - full, W / 2);   // past its size it only stretches
@@ -1520,31 +1615,35 @@ static void drawMenu() {
   if (S.playState == Player::RUNNING) snprintf(hint[S_SCRIPTS], sizeof(hint[0]), TR("running", "laeuft", "em execucao"));
   else if (S.cfgCount) snprintf(hint[S_SCRIPTS], sizeof(hint[0]), S.cfgCount == 1 ? TR("1 script", "1 Skript", "1 script") : TR("%u scripts", "%u Skripte", "%u scripts"), S.cfgCount);
   else snprintf(hint[S_SCRIPTS], sizeof(hint[0]), TR("play", "abspielen", "reproduzir"));   // the list is read when the page is opened
-  snprintf(hint[S_WIFI], sizeof(hint[0]), "%s", S.apSsid);
-  snprintf(hint[S_URL], sizeof(hint[0]), "%s", S.apIp);
+  snprintf(hint[S_WIFI], sizeof(hint[0]), "%s", S.staConnected ? S.staIp : S.apIp);
   snprintf(hint[S_BT], sizeof(hint[0]), "%s", S.bleState == Ble::OFF ? TR("off", "aus", "desligado") : S.bleState == Ble::CONNECTED ? TR("connected", "verbunden", "conectado") : TR("ready", "bereit", "pronto"));
   snprintf(hint[S_SYSTEM], sizeof(hint[0]), "%u MHz", S.cpuMhz);
   if (S.batPresent) snprintf(hint[S_INFO], sizeof(hint[0]), TR("Battery %u%%", "Akku %u%%", "Bateria %u%%"), S.batPct);
   else snprintf(hint[S_INFO], sizeof(hint[0]), "%s", S.c2);
   snprintf(hint[S_SETUP], sizeof(hint[0]), "%s", !S.staConfigured ? TR("no LAN", "kein LAN", "sem LAN") : S.staConnected ? TR("LAN up", "LAN an", "LAN ok") : TR("LAN searching", "LAN sucht", "LAN buscando"));
 
-  const int cols = 3, rows = (S_COUNT + cols - 1) / cols, gap = 5;
+  int count = 0;
+  for (int i = 0; i < S_COUNT; i++) count += shown(i);
+  const int cols = W > H ? 4 : 2, rows = (count + cols - 1) / cols, gap = 5;
   int top = HEAD_H + gap, bottom = H - NAV_H - 2;
   int tw = (W - gap * (cols + 1)) / cols, th = (bottom - top - gap * (rows - 1)) / rows;
-  for (int i = 0; i < S_COUNT; i++) {
-    int x = gap + (i % cols) * (tw + gap), y = top + (i / cols) * (th + gap);
+  for (int i = 0, k = 0; i < S_COUNT; i++) {
+    if (!shown(i)) continue;
+    int x = gap + (k % cols) * (tw + gap), y = top + (k / cols) * (th + gap);
+    k++;
     bool down = isDown(x, y, tw, th), here = i == screen;
     if (down) g->fillRoundRect(x + 2, y + 1, tw - 4, th - 2, 12, C_BTN_DOWN);
     else g->fillRoundRect(x, y, tw, th, 12, here ? C_BTN : C_PANEL);
     if (here && !down) g->drawRoundRect(x, y, tw, th, 12, C_TINT);       // where one is
     g->setTextDatum(lgfx::middle_center);
-    g->setFont(&fonts::DejaVu12);
-    if (g->textWidth(TITLES[i]) > tw - 8) g->setFont(&fonts::DejaVu9);   // upright the tiles are narrow
+    g->setFont(&fonts::DejaVu18);
+    if (g->textWidth(TITLES[i]) > tw - 8) g->setFont(&fonts::DejaVu12);
+    if (g->textWidth(TITLES[i]) > tw - 6) g->setFont(&fonts::DejaVu9);
     g->setTextColor(C_TEXT);
-    g->drawString(fit(TITLES[i], tw - 6).c_str(), x + tw / 2, y + th / 2 - 8);
+    g->drawString(fit(TITLES[i], tw - 6).c_str(), x + tw / 2, y + th / 2 - 9);
     g->setFont(&fonts::DejaVu9);
     g->setTextColor(down ? C_TEXT : i == S_BT && S.bleState == Ble::CONNECTED ? C_GREEN : C_DIM);
-    g->drawString(fit(hint[i], tw - 8).c_str(), x + tw / 2, y + th / 2 + 10);
+    g->drawString(fit(hint[i], tw - 8).c_str(), x + tw / 2, y + th / 2 + 12);
     addHotspot(x, y, tw, th, B_GOTO, i);
   }
 }
@@ -1621,49 +1720,49 @@ static String lanLine() {
   return S.staConnected ? String(S.staIp) : String(TR("connecting...", "verbinde...", "conectando..."));
 }
 
+// The first page answers one question: can I work on this port? One word, large
+// enough to read from a step away, the line settings under it, and whether
+// anything moves. Everything else has its own page.
 static void screenStatus() {
-  BtnDef defs[4] = {{"Baud", B_BAUD, C_TEXT}, {"Auto-Baud", B_AUTO, C_TEXT}, {"BREAK", B_BREAK, C_AMBER}};
+  BtnDef defs[4] = {{"Baud", B_BAUD, C_TEXT}, {"Auto", B_AUTO, C_TEXT}, {"BREAK", B_BREAK, C_AMBER}};
   int n = 3;
   static char portLabel[8];
   if (S.ports > 1) {
     snprintf(portLabel, sizeof(portLabel), TR("Port %u", "Port %u", "Porta %u"), selPort + 1);
     defs[n++] = {portLabel, B_PORT, C_ACCENT};
   }
-  contentBegin(HEAD_H, buttonRow(defs, n) - 2);
+  int top = HEAD_H, bottom = buttonRow(defs, n) - 2;
+  cTop = cBot = 0;
 
-  int y = rowY - 2;
-  g->setTextDatum(lgfx::top_left);
+  const char *state = TR("Ready", "Bereit", "Pronto");
+  uint32_t color = C_GREEN;
+  if (S.conState == 2) { state = TR("Remote console", "Fernkonsole", "Console remoto"); color = C_RED; }
+  else if (S.autobaud[selPort]) { state = "Auto-Baud ..."; color = C_AMBER; }
+  else if (S.playState == Player::RUNNING) { state = TR("Script running", "Skript laeuft", "Script rodando"); color = C_AMBER; }
+  else if (S.webClients || S.tcpConnected || S.bleState == Ble::CONNECTED) { state = TR("In use", "In Benutzung", "Em uso"); color = C_BLUE; }
+
+  // three lines and the lamps, spread over what the buttons leave
+  int room = bottom - top, y = top + max(4, (room - 124) / 2);
+  g->setTextDatum(lgfx::top_center);
   g->setFont(&fonts::DejaVu12);
   g->setTextColor(C_DIM);
-  g->drawString(fit(S.portName[selPort], W - 16).c_str(), 8, y);
-
+  g->drawString(fit(S.portName[selPort], W - 16).c_str(), W / 2, y);
+  g->setFont(&fonts::DejaVu40);
+  if (g->textWidth(state) > W - 12) g->setFont(&fonts::DejaVu24);
+  g->setTextColor(color);
+  g->drawString(state, W / 2, y + 18);
   g->setFont(&fonts::DejaVu24);
-  if (S.autobaud[selPort]) {
-    g->setTextColor(C_AMBER);
-    g->drawString("Auto-Baud...", 8, y + 16);
-  } else {
-    g->setTextColor(C_ACCENT);
-    g->drawString(S.serial[selPort], 8, y + 16);
-  }
-
-  y += 56;
-  g->setFont(&fonts::DejaVu18);
   g->setTextColor(C_TEXT);
-  g->setTextDatum(lgfx::middle_left);
-  dot(14, y, S.rxActive[selPort], C_GREEN);
-  g->drawString(("RX " + fmtBytes(S.rx[selPort])).c_str(), 26, y);
-  dot(W / 2 + 6, y, S.txActive[selPort], C_AMBER);
-  g->drawString(("TX " + fmtBytes(S.tx[selPort])).c_str(), W / 2 + 18, y);
-  g->drawFastHLine(8, y + 16, W - 16, C_LINE);
+  g->drawString(S.serial[selPort], W / 2, y + 64);
 
-  rowY = y + 24;
-  row(TR("Wi-Fi", "WLAN", "Wi-Fi"), S.apSsid);
-  row("IP", S.apIp);
-  row("LAN", lanLine());
-  row("Clients", clientsLine());
-  row(TR("Battery", "Akku", "Bateria"), batteryLine());
-  row("SD", sdLine());
-  contentEnd();
+  y += 110;
+  g->setFont(&fonts::DejaVu18);
+  g->setTextDatum(lgfx::middle_left);
+  g->setTextColor(C_DIM);
+  dot(20, y, S.rxActive[selPort], C_GREEN);
+  g->drawString(("RX " + fmtBytes(S.rx[selPort])).c_str(), 34, y);
+  dot(W / 2 + 12, y, S.txActive[selPort], C_AMBER);
+  g->drawString(("TX " + fmtBytes(S.tx[selPort])).c_str(), W / 2 + 26, y);
 }
 
 static void screenTerm() {
@@ -1693,24 +1792,30 @@ static void screenTerm() {
     g->fillRect(2 + min(gridX, termColsUi - 1) * TERM_CW, top + gridY * TERM_CH, TERM_CW, TERM_CH, C_TERM);
 }
 
-// QR code with two labelled lines: beside it in landscape, below it in portrait
-static void screenQr(const String &payload, const char *l1, const String &v1, const char *l2, const String &v2) {
+// How one gets onto the device: the QR code joins the hotspot (the phone then
+// opens the web interface by itself), beside it what somebody would type in or
+// read out - network, key, the addresses.
+static void screenNet() {
   contentBegin(HEAD_H, H - NAV_H);
   int top = rowY - 2, avail = cBot - cTop - 12;
   bool wide = W > H;
   int size = wide ? min(avail, W - 142) : min(W - 24, avail - 76);   // beside it, an IP address still fits on one line
   int qx = wide ? 8 : (W - size) / 2;
+  String payload = "WIFI:T:WPA;S:" + qrEscape(S.apSsid) + ";P:" + qrEscape(S.apPass) + ";;";
   g->fillRoundRect(qx, top, size, size, 6, 0xFFFFFFu);
   g->qrcode(payload.c_str(), qx + 6, top + 6, size - 12, 1);
 
-  int tx = wide ? qx + size + 10 : 8, ty = wide ? top + 4 : top + size + 8, tw = W - tx - 10;
+  const char *labels[4] = {TR("Wi-Fi", "WLAN", "Wi-Fi"), TR("Password", "Passwort", "Senha"), "IP", "LAN"};
+  String values[4] = {S.apSsid, S.apPass, S.apIp, lanLine()};
+  uint32_t colors[4] = {C_TEXT, C_TEXT, C_TEXT, !S.staConfigured ? C_DIM : S.staConnected ? C_GREEN : C_AMBER};
+  int tx = wide ? qx + size + 10 : 8, ty = wide ? top + 2 : top + size + 8, tw = W - tx - 10;
   g->setFont(&fonts::DejaVu12);
   g->setTextDatum(lgfx::top_left);
-  for (int i = 0; i < 2; i++) {
+  for (int i = 0; i < 4; i++) {
     g->setTextColor(C_DIM);
-    g->drawString(i ? l2 : l1, tx, ty);
-    g->setTextColor(C_TEXT);
-    ty += LINE_H + wrapped((i ? v2 : v1).c_str(), tx, ty + LINE_H, tw, false) + 6;   // every character: it gets typed in
+    g->drawString(labels[i], tx, ty);
+    g->setTextColor(colors[i]);
+    ty += LINE_H + wrapped(values[i].c_str(), tx, ty + LINE_H, tw, false) + 6;   // every character: it gets typed in
   }
   rowY = max(top + size, ty);
   contentEnd();
@@ -1747,8 +1852,9 @@ static void screenBt() {
 
 static void screenInfo() {
   int bottom = H - NAV_H;
-  if (!S.sdMounted) {
+  {
     BtnDef def = {TR("Mount SD card", "SD-Karte einbinden", "Montar cartao SD"), B_SD, C_TEXT};
+    if (S.sdMounted) def = {TR("SD card as USB stick", "SD-Karte als USB-Stick", "Cartao SD como pendrive"), B_STICK, C_TEXT};
     bottom = buttonRow(&def, 1) - 2;
   }
   contentBegin(HEAD_H, bottom);
@@ -1758,6 +1864,28 @@ static void screenInfo() {
   char imu[40];
   if (imuAddr) snprintf(imu, sizeof(imu), TR("rotation %u", "Drehung %u", "rotacao %u"), rot);
   else strlcpy(imu, TR("sensor not found", "Sensor nicht gefunden", "sensor nao encontrado"), sizeof(imu));
+  if (S.c2Code[0]) {
+    // The code somebody types in at the control center: large, three and three,
+    // to be read from a step away and in bad light.
+    char spaced[10];
+    snprintf(spaced, sizeof(spaced), "%.3s %s", S.c2Code, S.c2Code + 3);
+    g->fillRoundRect(6, rowY, W - 12, 78, 12, C_PANEL);
+    g->setTextDatum(lgfx::middle_center);
+    g->setFont(&fonts::DejaVu12);
+    g->setTextColor(C_DIM);
+    g->drawString(TR("Code for the control center", "Code fuer die Leitstelle", "Codigo para a central"), W / 2, rowY + 15);
+    g->setFont(&fonts::DejaVu40);
+    g->setTextColor(C_TEXT);
+    g->drawString(spaced, W / 2, rowY + 50);
+    rowY += 86;
+  }
+  // who this is: mark and name as on the web interfaces
+  drawMark(8, rowY, 34);
+  g->setTextDatum(lgfx::middle_left);
+  g->setFont(&fonts::DejaVu18);
+  g->setTextColor(C_TEXT);
+  g->drawString("RS232 Console", 52, rowY + 17);
+  rowY += 44;
   row("Firmware", String(FW_VERSION) + "  up " + fmtUptime(millis() / 1000));
   row("Host", String(S.hostname) + ".local");
   row("Hotspot", String(S.apStations) + TR(" devices", " Geraete", " dispositivos"));
@@ -1810,7 +1938,7 @@ static void screenSystem() {
 }
 
 // ---- lists (stored configurations, WLAN networks): rows to tap, paged
-static const int LIST_ROW_H = 34;
+static const int LIST_ROW_H = 44;
 
 static int listRows(int top, int bottom) { return max(1, (bottom - top) / LIST_ROW_H); }
 
@@ -1983,10 +2111,11 @@ static void screenSetup() {
     return;
   }
 
-  // main page: brightness, display timeout, WLAN client, battery calibration, power off. Everything
+  // main page: brightness, display timeout, WLAN client, power off. (The battery calibration is in
+  // the web interface and on the debug console; nobody needs it standing at the device.) Everything
   // is part of the scrolling content, so each control can have a full-size button.
   contentBegin(HEAD_H, H - NAV_H);
-  const int bw = 58, right0 = W - 10;
+  const int bw = 72, right0 = W - 10;
   int y = rowY;
   g->setFont(&fonts::DejaVu12);
   g->setTextDatum(lgfx::top_left);
@@ -2008,7 +2137,8 @@ static void screenSetup() {
   if (!S.timeoutS) strlcpy(timeout, TR("never", "nie", "nunca"), sizeof(timeout));
   else if (S.timeoutS < 120) snprintf(timeout, sizeof(timeout), TR("after %u s", "nach %u s", "apos %u s"), S.timeoutS);
   else snprintf(timeout, sizeof(timeout), TR("after %u min", "nach %u min", "apos %u min"), S.timeoutS / 60);
-  button(right0 - 120, y, 120, BTN_H, timeout, B_TIMEOUT);
+  int tw = min(150, W - 118);
+  button(right0 - tw, y, tw, BTN_H, timeout, B_TIMEOUT);
 
   y += BTN_H + 10;
   g->drawFastHLine(8, y, right0 - 8, C_LINE);
@@ -2026,25 +2156,6 @@ static void screenSetup() {
   }
   y += BTN_H + 10;
   g->drawFastHLine(8, y, right0 - 8, C_LINE);
-  if (S.batMeasured) {
-    // battery calibration: the voltage measured now becomes 100 % or 0 % (power.cpp: setCal)
-    rowY = y + 8;
-    row(TR("Battery", "Akku", "Bateria"), batteryLine());
-    row("0 / 100 %", String(S.batEmptyMv) + " / " + String(S.batFullMv) + " mV" + (S.batCal ? TR(", calibrated", ", kalibriert", ", calibrado") : ""));
-    y = rowY + 4;
-    if (S.batPresent) {
-      int w = (right0 - 8 - BTN_GAP) / 2;
-      button(8, y, w, BTN_H, TR("Full now", "Jetzt voll", "Cheia agora"), B_ASK_CAL_FULL);
-      button(8 + w + BTN_GAP, y, w, BTN_H, TR("Empty now", "Jetzt leer", "Vazia agora"), B_ASK_CAL_EMPTY);
-      y += BTN_H + BTN_GAP;
-    }
-    if (S.batCal) {
-      button(8, y, right0 - 8, BTN_H, TR("Clear calibration", "Kalibrierung loeschen", "Apagar calibracao"), B_ASK_CAL_RESET, C_AMBER);
-      y += BTN_H + BTN_GAP;
-    }
-    y += 10 - BTN_GAP;
-    g->drawFastHLine(8, y, right0 - 8, C_LINE);
-  }
   y += 10;
   button(8, y, right0 - 8, BTN_H, TR("Switch off", "Ausschalten", "Desligar"), B_ASK_OFF, C_RED);
   rowY = y + BTN_H;
@@ -2080,6 +2191,46 @@ static void drawMessage() {
   for (int i = 0; i < nb; i++, y += LINE_H) g->drawString(b[i].c_str(), W / 2, y);
 }
 
+static String fmtKb(uint32_t kb) {
+  char b[16];
+  if (kb < 1024) snprintf(b, sizeof(b), "%lu kB", (unsigned long)kb);
+  else snprintf(b, sizeof(b), "%lu.%lu MB", (unsigned long)(kb / 1024), (unsigned long)(kb % 1024 * 10 / 1024));
+  return String(b);
+}
+
+// The card is lent to the USB port: say so, show that something moves, and
+// offer the one way back.
+static void drawStickDialog() {
+  btnCount = 0;
+  cTop = cBot = 0;
+  const int w = W - 16, x = 8;
+  uint32_t color = S.stickEjected ? C_GREEN : S.stickHost ? C_BLUE : C_AMBER;
+  String moved = String(TR("read ", "gelesen ", "lido ")) + fmtKb(S.stickReadKb) + TR(", written ", ", geschrieben ", ", gravado ") + fmtKb(S.stickWrittenKb);
+  String a[2], b[4];
+  g->setFont(&fonts::DejaVu12);
+  int na = wrap(moved.c_str(), w - 20, a, 2);
+  int nb = wrap(TR("The SD card belongs to the USB port now. Eject it there before ending.", "Die SD-Karte gehoert jetzt dem USB-Port. Dort auswerfen, bevor hier beendet wird.", "O cartao SD pertence agora a porta USB. Ejete-o la antes de encerrar."), w - 20, b, 4);
+  int h = 36 + (1 + na + nb) * LINE_H + 16 + BTN_H + 8, y = (H - h) / 2;
+  g->fillRoundRect(x, y, w, h, 12, C_PANEL);
+  g->drawRoundRect(x, y, w, h, 12, color);
+  g->setTextDatum(lgfx::top_center);
+  g->setFont(&fonts::DejaVu18);
+  g->setTextColor(C_TEXT);
+  g->drawString(TR("USB stick", "USB-Stick", "Pendrive USB"), W / 2, y + 8);
+  g->setFont(&fonts::DejaVu12);
+  g->setTextColor(color);
+  int ty = y + 36;
+  g->drawString(S.stickEjected ? TR("Ejected - safe to unplug", "Ausgeworfen - kann abgezogen werden", "Ejetado - pode desconectar")
+                : S.stickHost ? TR("Connected", "Verbunden", "Conectado")
+                : TR("Waiting for the USB port", "Wartet auf den USB-Port", "Aguardando a porta USB"), W / 2, ty);
+  ty += LINE_H + 2;
+  g->setTextColor(C_DIM);
+  for (int i = 0; i < na; i++, ty += LINE_H) g->drawString(a[i].c_str(), W / 2, ty);
+  ty += 6;
+  for (int i = 0; i < nb; i++, ty += LINE_H) g->drawString(b[i].c_str(), W / 2, ty);
+  button(x + BTN_GAP, y + h - BTN_H - 8, w - 2 * BTN_GAP, BTN_H, TR("End (restart)", "Beenden (Neustart)", "Encerrar (reiniciar)"), B_STICK_END);
+}
+
 // The question the server's request for a console puts to whoever stands at the
 // device, and the way to end a console that is open.
 static void drawConsoleDialog() {
@@ -2113,19 +2264,18 @@ static void draw(uint32_t now) {
   contentH = 0;                          // a page without scrolling content leaves it at that
   if (g == &lcd) busLock();
   g->fillScreen(C_BG);
+  if (splashUntil) {                     // just switched on: who this is, before anything else
+    drawSplash();
+    if (g == &lcd) busUnlock();
+    flush();
+    return;
+  }
   drawHeader();
   if (menu) {
     drawMenu();
   } else switch (screen) {
     case S_TERM: screenTerm(); break;
-    case S_WIFI:
-      screenQr("WIFI:T:WPA;S:" + qrEscape(S.apSsid) + ";P:" + qrEscape(S.apPass) + ";;", TR("Wi-Fi", "WLAN", "Wi-Fi"), S.apSsid, TR("Password", "Passwort", "Senha"),
-               S.apPass);
-      break;
-    case S_URL:
-      screenQr(String("http://") + S.apIp + "/", TR("Web UI", "Web-UI", "Web UI"), S.apIp, S.staConnected ? TR("in the LAN", "im LAN", "na LAN") : TR("Name", "Name", "Nome"),
-               S.staConnected ? String(S.staIp) : String(S.hostname) + ".local");
-      break;
+    case S_WIFI: screenNet(); break;
     case S_BT:   screenBt(); break;
     case S_INFO: screenInfo(); break;
     case S_SYSTEM:  screenSystem(); break;
@@ -2142,7 +2292,8 @@ static void draw(uint32_t now) {
   if (scrollY > statScrollPeak) statScrollPeak = scrollY;
   statMenu = menu;
   if (S.conState == 2) g->fillRect(0, HEAD_H - 2, W, 2, C_RED);
-  if (overlay()) drawConsoleDialog();
+  if (S.stick) drawStickDialog();
+  else if (overlay()) drawConsoleDialog();
   else if ((int32_t)(msgUntil - now) > 0) drawMessage();
   if (g == &lcd) busUnlock();
   flush();
@@ -2206,6 +2357,8 @@ static void uiTask(void *) {
     if (reqWake) { reqWake = false; uiWake(); }
     if (reqOff) { reqOff = false; uiOff(); }
     if (reqNext) { reqNext = false; press(B_NEXT); }
+    if (reqSplash) { splashUntil = (now + reqSplash * 1000UL) | 1; reqSplash = 0; dirty = true; }
+    if (splashUntil && (int32_t)(now - splashUntil) >= 0) { splashUntil = 0; dirty = true; }
     if (reqScreen >= 0) { gotoScreen(reqScreen); scrollReset(); reqScreen = -1; dirty = true; }
     if (reqRot >= 0) {                     // 0..3 stays until "rot auto" hands it back to the accelerometer
       rotForced = reqRot < 4;
@@ -2347,6 +2500,8 @@ bool begin() {
   on = true;
   uiOn = true;
   lastActivity = millis();
+  splashUntil = (millis() + 1500) | 1;   // never 0, which means "none"
+  dirty = true;
   reqBrightness = true;
   // Core 0 next to the radio: drawing never takes time from the serial bridge,
   // which runs in the Arduino loop on core 1.

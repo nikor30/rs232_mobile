@@ -47,6 +47,7 @@ struct Settings {
   bool     httpsLanOnly = false; // in the LAN (station mode) redirect plain HTTP to HTTPS
   uint8_t  httpsCert = 0;        // 0 = own HTTPS certificate (device CA if none), 1 = 802.1X client certificate
   bool     bleEnabled = true;    // Bluetooth LE console, switched on the touch display
+  bool     adminUi = false;      // the web interface shows the administrator's tabs (Ports, Network, Setup)
   bool     c2Control = false;    // the command-and-control server may change things (play a configuration, reboot)
 };
 

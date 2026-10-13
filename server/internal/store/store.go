@@ -71,6 +71,7 @@ type Command struct {
 	Type    string          `json:"type"`
 	Args    json.RawMessage `json:"args,omitempty"`
 	State   string          `json:"state"`
+	By      string          `json:"by,omitempty"` // the administrator who queued it
 	Created time.Time       `json:"created"`
 	Sent    *time.Time      `json:"sent,omitempty"`
 	Done    *time.Time      `json:"done,omitempty"`
@@ -93,7 +94,9 @@ type Device struct {
 	ID          string          `json:"id"` // hex of proto.DeviceID
 	Pub         []byte          `json:"pub"`
 	Name        string          `json:"name"`
-	Info        json.RawMessage `json:"info,omitempty"` // what the device said about itself when enrolling
+	Region      string          `json:"region,omitempty"` // where it belongs: given by an administrator,
+	Site        string          `json:"site,omitempty"`   // free text, the list is grouped by it
+	Info        json.RawMessage `json:"info,omitempty"`   // what the device said about itself when enrolling
 	State       string          `json:"state"`
 	SAS         string          `json:"sas,omitempty"` // pending only; never leaves the server
 	SASAttempts int             `json:"sas_attempts,omitempty"`
@@ -106,15 +109,33 @@ type Device struct {
 }
 
 type data struct {
-	ServerKey []byte             `json:"server_key"`
-	OldKey    []byte             `json:"old_key,omitempty"`   // the previous server key, during a key change
-	OldUntil  *time.Time         `json:"old_until,omitempty"` // and how long it still counts
-	Tokens    map[string]*Token  `json:"tokens"`
-	Devices   map[string]*Device `json:"devices"`
-	NextCmd   uint64             `json:"next_cmd"`
-	Users     map[string]*User   `json:"users,omitempty"`
-	Audit     []*AuditEntry      `json:"audit,omitempty"`
+	ServerKey []byte               `json:"server_key"`
+	OldKey    []byte               `json:"old_key,omitempty"`   // the previous server key, during a key change
+	OldUntil  *time.Time           `json:"old_until,omitempty"` // and how long it still counts
+	Tokens    map[string]*Token    `json:"tokens"`
+	Devices   map[string]*Device   `json:"devices"`
+	NextCmd   uint64               `json:"next_cmd"`
+	Users     map[string]*User     `json:"users,omitempty"`
+	Audit     []*AuditEntry        `json:"audit,omitempty"`
+	Templates map[uint64]*Template `json:"templates,omitempty"`
+	NextTpl   uint64               `json:"next_tpl,omitempty"`
 }
+
+// Template is a configuration text kept at the server: written once, sorted
+// into a folder, sent to any device as a stored configuration.
+type Template struct {
+	ID      uint64    `json:"id"`
+	Name    string    `json:"name"`
+	Folder  string    `json:"folder,omitempty"`
+	Text    string    `json:"text"`
+	Updated time.Time `json:"updated"`
+	By      string    `json:"by,omitempty"`
+}
+
+const (
+	MaxTemplates    = 500
+	MaxTemplateText = 6000 // what one command to a device can carry
+)
 
 type Store struct {
 	mu  sync.Mutex
@@ -550,6 +571,11 @@ func (s *Store) Revoke(id string) error {
 // ---------------------------------------------------------------- commands
 
 func (s *Store) Enqueue(id, typ string, args json.RawMessage) (*Command, error) {
+	return s.EnqueueBy(id, typ, args, "")
+}
+
+// EnqueueBy is Enqueue with the name of the administrator who asks.
+func (s *Store) EnqueueBy(id, typ string, args json.RawMessage, by string) (*Command, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	d := s.d.Devices[id]
@@ -580,7 +606,7 @@ func (s *Store) Enqueue(id, typ string, args json.RawMessage) (*Command, error) 
 		return nil, ErrFull
 	}
 	s.d.NextCmd++
-	c := &Command{ID: s.d.NextCmd, Type: typ, Args: args, State: CmdQueued, Created: s.now()}
+	c := &Command{ID: s.d.NextCmd, Type: typ, Args: args, State: CmdQueued, Created: s.now(), By: by}
 	d.Commands = append(d.Commands, c)
 	s.ch.meta = true
 	s.ch.cmd(id, c.ID)
@@ -632,6 +658,9 @@ func (s *Store) Poll(id string, status json.RawMessage, results []Result) (state
 				c.State, c.Sent = CmdSent, &now
 				s.ch.cmd(id, c.ID)
 				cmds = append(cmds, *c)
+				if c.Type == "set" || c.Type == "config_put" {
+					c.Args = nil // may hold passwords: handed over once, not kept
+				}
 				changed = true
 			}
 		}
@@ -701,4 +730,82 @@ func (s *Store) ConsoleClose(id string, cmdID uint64, reason string, in, out int
 		}
 	}
 	return ErrNotFound
+}
+
+// Place says where a device belongs. Both are free text; empty takes it out.
+func (s *Store) Place(id, region, site string) error {
+	if len(region) > 48 || len(site) > 48 {
+		return ErrArgs
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d := s.d.Devices[id]
+	if d == nil {
+		return ErrNotFound
+	}
+	d.Region, d.Site = region, site
+	s.ch.device(id)
+	return s.save()
+}
+
+// Templates returns all templates, without an order.
+func (s *Store) Templates() []*Template {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]*Template, 0, len(s.d.Templates))
+	for _, t := range s.d.Templates {
+		c := *t
+		out = append(out, &c)
+	}
+	return out
+}
+
+func (s *Store) Template(id uint64) (*Template, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t := s.d.Templates[id]
+	if t == nil {
+		return nil, ErrNotFound
+	}
+	c := *t
+	return &c, nil
+}
+
+// PutTemplate stores a template: a new one for id 0, otherwise that one.
+func (s *Store) PutTemplate(id uint64, name, folder, text, by string) (*Template, error) {
+	if name == "" || len(name) > 48 || len(folder) > 48 || text == "" || len(text) > MaxTemplateText {
+		return nil, ErrArgs
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.d.Templates == nil {
+		s.d.Templates = map[uint64]*Template{}
+	}
+	t := s.d.Templates[id]
+	if id == 0 {
+		if len(s.d.Templates) >= MaxTemplates {
+			return nil, ErrFull
+		}
+		s.d.NextTpl++
+		t = &Template{ID: s.d.NextTpl}
+		s.d.Templates[t.ID] = t
+		s.ch.meta = true
+	} else if t == nil {
+		return nil, ErrNotFound
+	}
+	t.Name, t.Folder, t.Text, t.Updated, t.By = name, folder, text, s.now(), by
+	s.ch.tpl(t.ID)
+	c := *t
+	return &c, s.save()
+}
+
+func (s *Store) DeleteTemplate(id uint64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.d.Templates[id] == nil {
+		return ErrNotFound
+	}
+	delete(s.d.Templates, id)
+	s.ch.tpl(id)
+	return s.save()
 }

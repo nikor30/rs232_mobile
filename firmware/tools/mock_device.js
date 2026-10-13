@@ -163,11 +163,12 @@ const ports = [0, 1, 2, 3].map((i) => new Port(i));
 const enabledPorts = () => ports.filter((p) => settings.ports[p.id].enabled);
 const portName = (p) => settings.ports[p.id].name || `Port ${p.id + 1}`;
 
+let stick = null;             // the SD card lent to the USB port
 // ---- clients ----
 const clients = new Set();   // {ws, ready}
 function status() {
   return {
-    type: 'status', fw: '1.4.0-mock', board: 'Simulator', host: settings.hostname, boot: bootId,
+    type: 'status', fw: '1.4.0-mock', board: 'Simulator', host: settings.hostname, adminUi: !!settings.adminUi, sd: true, stick: stick || undefined, boot: bootId,
     ports: enabledPorts().map((p) => ({
       id: p.id, name: portName(p), hw: settings.ports[p.id].hw, rxPin: settings.ports[p.id].rx, txPin: settings.ports[p.id].tx,
       maxBaud: settings.ports[p.id].hw ? 1000000 : 38400, swapOk: ![34, 35, 36, 39].includes(settings.ports[p.id].rx),
@@ -296,6 +297,8 @@ http.createServer((req, res) => {
       }
       let j = {};
       try { j = body.length && url.startsWith('/api/') ? JSON.parse(body.toString()) : {}; } catch (e) { return sendJson(res, 400, { ok: false, error: 'JSON ungültig' }); }
+      if (url === '/api/stick') { stick = { host: true, ejected: false, readKb: 5321, writtenKb: 0 }; return sendJson(res, 200, { ok: true }); }
+      if (url === '/api/adminui') { settings.adminUi = !!j.on; return sendJson(res, 200, { ok: true }); }
       if (url === '/api/settings') {
         for (const k of ['apSsid', 'staSsid', 'hostname', 'displayFlip', 'displayTimeout', 'displayBrightness', 'tcpEnabled', 'apChannel', 'txPower', 'batPin', 'batType', 'batDiv'])
           if (k in j) settings[k] = j[k];

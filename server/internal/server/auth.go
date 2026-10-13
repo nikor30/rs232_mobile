@@ -201,6 +201,9 @@ type statusWriter struct {
 	code int
 }
 
+// Unwrap lets http.ResponseController reach the connection (images.go).
+func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 func (w *statusWriter) WriteHeader(code int) {
 	if w.code == 0 {
 		w.code = code
@@ -209,7 +212,10 @@ func (w *statusWriter) WriteHeader(code int) {
 }
 
 // admin guards the admin API and writes down every call that changes something.
-func (sv *Server) admin(h http.HandlerFunc) http.HandlerFunc {
+func (sv *Server) admin(h http.HandlerFunc) http.HandlerFunc { return sv.adminMax(h, 64*1024) }
+
+// adminMax is admin() for the rare call that takes a large body.
+func (sv *Server) adminMax(h http.HandlerFunc, maxBody int64) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p, ok := sv.authenticate(r)
 		if !ok {
@@ -227,7 +233,7 @@ func (sv *Server) admin(h http.HandlerFunc) http.HandlerFunc {
 			http.Error(w, "missing X-C2 header", http.StatusForbidden)
 			return
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
+		r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 		n := &auditNote{}
 		ctx := context.WithValue(context.WithValue(r.Context(), ctxPrincipal, p), ctxNote, n)
 		sw := &statusWriter{ResponseWriter: w}

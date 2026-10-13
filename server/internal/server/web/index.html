@@ -4,12 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
+<link rel="icon" href="/ui/logo.svg" type="image/svg+xml">
 <title>RS232 Control Center</title>
 <link rel="stylesheet" href="/ui/xterm.css">
 <link rel="stylesheet" href="/ui/style.css">
 </head>
 <body>
 <header>
+  <a class="brand" href="#devices"><img src="/ui/logo.svg" alt="" width="30" height="30"><span>RS232 Control Center</span></a>
   <a id="back" class="back" href="#devices">Devices</a>
   <h1 id="title">RS232 Control Center</h1>
   <!-- One list of places, shown twice: in the bar on a wide screen, as a tab bar under the thumb on a narrow one. -->
@@ -17,6 +19,12 @@
     <a href="#devices" data-view="devices">
       <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="11" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
       <span>Devices</span></a>
+    <a href="#manage" data-view="manage">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h11M19 17h1"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="17" r="2"/></svg>
+      <span>Manage</span></a>
+    <a href="#library" data-view="library">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h5v15H4zM9 5h5v15H9zM15.2 6.2l4.6-1.2 3 13.6-4.6 1.2z"/></svg>
+      <span>Library</span></a>
     <a href="#users" data-view="users">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg>
       <span>Users</span></a>
@@ -35,9 +43,13 @@
 </header>
 
 <main id="login" hidden>
+  <div class="hero">
+    <img src="/ui/logo.svg" alt="" width="76" height="76">
+    <p>RS232 Control Center</p>
+  </div>
   <form id="loginForm" class="card narrow">
     <h2>Sign in</h2>
-    <label>Users
+    <label>User name
       <input id="loginName" autocomplete="username" autocapitalize="none" required>
     </label>
     <label>Password
@@ -56,8 +68,8 @@
   <details id="setupBox" class="card narrow">
     <summary>Set up an account</summary>
     <form id="setupForm">
-      <p class="dim">For a new account or one that was reset. An administrator hands out the setup code; it is valid for one day.</p>
-      <label>Users
+      <p class="dim">With the setup code an administrator handed out.</p>
+      <label>User name
         <input id="setupName" autocomplete="username" autocapitalize="none" required>
       </label>
       <label>Setup code
@@ -90,7 +102,7 @@
         <input id="adminToken" type="password" autocomplete="off" required>
       </label>
       <button class="btn" type="submit">Sign in</button>
-      <p class="dim">For the first account and for emergencies. The token stays in this browser tab only and is sent to this server with every request.</p>
+      <p class="dim">For the first account and for emergencies.</p>
     </form>
   </details>
 </main>
@@ -101,11 +113,12 @@
   <div id="v-devices" class="view split" hidden>
     <section id="listCard" class="card">
       <div class="row">
-        <h2 class="dup">Devices</h2>
-        <button id="invite" class="btn primary">Invite a device</button>
+        <h2 id="listTitle" class="dup">Devices</h2>
+        <button id="invite" class="btn primary" data-admin>Invite a device</button>
       </div>
+      <input id="find" type="search" placeholder="Search" aria-label="Search" autocomplete="off" hidden>
       <div id="devices" class="list" role="list"></div>
-      <p id="noDevices" class="dim" hidden>No device yet. “Invite a device” starts the enrollment.</p>
+      <p id="noDevices" class="dim" hidden>No device yet. “Invite a device” under “Manage” starts the enrollment.</p>
     </section>
 
     <p id="pick" class="card dim empty">Pick a device from the list.</p>
@@ -115,8 +128,44 @@
         <h2 id="dName"></h2>
         <span id="dState" class="badge"></span>
       </div>
-      <p id="dOldKey" class="banner warn" hidden>This device has not confirmed the new server key yet. It receives it as soon as it reports in.</p>
+      <p id="dLine" class="dim" data-use></p>
+      <p id="dUse" class="uses" hidden></p>
+      <p id="dOldKey" class="banner warn" data-admin hidden>This device has not confirmed the new server key yet. It receives it as soon as it reports in.</p>
+
+      <!-- Using a device: its serial ports, and nothing else. -->
+      <p id="dNotActive" class="banner warn" data-use hidden><span id="dNotActiveText"></span> <a id="toManage" href="#manage">Manage</a></p>
+      <div id="console" data-use hidden>
+        <form id="conForm" class="row left wrap">
+          <label>Port
+            <select id="conPort"><option>1</option><option>2</option><option>3</option><option>4</option></select>
+          </label>
+          <label>Duration
+            <select id="conMinutes"><option value="5">5 min</option><option value="15" selected>15 min</option><option value="30">30 min</option><option value="60">60 min</option></select>
+          </label>
+          <button class="btn primary" type="submit">Connect</button>
+        </form>
+        <p id="conState" class="dim"></p>
+        <div id="conBox" hidden>
+          <div id="term"></div>
+          <div class="row wrap">
+            <span id="conInfo" class="dim"></span>
+            <span class="acts">
+              <button id="conBreak" class="btn">BREAK</button>
+              <button id="conClose" class="btn danger">End</button>
+            </span>
+          </div>
+        </div>
+        <p class="dim">Each session has to be allowed on the device's display.</p>
+      </div>
+
+      <!-- Managing it: what it is, what it is told, how it is set up. -->
+      <div data-admin>
+      <div class="cols">
+      <div>
       <table class="kv">
+        <tr><th>Region</th><td><input id="dRegion" list="regions" maxlength="48" autocomplete="off" aria-label="Region"><datalist id="regions"></datalist></td></tr>
+        <tr><th>Site</th><td class="inline"><input id="dSite" list="sites" maxlength="48" autocomplete="off" aria-label="Site"><datalist id="sites"></datalist>
+          <button id="placeSave" class="btn small" type="button">Save</button></td></tr>
         <tr><th>Device ID</th><td id="dId" class="mono"></td></tr>
         <tr><th>Fingerprint</th><td id="dFp" class="mono"></td></tr>
         <tr><th>Enrolled</th><td id="dEnrolled"></td></tr>
@@ -127,12 +176,11 @@
 
       <form id="approveForm" hidden>
         <h3>Confirm</h3>
-        <p>The device shows a six-digit code – on its display (page Info) and in its web interface. Type in here what it says there.</p>
+        <p>Type in the six-digit code from the device's display.</p>
         <div class="row left wrap">
           <input id="sas" class="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="000000" autocomplete="off" aria-label="Code from the device" required>
           <button class="btn primary" type="submit">Confirm</button>
         </div>
-        <p class="dim">Five wrong entries discard the enrollment.</p>
       </form>
 
       <div id="commands" hidden>
@@ -154,32 +202,63 @@
           </label>
           <button class="btn warn" type="submit">Play</button>
         </form>
-        <p class="dim">The device carries out “Restart” and “Play” only if that was allowed at the device itself (Menu → Network → Control center).</p>
+        <form id="tplSendForm" class="row left wrap">
+          <label class="grow">Send a template
+            <select id="tplPick" required></select>
+          </label>
+          <button class="btn warn" type="submit">Send</button>
+        </form>
+        <p class="dim">Changes need the permission set at the device.</p>
       </div>
 
-      <div id="console" hidden>
-        <h3>Remote console</h3>
-        <form id="conForm" class="row left wrap">
-          <label>Port
-            <select id="conPort"><option>1</option><option>2</option><option>3</option><option>4</option></select>
-          </label>
-          <label>Duration
-            <select id="conMinutes"><option value="5">5 min</option><option value="15" selected>15 min</option><option value="30">30 min</option><option value="60">60 min</option></select>
-          </label>
-          <button class="btn warn" type="submit">Request console</button>
-        </form>
-        <p id="conState" class="dim"></p>
-        <div id="conBox" hidden>
-          <div id="term"></div>
-          <div class="row wrap">
-            <span id="conInfo" class="dim"></span>
-            <span class="acts">
-              <button id="conBreak" class="btn">BREAK</button>
-              <button id="conClose" class="btn danger">End</button>
-            </span>
-          </div>
+      <div id="backup" hidden>
+        <h3>Backup</h3>
+        <p class="dim">Settings and stored configurations in one file. Passwords and certificates are not in it.</p>
+        <div class="row left wrap">
+          <button id="bkSave" class="btn" type="button">Save a backup</button>
+          <button id="bkLoad" class="btn warn" type="button">Restore from a file</button>
+          <input id="bkFile" type="file" accept=".json,application/json" hidden>
         </div>
-        <p class="dim">Every session has to be allowed on the device's touch display and ends by itself after the requested time. Whoever stands at the device can end it at any moment. This server passes the characters through and could read them; only when a session ran and how many characters passed is recorded.</p>
+        <p id="bkState" class="dim" role="status"></p>
+      </div>
+
+      <div id="firmware" hidden>
+        <h3>Firmware</h3>
+        <p class="dim">A device installs only packages signed by the owner.</p>
+        <p id="fwNow" class="dim"></p>
+        <table id="fwList" class="stack" hidden>
+          <thead><tr><th>Version</th><th>Language</th><th>Signed</th><th>Size</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <p id="fwNone" class="dim">No package has been uploaded yet.</p>
+        <div class="row left wrap">
+          <button id="fwAdd" class="btn" type="button">Upload a package</button>
+          <input id="fwFile" type="file" accept=".rsfw" hidden>
+        </div>
+        <p id="fwState" class="dim" role="status"></p>
+      </div>
+      </div>
+
+      <div>
+      <div id="settings" hidden>
+        <h3>Settings</h3>
+        <p id="setHint" class="dim">The device checks every value and restarts.</p>
+        <div class="row left wrap">
+          <button id="setLoad" class="btn" type="button">Read from the device</button>
+        </div>
+        <p id="setState" class="dim" role="status"></p>
+        <form id="setForm" hidden>
+          <div id="setFields"></div>
+          <div class="row end wrap">
+            <button class="btn primary" type="submit">Save and restart the device</button>
+          </div>
+        </form>
+      </div>
+      </div>
+      </div>
+
+      <div id="conLogBox">
+        <h3>Remote console sessions</h3>
         <table id="conLog" class="stack" hidden>
           <thead><tr><th>No.</th><th>Port</th><th>Start</th><th>Duration</th><th>End</th><th>Characters in / out</th></tr></thead>
           <tbody></tbody>
@@ -188,13 +267,54 @@
 
       <h3 id="histTitle" hidden>History</h3>
       <table id="history" class="stack" hidden>
-        <thead><tr><th>No.</th><th>Command</th><th>Status</th><th>When</th><th>Answer</th></tr></thead>
+        <thead><tr><th>No.</th><th>Command</th><th>By</th><th>Status</th><th>When</th><th>Answer</th></tr></thead>
         <tbody></tbody>
       </table>
 
       <div class="row end">
         <button id="revoke" class="btn danger">Revoke device</button>
       </div>
+      </div>
+    </section>
+  </div>
+
+  <div id="v-library" class="view" hidden>
+    <section class="card">
+      <div class="row">
+        <h2>Templates</h2>
+        <button id="tplNew" class="btn primary">New template</button>
+      </div>
+      <table id="tpls" class="stack" hidden>
+        <thead><tr><th>Name</th><th>Changed</th><th>By</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <p id="noTpls" class="dim">No template yet.</p>
+    </section>
+    <section class="card">
+      <div class="row">
+        <h2>Firmware</h2>
+        <button id="libFwAdd" class="btn primary">Upload a package</button>
+      </div>
+      <table id="libFw" class="stack" hidden>
+        <thead><tr><th>Version</th><th>Language</th><th>Board</th><th>Signed</th><th>Size</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <p id="noLibFw" class="dim">No package has been uploaded yet.</p>
+      <p id="libFwState" class="dim" role="status"></p>
+    </section>
+    <section class="card">
+      <div class="row">
+        <h2>Images</h2>
+        <button id="imgAdd" class="btn primary">Upload an image</button>
+        <input id="imgFile" type="file" hidden>
+      </div>
+      <p class="dim">Files for the equipment itself, such as a switch's operating system. They are kept here to download; they are not sent to a device.</p>
+      <table id="imgs" class="stack" hidden>
+        <thead><tr><th>Name</th><th>Size</th><th>SHA-256</th><th>Added</th><th>By</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <p id="noImgs" class="dim">No image has been uploaded yet.</p>
+      <p id="imgState" class="dim" role="status"></p>
     </section>
   </div>
 
@@ -218,7 +338,6 @@
         <h2 class="dup">Audit log</h2>
         <button id="auditReload" class="btn small">Refresh</button>
       </div>
-      <p class="dim">Who did or tried what, and when – sign-ins and everything that changes something. The last 200 entries.</p>
       <table id="audit" class="stack">
         <thead><tr><th>When</th><th>Who</th><th>From</th><th>What</th><th>Target</th><th></th></tr></thead>
         <tbody></tbody>
@@ -260,7 +379,7 @@
           <tr><th>Still waiting</th><td id="kcWaiting"></td></tr>
         </table>
       </div>
-      <p class="dim">Devices recognise the server by this key. When it changes, every device learns the new key as soon as it reports in; until then the old one still counts for it.</p>
+      <p class="dim">Devices recognise the server by this key.</p>
       <div class="row end wrap">
         <button id="kcEnd" class="btn danger" hidden>End the change now</button>
         <button id="kcStart" class="btn warn">Change key</button>
@@ -276,6 +395,44 @@
     <button id="askNo" class="btn">Cancel</button>
     <button id="askYes" class="btn primary"></button>
   </div>
+</dialog>
+
+<dialog id="tplDlg">
+  <form id="tplForm">
+    <h2 id="tplTitle">New template</h2>
+    <div class="row left wrap">
+      <label class="grow">Name
+        <input id="tplName" maxlength="48" autocomplete="off" required>
+      </label>
+      <label class="grow">Folder
+        <input id="tplFolder" list="tplFolders" maxlength="48" autocomplete="off">
+        <datalist id="tplFolders"></datalist>
+      </label>
+    </div>
+    <label>Text
+      <textarea id="tplText" rows="14" spellcheck="false" required></textarea>
+    </label>
+    <p id="tplErr" class="err" hidden></p>
+    <div class="row end wrap">
+      <button id="tplCancel" class="btn" type="button">Cancel</button>
+      <button class="btn primary" type="submit">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="pickDlg">
+  <form id="pickForm">
+    <h2 id="pickTitle"></h2>
+    <label><span id="pickLabel"></span>
+      <select id="pickDev" hidden></select>
+      <input id="pickText" list="pickList" maxlength="48" autocomplete="off" hidden>
+      <datalist id="pickList"></datalist>
+    </label>
+    <div class="row end wrap">
+      <button id="pickCancel" class="btn" type="button">Cancel</button>
+      <button id="pickOk" class="btn primary" type="submit"></button>
+    </div>
+  </form>
 </dialog>
 
 <dialog id="rotateDlg">

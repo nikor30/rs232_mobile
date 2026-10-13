@@ -156,6 +156,8 @@ Was das Gerät für den Server tut, steht auf einer festen Liste in `src/c2.cpp`
 
 - **Lesen, immer erlaubt:** `ping`, `status` (was auch die eigene Weboberfläche zeigt: Ports, Zähler, Netz, Akku), `settings` (Einstellungen ohne Passwörter), `configs` (Liste der gespeicherten Konfigurationen).
 - **Verändern, nur mit Freigabe:** `play` (eine gespeicherte Konfiguration auf einen Port abspielen, wie „Skripte" am Display) und `reboot`. Dafür muss unter Menü → Netz → Leitstelle der Haken **„Die Leitstelle darf Konfigurationen abspielen und das Gerät neu starten"** gesetzt sein. Er ist ab Werk aus und lässt sich nur hier setzen, nie vom Server aus.
+- **Seit 12. Oktober 2026 ebenfalls nur mit Freigabe:** `set` (Einstellungen wie über die eigene Weboberfläche, danach Neustart) und `config_get`/`config_put`/`config_delete` (gespeicherte Konfigurationen lesen, schreiben, löschen). Der Haken heißt jetzt „Die Leitstelle darf Einstellungen ändern, Konfigurationen lesen, schreiben und abspielen und das Gerät neu starten“.
+- **Weboberfläche des Geräts:** Die Tabs Ports, Netz und Setup sind verborgen, bis im Tab Gerät „Einstellungen für Administratoren zeigen“ gesetzt ist.
 - **Fernkonsole, nur mit Tipp am Display:** Mit `console` fragt der Administrator, ob er einen seriellen Port für eine bestimmte Zeit (höchstens 60 Minuten) aus seinem Browser bedienen darf. Das hängt nicht am Haken: Das Display fragt jedes Mal „Erlauben?", und ohne Antwort binnen 60 s ist es ein Nein. Solange die Konsole offen ist, steht auf jeder Seite rot „Fernkonsole"; ein Tipp darauf oder **Beenden** unter Menü → Netz → Leitstelle (`POST /api/c2/console/end`) schließt sie. Die Zeichen laufen über den Server, der sie mitlesen könnte. **Stand:** am Board geprüft bis auf die Ausgabe des Ports, weil dort noch nichts angeschlossen ist ([`../server/KONZEPT.md`](../server/KONZEPT.md) §7).
 
 Zu wissen:
@@ -165,6 +167,10 @@ Zu wissen:
 - Der Geräteschlüssel liegt unverschlüsselt im Flash. Ein verlorenes Gerät am Server sperren.
 - Diagnose: `tools/lcd_debug.py c2` (Zustand, Code, Dauer des letzten Handshakes, Stack und Heap) und die Zeilen `[C2]` im USB-Log.
 - Stand der Prüfung: `../server/KONZEPT.md` §7.
+
+### Firmware-Update über die Leitstelle
+
+Die Leitstelle kann neue Firmware einspielen, wenn am Gerät der Haken für die Leitstelle gesetzt ist — aber nur Pakete, die mit dem Schlüssel des Besitzers signiert sind (`tools/fw_sign.py`, Ablauf in `../server/README.md`, Konzept in `../server/KONZEPT.md` §4.7). Der öffentliche Schlüssel steht in `src/update_key.h` und wird mit eingebaut; ein Gerät muss einmal per USB eine Firmware mit diesem Schlüssel bekommen haben. Während des Ladens zeigt das Display den Fortschritt, danach startet das Gerät neu. Die Prüfbibliothek liegt in `lib/mldsa_native/`.
 
 ## Dateien per XMODEM / YMODEM senden
 
@@ -262,7 +268,7 @@ src/ble.*                 serielle Konsole über Bluetooth LE
 src/c2.*, c2_proto.*      Client der Leitstelle: Task, Speicher, HTTP / Protokoll und Kryptografie
 src/c2_console.*          Fernkonsole: die beiden Zeichenströme mit Offsets (ohne Arduino, wie c2_proto)
 lib/mlkem_native/         ML-KEM (FIPS 203), übernommen aus mlkem-native v1.0.0
-src/sdcard.*              SD-Karte: Mitschnitte
+src/sdcard.*              SD-Karte: Mitschnitte, USB-Stick-Modus (siehe WAVESHARE.md)
 src/power.*, bat_curve.h  Akku-Messung, Ladeerkennung, Sparmodus, Kennlinie
 src/settings.*            Einstellungen (NVS)
 src/web_assets.h          generiert aus web/ (nicht von Hand bearbeiten)

@@ -5,7 +5,15 @@
 #include <SD.h>
 #include <SPI.h>
 #include <Preferences.h>
+#include <USB.h>
+#include <USBMSC.h>
+#include "tusb.h"
+#include "soc/usb_serial_jtag_struct.h"
+#include "soc/rtc_cntl_struct.h"
+#include "ff.h"
+#include "diskio.h"
 #include "display.h"
+#include "power.h"
 
 namespace Sd {
 
@@ -13,6 +21,7 @@ static const uint32_t FLUSH_MS = 2000;     // SD writes are slow: collect, then 
 static const size_t   BUF_SIZE = 1024;
 
 static bool ok = false;
+static bool lent = false;                  // the card belongs to the USB host (stick mode)
 static SPIClass &spi = SPI;                // LovyanGFX has opened this bus for the LCD
 
 // The bus is shared with the LCD: the display task and the card must take turns.
@@ -75,6 +84,7 @@ uint64_t totalMb() { return ok ? cachedTotalMb : 0; }
 uint64_t usedMb() { return ok ? cachedUsedMb : 0; }
 
 const char *typeName() {
+  if (lent) return TR("USB stick", "USB-Stick", "pendrive USB");
   if (!ok) return TR("no card", "keine Karte", "sem cartão");
   switch (SD.cardType()) {
     case CARD_MMC:  return "MMC";
@@ -86,6 +96,7 @@ const char *typeName() {
 
 bool begin() {
   if (ok) return true;
+  if (lent) return false;
   static uint32_t lastFailure = 0;       // setup() asks twice on boards that start the card early
   if (lastFailure && millis() - lastFailure < 5000) return false;
   BusGuard guard;
@@ -199,6 +210,7 @@ void write(uint8_t port, const uint8_t *data, size_t len) {
 }
 
 void end() {
+  if (lent) { lent = false; ok = true; }   // power-off: give the card a clean end
   if (!ok) return;
   for (uint8_t p = 0; p < MAX_PORTS; p++) logStop(p);
   BusGuard guard;
@@ -228,6 +240,98 @@ void loop() {
   }
   for (uint8_t p = 0; p < MAX_PORTS; p++)
     if (logs[p].f && logs[p].len && now - logs[p].lastFlush > FLUSH_MS) flush(p);
+}
+
+// ---- USB memory stick ----
+// The card stays initialised (SD keeps its drive), but the file system on it is
+// not touched from here any more: two masters over one FAT would wreck it. The
+// host's sector requests arrive in the USB task and go straight to the card.
+static USBMSC msc;
+static uint8_t drive = 0xFF;
+static volatile bool stickEjected = false;
+static volatile uint32_t stickRead = 0, stickWritten = 0;    // sectors
+
+// SD keeps the number of its drive to itself.
+struct DriveOf : fs::SDFS {
+  static uint8_t get(fs::SDFS &s) { return s.*(&DriveOf::_pdrv); }
+};
+
+static int32_t stickOnRead(uint32_t lba, uint32_t offset, void *buffer, uint32_t size) {
+  if (offset || size % 512) return -1;
+  BusGuard guard;
+  if (disk_read(drive, (uint8_t *)buffer, lba, size / 512) != RES_OK) return -1;
+  stickRead = stickRead + size / 512;
+  return size;
+}
+
+static int32_t stickOnWrite(uint32_t lba, uint32_t offset, uint8_t *buffer, uint32_t size) {
+  if (offset || size % 512) return -1;
+  BusGuard guard;
+  if (disk_write(drive, buffer, lba, size / 512) != RES_OK) return -1;
+  stickWritten = stickWritten + size / 512;
+  return size;
+}
+
+static bool stickOnStartStop(uint8_t power, bool start, bool eject) {
+  (void)power;
+  if (eject) {
+    stickEjected = !start;
+    msc.mediaPresent(start);               // an ejected stick has no medium until the host loads it again
+  }
+  return true;
+}
+
+const char *stickStart() {
+  if (lent) return nullptr;
+  if (!ok) return TR("no SD card", "keine SD-Karte", "sem cartão SD");
+  for (uint8_t p = 0; p < MAX_PORTS; p++) logStop(p);
+  uint32_t sectors;
+  {
+    BusGuard guard;
+    drive = DriveOf::get(SD);
+    sectors = SD.numSectors();
+    if (SD.sectorSize() != 512) sectors = 0;
+  }
+  if (drive == 0xFF || !sectors) return TR("the card cannot be read", "die Karte lässt sich nicht lesen", "o cartão não pode ser lido");
+  Serial.printf("[SD]   USB-Stick-Modus: %lu Sektoren, die Debug-Konsole am USB endet hier\n", (unsigned long)sectors);
+  Serial.flush();
+  ok = false;
+  lent = true;
+  stickEjected = false;
+  stickRead = stickWritten = 0;
+  Power::forceSaver(0);                    // the USB controller wants the full clock
+  msc.vendorID("RS232");
+  msc.productID("Console SD card");
+  msc.productRevision("1.0");
+  msc.onRead(stickOnRead);
+  msc.onWrite(stickOnWrite);
+  msc.onStartStop(stickOnStartStop);
+  msc.mediaPresent(true);
+  msc.begin(sectors, 512);
+  USB.manufacturerName("RS232 Console");
+  USB.productName("RS232 Console SD card");
+  USB.begin();                             // takes the port away from the USB serial/JTAG unit
+  return nullptr;
+}
+
+// Which unit owns the USB pins is kept in the RTC domain: it survives every
+// restart, only a power cut clears it. Without this the port stays dead after
+// stick mode - no debug console, no flashing over the cable.
+void usbRestore() {
+  USB_SERIAL_JTAG.conf0.phy_sel = 0;       // the internal transceiver ...
+  USB_SERIAL_JTAG.conf0.usb_pad_enable = 1;
+  RTCCNTL.usb_conf.sw_hw_usb_phy_sel = 0;  // ... wired to the serial/JTAG unit, as after power-on
+  RTCCNTL.usb_conf.sw_usb_phy_sel = 0;
+}
+
+Stick stick() {
+  Stick s;
+  s.on = lent;
+  s.host = lent && tud_mounted();
+  s.ejected = stickEjected;
+  s.readKb = stickRead / 2;
+  s.writtenKb = stickWritten / 2;
+  return s;
 }
 
 }  // namespace Sd

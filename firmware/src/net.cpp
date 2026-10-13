@@ -12,6 +12,7 @@
 #include "certs.h"
 #include "https.h"
 #include "c2.h"
+#include "sdcard.h"
 
 #include <WiFi.h>
 #include <WebServer.h>
@@ -303,6 +304,16 @@ static String statusJson() {
   d["fw"] = FW_VERSION;
   d["board"] = BOARD_NAME;
   d["host"] = settings.hostname;
+  d["adminUi"] = settings.adminUi;
+  d["sd"] = Sd::mounted();
+  Sd::Stick st = Sd::stick();
+  if (st.on) {                           // the card is lent to the USB port
+    JsonObject k = d["stick"].to<JsonObject>();
+    k["host"] = st.host;
+    k["ejected"] = st.ejected;
+    k["readKb"] = st.readKb;
+    k["writtenKb"] = st.writtenKb;
+  }
   d["boot"] = bootId;
   JsonArray ps = d["ports"].to<JsonArray>();
   for (uint8_t p = 0; p < MAX_PORTS; p++) {
@@ -452,6 +463,12 @@ String deviceSettings() {
     o["rx"] = settings.port[p].rx;
     o["tx"] = settings.port[p].tx;
     o["hw"] = p < HW_PORTS;
+    JsonObject c = o["serial"].to<JsonObject>();
+    c["baud"] = settings.port[p].serial.baud;
+    c["bits"] = settings.port[p].serial.bits;
+    c["parity"] = String(settings.port[p].serial.parity);
+    c["stop"] = settings.port[p].serial.stop;
+    c["swap"] = settings.port[p].serial.swap;
   }
   static const int8_t RXP[] = PINS_RX, TXP[] = PINS_TX, ADCP[] = PINS_ADC;
   JsonArray a;
@@ -468,6 +485,7 @@ String deviceSettings() {
   d["batPin"] = settings.batPin;
   d["batType"] = settings.batType;
   d["batDiv"] = settings.batDiv;
+  d["c2Control"] = settings.c2Control;
   String out;
   serializeJson(d, out);
   return out;
@@ -485,12 +503,16 @@ static bool validHostname(const String &h) {
   return true;
 }
 
-static void handlePostSettings() {
-  if (!guard()) return;
+// Checks new settings and stores them: nullptr, or what is wrong with them. The
+// caller restarts the device. The same JSON as the web interface posts; what
+// travels to the control center (wire) is English, like everything on that line.
+const char *applySettings(const String &json, bool wire) {
+#define E(en, de, pt) (wire ? en : TR(en, de, pt))
   JsonDocument d;
-  if (deserializeJson(d, http.arg("plain"))) return sendJson(400, TR("{\"ok\":false,\"error\":\"invalid JSON\"}", "{\"ok\":false,\"error\":\"JSON ungültig\"}", "{\"ok\":false,\"error\":\"JSON inválido\"}"));
+  if (deserializeJson(d, json) || !d.is<JsonObject>()) return E("invalid JSON", "JSON ungültig", "JSON inválido");
 
   Settings n = settings;
+  bool badSerial = false;
   if (d["apSsid"].is<const char *>()) n.apSsid = d["apSsid"].as<String>();
   if (d["apPass"].is<const char *>() && d["apPass"].as<String>().length()) n.apPass = d["apPass"].as<String>();
   if (d["staSsid"].is<const char *>()) n.staSsid = d["staSsid"].as<String>();
@@ -527,6 +549,17 @@ static void handlePostSettings() {
         nm.trim();
         n.port[p].name = nm.substring(0, 24);
       }
+      if (o["serial"].is<JsonObjectConst>()) {             // the line settings, as the Serial tab sets them
+        JsonObjectConst c = o["serial"];
+        SerialCfg sc = n.port[p].serial;
+        if (c["baud"].is<int>()) sc.baud = c["baud"].as<uint32_t>();
+        if (c["bits"].is<int>()) sc.bits = c["bits"].as<int>();
+        if (c["parity"].is<const char *>() && strlen(c["parity"].as<const char *>()) == 1) sc.parity = c["parity"].as<const char *>()[0];
+        if (c["stop"].is<int>()) sc.stop = c["stop"].as<int>();
+        if (c["swap"].is<bool>()) sc.swap = c["swap"];
+        if (!Store::validSerial(sc)) badSerial = true;
+        else n.port[p].serial = sc;
+      }
       if (o["rx"].is<int>()) n.port[p].rx = o["rx"].as<int>();
       if (o["tx"].is<int>()) n.port[p].tx = o["tx"].as<int>();
       // software UART: keep the baud rate in its range
@@ -540,22 +573,30 @@ static void handlePostSettings() {
   if (n.batType != settings.batType || n.batDiv != settings.batDiv || n.batPin != settings.batPin) n.batEmptyMv = n.batFullMv = 0;
 
   const char *err = nullptr;
-  if (n.apSsid.isEmpty() || n.apSsid.length() > 32) err = TR("AP SSID: 1-32 characters", "AP-SSID: 1-32 Zeichen", "SSID do AP: 1-32 caracteres");
-  else if (n.apPass.length() < 8 || n.apPass.length() > 63) err = TR("AP password: 8-63 characters", "AP-Passwort: 8-63 Zeichen", "Senha do AP: 8-63 caracteres");
-  else if (n.staSsid.length() > 32) err = TR("Wi-Fi SSID too long", "WLAN-SSID zu lang", "SSID do Wi-Fi longo demais");
-  else if (n.staAuth == 0 && n.staPass.length() > 63) err = TR("Wi-Fi password too long", "WLAN-Passwort zu lang", "Senha do Wi-Fi longa demais");
-  else if (n.staAuth == 0 && n.staPass.length() && n.staPass.length() < 8) err = TR("Wi-Fi password: 8-63 characters", "WLAN-Passwort: 8-63 Zeichen", "Senha do Wi-Fi: 8-63 caracteres");
-  else if (n.staIdentity.length() > 64 || n.staUser.length() > 64) err = TR("Identity/user: max. 64 characters", "Identität/Benutzer: max. 64 Zeichen", "Identidade/usuário: máx. 64 caracteres");
-  else if (n.staAuth > 1 && n.staUser.isEmpty() && n.staSsid.length()) err = TR("User name missing (PEAP/TTLS)", "Benutzername fehlt (PEAP/TTLS)", "Falta o nome de usuário (PEAP/TTLS)");
-  else if (n.staAuth > 1 && n.staPass.isEmpty() && n.staSsid.length()) err = TR("Password missing (PEAP/TTLS)", "Passwort fehlt (PEAP/TTLS)", "Falta a senha (PEAP/TTLS)");
+  if (badSerial) err = E("Serial settings out of range", "Serielle Einstellungen außerhalb des Bereichs", "Configuração serial fora do intervalo");
+  else if (n.apSsid.isEmpty() || n.apSsid.length() > 32) err = E("AP SSID: 1-32 characters", "AP-SSID: 1-32 Zeichen", "SSID do AP: 1-32 caracteres");
+  else if (n.apPass.length() < 8 || n.apPass.length() > 63) err = E("AP password: 8-63 characters", "AP-Passwort: 8-63 Zeichen", "Senha do AP: 8-63 caracteres");
+  else if (n.staSsid.length() > 32) err = E("Wi-Fi SSID too long", "WLAN-SSID zu lang", "SSID do Wi-Fi longo demais");
+  else if (n.staAuth == 0 && n.staPass.length() > 63) err = E("Wi-Fi password too long", "WLAN-Passwort zu lang", "Senha do Wi-Fi longa demais");
+  else if (n.staAuth == 0 && n.staPass.length() && n.staPass.length() < 8) err = E("Wi-Fi password: 8-63 characters", "WLAN-Passwort: 8-63 Zeichen", "Senha do Wi-Fi: 8-63 caracteres");
+  else if (n.staIdentity.length() > 64 || n.staUser.length() > 64) err = E("Identity/user: max. 64 characters", "Identität/Benutzer: max. 64 Zeichen", "Identidade/usuário: máx. 64 caracteres");
+  else if (n.staAuth > 1 && n.staUser.isEmpty() && n.staSsid.length()) err = E("User name missing (PEAP/TTLS)", "Benutzername fehlt (PEAP/TTLS)", "Falta o nome de usuário (PEAP/TTLS)");
+  else if (n.staAuth > 1 && n.staPass.isEmpty() && n.staSsid.length()) err = E("Password missing (PEAP/TTLS)", "Passwort fehlt (PEAP/TTLS)", "Falta a senha (PEAP/TTLS)");
   else if (n.staAuth == 1 && n.staSsid.length() && !Certs::ready(Certs::CLIENT))
-    err = TR("EAP-TLS: upload a client certificate with its key first (tab Network)", "EAP-TLS: erst ein Client-Zertifikat mit Schlüssel hochladen (Tab Netz)", "EAP-TLS: envie primeiro um certificado de cliente com a chave (aba Rede)");
+    err = E("EAP-TLS: upload a client certificate with its key first (tab Network)", "EAP-TLS: erst ein Client-Zertifikat mit Schlüssel hochladen (Tab Netz)", "EAP-TLS: envie primeiro um certificado de cliente com a chave (aba Rede)");
   else if (!validHostname(n.hostname)) err = "Hostname: a-z, 0-9, '-' (max. 31)";
   else err = Store::checkPins(n);
-  if (err) return sendJson(400, String("{\"ok\":false,\"error\":\"") + err + "\"}");
-
+  if (err) return err;
   settings = n;
   Store::save();
+  return nullptr;
+#undef E
+}
+
+static void handlePostSettings() {
+  if (!guard()) return;
+  const char *err = applySettings(http.arg("plain"), false);
+  if (err) return sendJson(400, String("{\"ok\":false,\"error\":\"") + err + "\"}");
   sendJson(200, "{\"ok\":true,\"reboot\":true}");
   Display::message("Einstellungen", TR("Restarting ...", "Neustart ...", "Reiniciando ..."), 3000);
   rebootAt = millis() + 1500;
@@ -835,6 +876,27 @@ static void setupHttp() {
     settings.c2Control = d["allow"];
     Store::save();
     sendJson(200, "{\"ok\":true}");
+  });
+  // The administrator's tabs of the web interface: out of sight until somebody asks for them.
+  http.on("/api/adminui", HTTP_POST, []() {
+    if (!guard()) return;
+    JsonDocument d;
+    if (deserializeJson(d, http.arg("plain")) || !d["on"].is<bool>()) return sendJson(400, TR("{\"ok\":false,\"error\":\"invalid JSON\"}", "{\"ok\":false,\"error\":\"JSON ungültig\"}", "{\"ok\":false,\"error\":\"JSON inválido\"}"));
+    settings.adminUi = d["on"];
+    Store::save();
+    sendJson(200, "{\"ok\":true}");
+  });
+  // The SD card as a USB memory stick at the USB port. Ends with a restart.
+  http.on("/api/stick", HTTP_POST, []() {
+    if (!guard()) return;
+    const char *err = Sd::stickStart();
+    if (!err) return sendJson(200, "{\"ok\":true}");
+    JsonDocument d;
+    d["ok"] = false;
+    d["error"] = err;
+    String out;
+    serializeJson(d, out);
+    sendJson(409, out);
   });
   // The remote console can be closed from here; opening one takes a tap on the display.
   http.on("/api/c2/console/end", HTTP_POST, []() {

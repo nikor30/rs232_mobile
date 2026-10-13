@@ -522,6 +522,11 @@ func TestPostgresMigratesFromTheFirstSchema(t *testing.T) {
 	key := s.ServerKey().Public()
 	p := s.b.(*pg)
 	for _, q := range []string{
+		// what the later schemas added, taken away again
+		`DROP TABLE templates`,
+		`ALTER TABLE devices DROP COLUMN region, DROP COLUMN site`,
+		`ALTER TABLE commands DROP COLUMN by_user`,
+		`ALTER TABLE server DROP COLUMN next_tpl`,
 		`ALTER TABLE server DROP COLUMN old_key, DROP COLUMN old_until`,
 		`ALTER TABLE devices DROP COLUMN old_key`,
 		`DELETE FROM schema_version WHERE version > 1`,
