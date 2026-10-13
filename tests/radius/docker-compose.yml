@@ -14,3 +14,6 @@ services:
       - ./data/clients.conf:/etc/raddb/clients.conf:ro
       - ./data/authorize:/etc/raddb/mods-config/files/authorize:ro
     restart: unless-stopped
+    logging:                             # -X writes a lot; a long test must not fill the disk
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
