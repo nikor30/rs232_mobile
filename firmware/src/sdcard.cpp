@@ -1,6 +1,8 @@
 #include "sdcard.h"
 #include "lang.h"
 
+#include <errno.h>
+#include "mbedtls/md5.h"
 #include <FS.h>
 #include <SD.h>
 #include <SPI.h>
@@ -196,52 +198,149 @@ void logStop(uint8_t port) {
 }
 
 // ---- a file from the control center
+// It is written as "<name>.<tag>.part" (the tag is the beginning of its MD5
+// sum, so a part never continues another file) and gets its name only when
+// what is on the card has been read back and has the right sum. A part that
+// is left behind by a broken connection or a restart is continued.
 static File putFile;
-static String putName;
+static String putName, putPart;
+static uint32_t putBytes = 0;
 
-const char *putBegin(const char *name, uint32_t size) {
-  if (!ok) return "no SD card in the device";
-  if (putFile) return "a file is being written already";
+static bool nameOk(const char *name) {
   size_t n = strlen(name);
-  if (!n || n > 96 || name[0] == '.' || strpbrk(name, "/\\:*?\"<>|")) return "the name cannot be used on the card";
-  refreshSizes();
-  if ((uint64_t)size / (1024 * 1024) + 1 >= cachedTotalMb - cachedUsedMb) return "not enough room on the SD card";
-  BusGuard guard;
-  putName = String("/") + name;
-  SD.remove(putName + ".part");
-  putFile = SD.open(putName + ".part", FILE_WRITE);
-  return putFile ? nullptr : "the file could not be created on the card";
+  return n && n <= 96 && name[0] != '.' && !strpbrk(name, "/\\:*?\"<>|");
 }
 
-bool putWrite(const uint8_t *data, size_t len) {
-  if (!putFile) return false;
-  BusGuard guard;
-  return putFile.write(data, len) == len;
-}
-
-bool putEnd(bool keep) {
-  if (!putFile) return false;
-  BusGuard guard;
-  putFile.close();
-  bool done = false;
-  if (keep) {
-    SD.remove(putName);                  // a newer one of the same name takes its place
-    done = SD.rename(putName + ".part", putName);
+const char *putBegin(const char *name, uint32_t size, const char *tag, uint32_t &have) {
+  have = 0;
+  if (!ok) return "no SD card in the device";
+  if (putName.length()) return "a file is being written already";
+  if (!nameOk(name) || strlen(tag) != 8 || strpbrk(tag, "/\\.")) return "the name cannot be used on the card";
+  String part = String("/") + name + "." + tag + ".part";
+  {
+    BusGuard guard;
+    File f = SD.open(part);
+    if (f && !f.isDirectory() && f.size() <= size) have = f.size();
+    if (f) f.close();
+    if (!have) SD.remove(part);
   }
-  if (!done) SD.remove(putName + ".part");
-  putName = "";
+  refreshSizes();
+  if ((uint64_t)(size - have) / (1024 * 1024) + 1 >= cachedTotalMb - cachedUsedMb) return "not enough room on the SD card";
+  BusGuard guard;
+  putFile = SD.open(part, have ? "r+" : "w");
+  if (putFile && have && !putFile.seek(have)) putFile.close();
+  if (!putFile) return "the file could not be created on the card";
+  putName = String("/") + name;
+  putPart = part;
+  putBytes = have;
+  return nullptr;
+}
+
+// The card now and then refuses a write (seen on the board at hand). What
+// had been handed over before may then not be on the card either - the file
+// system collects before it writes. So nothing is repaired in place: the
+// caller closes the file (putPause), opens it again (putBegin) and goes on
+// from what the card says it has, which is what the last flush made sure of.
+bool putWrite(const uint8_t *data, size_t len) {
+  if (!putName.length() || !putFile) return false;
+  BusGuard guard;
+  if (putFile.write(data, len) != len) {
+    Serial.printf("[SD]   Schreiben bei %lu gescheitert (errno %d)\n", (unsigned long)putBytes, errno);
+    return false;
+  }
+  putBytes += len;
+  // handed to the card every quarter megabyte: that much at most is fetched
+  // again after a failed write or a power cut
+  if (putBytes / (256 * 1024) != (putBytes - len) / (256 * 1024)) {
+    putFile.flush();
+    if (putFile.getWriteError()) {
+      Serial.printf("[SD]   Sichern bei %lu gescheitert\n", (unsigned long)putBytes);
+      return false;
+    }
+  }
+  return true;
+}
+
+// Stops for now: what has arrived stays on the card and is continued later.
+void putPause() {
+  if (!putName.length()) return;
+  BusGuard guard;
+  if (putFile) putFile.close();
+  putName = putPart = "";
+}
+
+// The end: reads back what the card holds and compares its MD5 sum with the
+// one the server named. Only then does the file get its name.
+const char *putFinish(uint32_t size, const uint8_t md5[16], void (*progress)(int pct)) {
+  if (!putName.length()) return "no file is being written";
+  String name = putName, part = putPart;
+  uint8_t *buf = (uint8_t *)malloc(4096);
+  const char *err = buf ? nullptr : "not enough memory";
+  {
+    BusGuard guard;
+    if (putFile) putFile.close();
+    putFile = SD.open(part);
+    if (!putFile || putFile.size() != size) err = err ? err : "the file on the card is incomplete";
+  }
+  mbedtls_md5_context ctx;
+  mbedtls_md5_init(&ctx);
+  mbedtls_md5_starts_ret(&ctx);
+  for (uint32_t off = 0; !err && off < size;) {
+    size_t n;
+    {
+      BusGuard guard;                    // piece by piece: the display shares the bus
+      n = putFile.read(buf, 4096);
+    }
+    if (!n) { err = "the file on the card cannot be read back"; break; }
+    mbedtls_md5_update_ret(&ctx, buf, n);
+    off += n;
+    if (progress && (off / 4096) % 64 == 0) progress((int)((uint64_t)off * 100 / size));
+    // Let go of the bus and of the processor in between: reading megabytes in
+    // one go starves the display and trips the watchdog (it did - the device
+    // then restarted, found the job again and restarted again).
+    if ((off / 4096) % 4 == 0) vTaskDelay(pdMS_TO_TICKS(2));
+  }
+  uint8_t sum[16];
+  mbedtls_md5_finish_ret(&ctx, sum);
+  mbedtls_md5_free(&ctx);
+  free(buf);
+  if (!err && memcmp(sum, md5, 16)) err = "the file on the SD card does not have the right MD5 sum";
+  BusGuard guard;
+  if (putFile) putFile.close();
+  if (!err) {
+    SD.remove(name);                     // a newer one of the same name takes its place
+    if (!SD.rename(part, name)) err = "the file could not be stored on the SD card";
+  }
+  if (err) SD.remove(part);              // damaged: the next attempt starts from nothing
+  putName = putPart = "";
   cachedUsedMb = SD.usedBytes() / (1024ULL * 1024ULL);
-  return done;
+  return err;
+}
+
+const char *removeRoot(const char *name) {
+  if (!ok) return "no SD card in the device";
+  size_t n = strlen(name);
+  if (!n || n > 96 || name[0] == '.' || strpbrk(name, "/\\")) return "the name cannot be used on the card";
+  if (putName.length()) return "a file is being written already";
+  BusGuard guard;
+  String path = String("/") + name;
+  File f = SD.open(path);
+  bool file = f && !f.isDirectory();
+  if (f) f.close();
+  if (!file) return "file not found on the SD card";
+  if (!SD.remove(path)) return "the file could not be deleted";
+  cachedUsedMb = SD.usedBytes() / (1024ULL * 1024ULL);
+  return nullptr;
 }
 
 String rootJson(size_t room) {
   String out = "[";
-  if (ok && !putFile) {
+  if (ok && !putName.length()) {
     BusGuard guard;
     File dir = SD.open("/");
     for (File f = dir ? dir.openNextFile() : File(); f; f = dir.openNextFile()) {
       String n = f.name();
-      if (!f.isDirectory() && n.length() && n[0] != '.' && n.indexOf('"') < 0 && n.indexOf('\\') < 0) {
+      if (!f.isDirectory() && n.length() && n[0] != '.' && !n.endsWith(".part") && n.indexOf('"') < 0 && n.indexOf('\\') < 0) {
         String one = String(out.length() > 1 ? "," : "") + "{\"n\":\"" + n + "\",\"s\":" + String((uint32_t)f.size()) + "}";
         if (out.length() + one.length() + 1 > room) { f.close(); break; }
         out += one;

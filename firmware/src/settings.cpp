@@ -119,6 +119,7 @@ void load() {
   settings.apSsid   = prefs.getString("apSsid", "");
   settings.apPass   = prefs.getString("apPass", "");
   settings.staSsid  = prefs.getString("staSsid", "");
+  settings.staDns   = prefs.getString("staDns", "");
   settings.staPass  = prefs.getString("staPass", "");
   settings.staAuth  = prefs.getUChar("staAuth", 0);
   settings.staIdentity = prefs.getString("staId", "");
@@ -201,6 +202,7 @@ void save() {
   prefs.putString("apSsid", settings.apSsid);
   prefs.putString("apPass", settings.apPass);
   prefs.putString("staSsid", settings.staSsid);
+  prefs.putString("staDns", settings.staDns);
   prefs.putString("staPass", settings.staPass);
   prefs.putUChar("staAuth", settings.staAuth);
   prefs.putString("staId", settings.staIdentity);

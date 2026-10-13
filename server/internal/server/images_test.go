@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"crypto/md5"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -16,7 +17,12 @@ import (
 
 func (e *env) image(name, folder string, b []byte, out any) int {
 	e.t.Helper()
-	req, _ := http.NewRequest("POST", e.ts.URL+"/admin/v1/images?name="+url.QueryEscape(name)+"&folder="+url.QueryEscape(folder), bytes.NewReader(b))
+	return e.imageSum(name, folder, "", b, out)
+}
+
+func (e *env) imageSum(name, folder, sum string, b []byte, out any) int {
+	e.t.Helper()
+	req, _ := http.NewRequest("POST", e.ts.URL+"/admin/v1/images?name="+url.QueryEscape(name)+"&folder="+url.QueryEscape(folder)+"&md5="+sum, bytes.NewReader(b))
 	req.Header.Set("Authorization", "Bearer "+adminToken)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -44,9 +50,20 @@ func TestImageShelf(t *testing.T) {
 	data := bytes.Repeat([]byte("switch image "), 45000)
 	sum := sha256.Sum256(data)
 
+	// with the maker's MD5 sum: a file that does not have it is not kept
+	five := md5.Sum(data)
+	want := hex.EncodeToString(five[:])
+	for sum, code := range map[string]int{"abc": 400, strings.Repeat("0", 32): 400} {
+		if got := e.imageSum("x.bin", "", sum, data, nil); got != code {
+			t.Fatalf("MD5 %q: %d", sum, got)
+		}
+	}
+	if files, _ := filepath.Glob(filepath.Join(e.dir, "images", "*")); len(files) != 0 {
+		t.Fatalf("a refused file was kept: %v", files)
+	}
 	var info ImageInfo
-	if code := e.image("../../etc/c9300-universal.17.09.bin", " Cisco ", data, &info); code != 201 {
-		t.Fatalf("upload: %d", code)
+	if code := e.imageSum("../../etc/c9300-universal.17.09.bin", " Cisco ", strings.ToUpper(want), data, &info); code != 201 || info.MD5 != want {
+		t.Fatalf("upload: %d %+v", code, info)
 	}
 	if info.Name != "c9300-universal.17.09.bin" || info.Folder != "Cisco" || info.Size != int64(len(data)) || info.SHA256 != hex.EncodeToString(sum[:]) || !imgIDPattern.MatchString(info.ID) {
 		t.Fatalf("stored: %+v", info)

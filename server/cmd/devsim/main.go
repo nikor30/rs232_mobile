@@ -7,6 +7,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/md5"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -87,9 +88,13 @@ func main() {
 		name := fs.String("name", "devsim", "name shown to the administrator")
 		fs.Parse(flag.Args()[1:])
 		if fs.NArg() != 1 {
-			log.Fatal("usage: devsim enroll [-name N] TOKEN")
+			log.Fatal("usage: devsim enroll [-name N] TOKEN | https://server (without invitation)")
 		}
-		sas, err := c.Enroll(fs.Arg(0), *name, map[string]string{"fw": "devsim", "board": "simulator"})
+		enroll := c.Enroll
+		if strings.HasPrefix(fs.Arg(0), "http://") || strings.HasPrefix(fs.Arg(0), "https://") {
+			enroll = c.EnrollOpen
+		}
+		sas, err := enroll(fs.Arg(0), *name, map[string]string{"fw": "devsim", "board": "simulator"})
 		if err != nil {
 			log.Fatalf("enroll: %v", err)
 		}
@@ -213,6 +218,17 @@ func main() {
 							delete(simConfigs, a.Name)
 							res.Out = "deleted"
 						}
+					case "sd_delete":
+						var a struct{ Name string }
+						json.Unmarshal(cmd.Args, &a)
+						if _, have := simSD[a.Name]; !*control {
+							res.OK, res.Out = false, denied
+						} else if !have {
+							res.OK, res.Out = false, "file not found on the SD card"
+						} else {
+							delete(simSD, a.Name)
+							res.Out = "deleted"
+						}
 					case "sd_put":
 						if !*control {
 							res.OK, res.Out = false, denied
@@ -220,7 +236,8 @@ func main() {
 							res.OK, res.Out = false, "download failed: "+err.Error()
 						} else {
 							simSD[name] = len(data)
-							res.Out = fmt.Sprintf("stored %s (%d bytes)", name, len(data))
+							sum := md5.Sum(data)
+							res.Out = fmt.Sprintf("stored %s (%d bytes, MD5 %x checked on the card)", name, len(data), sum)
 						}
 					case "update":
 						if !*control {

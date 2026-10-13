@@ -254,6 +254,22 @@ type fwReply struct {
 	D   []byte `json:"d"`             // a piece of the image, empty at its end
 }
 
+// hardware is the board a device says it is (FW_BOARD_ID of its firmware): in
+// its status, or in what it said when it enrolled. Empty if it has not said.
+func (sv *Server) hardware(dev string) string {
+	d, err := sv.st.Device(dev)
+	if err != nil {
+		return ""
+	}
+	var v struct {
+		HW string `json:"hw"`
+	}
+	if json.Unmarshal(d.Status, &v); v.HW == "" {
+		json.Unmarshal(d.Info, &v)
+	}
+	return v.HW
+}
+
 // fwDevice answers a device that is carrying out an "update" command: first
 // with manifest and signature, then with the image from the offset it names.
 func (sv *Server) fwDevice(dev string, cmdID uint64, off int64, head bool) (*fwReply, error) {

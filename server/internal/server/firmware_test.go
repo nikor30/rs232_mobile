@@ -85,6 +85,16 @@ func TestFirmwareShelfAndDelivery(t *testing.T) {
 	if _, _, _, err := c.Firmware(1); err == nil {
 		t.Fatal("firmware without a command")
 	}
+	// a device that says it is other hardware does not get this package
+	if _, err := c.Poll(map[string]string{"hw": "another-board"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if code := e.admin("POST", cmdURL, map[string]any{"type": "update", "args": map[string]string{"fw": info.ID}}, nil); code != 400 {
+		t.Fatalf("package for other hardware queued: HTTP %d", code)
+	}
+	if _, err := c.Poll(map[string]string{"hw": "waveshare-s3-lcd2"}, nil); err != nil {
+		t.Fatal(err)
+	}
 	var cmd store.Command
 	if code := e.admin("POST", cmdURL, map[string]any{"type": "update", "args": map[string]string{"fw": info.ID}}, &cmd); code != 201 {
 		t.Fatalf("update: %d", code)
@@ -92,7 +102,7 @@ func TestFirmwareShelfAndDelivery(t *testing.T) {
 	if _, _, _, err := c.Firmware(cmd.ID); err == nil {
 		t.Fatal("firmware before the command was fetched")
 	}
-	if r, err := c.Poll(nil, nil); err != nil || len(r.Cmds) != 1 || r.Cmds[0].Type != "update" {
+	if r, err := c.Poll(map[string]string{"hw": "waveshare-s3-lcd2"}, nil); err != nil || len(r.Cmds) != 1 || r.Cmds[0].Type != "update" {
 		t.Fatalf("poll: %+v %v", r, err)
 	}
 	m, s, img, err := c.Firmware(cmd.ID)

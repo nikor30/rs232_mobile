@@ -23,6 +23,7 @@
 #include <esp_random.h>
 #include <esp_wifi.h>
 #include <esp_wpa2.h>
+#include <esp_netif.h>
 #include <lwip/sockets.h>   // non-blocking send() for the raw TCP path
 
 namespace Net {
@@ -436,6 +437,7 @@ String deviceSettings() {
   JsonDocument d;
   d["apSsid"] = settings.apSsid;
   d["staSsid"] = settings.staSsid;
+  d["staDns"] = settings.staDns;
   d["staAuth"] = settings.staAuth;
   d["staIdentity"] = settings.staIdentity;
   d["staUser"] = settings.staUser;
@@ -517,6 +519,7 @@ const char *applySettings(const String &json, bool wire) {
   if (d["apPass"].is<const char *>() && d["apPass"].as<String>().length()) n.apPass = d["apPass"].as<String>();
   if (d["staSsid"].is<const char *>()) n.staSsid = d["staSsid"].as<String>();
   if (d["staPass"].is<const char *>() && d["staPass"].as<String>().length()) n.staPass = d["staPass"].as<String>();
+  if (d["staDns"].is<const char *>()) { n.staDns = d["staDns"].as<String>(); n.staDns.trim(); }
   if (d["staClear"] | false) { n.staSsid = ""; n.staPass = ""; n.staAuth = 0; }
   if (d["staAuth"].is<int>()) n.staAuth = constrain(d["staAuth"].as<int>(), 0, 3);
   if (d["staIdentity"].is<const char *>()) n.staIdentity = d["staIdentity"].as<String>();
@@ -573,10 +576,12 @@ const char *applySettings(const String &json, bool wire) {
   if (n.batType != settings.batType || n.batDiv != settings.batDiv || n.batPin != settings.batPin) n.batEmptyMv = n.batFullMv = 0;
 
   const char *err = nullptr;
+  IPAddress dnsIp;
   if (badSerial) err = E("Serial settings out of range", "Serielle Einstellungen außerhalb des Bereichs", "Configuração serial fora do intervalo");
   else if (n.apSsid.isEmpty() || n.apSsid.length() > 32) err = E("AP SSID: 1-32 characters", "AP-SSID: 1-32 Zeichen", "SSID do AP: 1-32 caracteres");
   else if (n.apPass.length() < 8 || n.apPass.length() > 63) err = E("AP password: 8-63 characters", "AP-Passwort: 8-63 Zeichen", "Senha do AP: 8-63 caracteres");
   else if (n.staSsid.length() > 32) err = E("Wi-Fi SSID too long", "WLAN-SSID zu lang", "SSID do Wi-Fi longo demais");
+  else if (n.staDns.length() && (!dnsIp.fromString(n.staDns) || dnsIp == IPAddress(0, 0, 0, 0))) err = E("DNS server: an IPv4 address like 192.168.1.1, or empty", "DNS-Server: eine IPv4-Adresse wie 192.168.1.1 oder leer", "Servidor DNS: um endereço IPv4 como 192.168.1.1, ou vazio");
   else if (n.staAuth == 0 && n.staPass.length() > 63) err = E("Wi-Fi password too long", "WLAN-Passwort zu lang", "Senha do Wi-Fi longa demais");
   else if (n.staAuth == 0 && n.staPass.length() && n.staPass.length() < 8) err = E("Wi-Fi password: 8-63 characters", "WLAN-Passwort: 8-63 Zeichen", "Senha do Wi-Fi: 8-63 caracteres");
   else if (n.staIdentity.length() > 64 || n.staUser.length() > 64) err = E("Identity/user: max. 64 characters", "Identität/Benutzer: max. 64 Zeichen", "Identidade/usuário: máx. 64 caracteres");
@@ -632,6 +637,7 @@ static void handleC2Get() {
   d["code"] = i.code;
   d["id"] = i.id;
   d["url"] = i.url;
+  d["want"] = i.want;
   d["error"] = i.error;
   d["lastOkS"] = i.lastOkMs ? (int32_t)((millis() - i.lastOkMs) / 1000) : -1;
   d["polls"] = i.polls;
@@ -640,6 +646,7 @@ static void handleC2Get() {
   d["stackFree"] = i.stackFree;
   d["taskStackFree"] = i.taskStackFree;
   d["sta"] = staConnected();
+  d["down"] = C2::down();
   d["control"] = settings.c2Control;
   d["unattS"] = C2::unattendedLeft();
   C2::Console rc = C2::console();
@@ -914,6 +921,25 @@ static void setupHttp() {
     if (!guard()) return;
     C2::consoleEnd();
     sendJson(200, "{\"ok\":true}");
+  });
+  // Not waiting for the next attempt the device would make by itself.
+  http.on("/api/c2/reconnect", HTTP_POST, []() {
+    if (!guard()) return;
+    C2::reconnect();
+    sendJson(200, "{\"ok\":true}");
+  });
+  // Where the server is reached. Its key stays the pinned one, so a wrong
+  // address finds nobody the device would talk to.
+  http.on("/api/c2/server", HTTP_POST, []() {
+    if (!guard()) return;
+    JsonDocument d, o;
+    deserializeJson(d, http.arg("plain"));
+    const char *err = C2::setServer(d["url"] | "");
+    o["ok"] = !err;
+    if (err) o["error"] = err;
+    String out;
+    serializeJson(o, out);
+    sendJson(err ? 400 : 200, out);
   });
   http.on("/api/c2/forget", HTTP_POST, []() {
     if (!guard()) return;
@@ -1200,6 +1226,19 @@ static uint8_t pickChannel() {
   return cand[best];
 }
 
+// A DNS server set by hand replaces the one the network has just named. After
+// every lease: DHCP writes its own again each time.
+static void applyStaDns() {
+  IPAddress ip;
+  if (!settings.staDns.length() || !ip.fromString(settings.staDns)) return;
+  esp_netif_t *nif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+  esp_netif_dns_info_t dns = {};
+  dns.ip.type = ESP_IPADDR_TYPE_V4;
+  dns.ip.u_addr.ip4.addr = (uint32_t)ip;
+  bool ok = nif && esp_netif_set_dns_info(nif, ESP_NETIF_DNS_MAIN, &dns) == ESP_OK;
+  Serial.printf("[WLAN] DNS-Server %s%s\n", settings.staDns.c_str(), ok ? " (von Hand gesetzt)" : " - setzen gescheitert");
+}
+
 // WLAN client: WPA2/WPA3-PSK or 802.1X (EAP-TLS with certificate, PEAP or TTLS).
 // The PEM buffers are handed to the supplicant including the terminating NUL
 // (mbedtls only recognises PEM that way) and must stay alive while connected.
@@ -1290,6 +1329,7 @@ void begin() {
       Serial.printf("[WLAN] Client hat IP %s\n", IPAddress(info.wifi_ap_staipassigned.ip.addr).toString().c_str());
     else if (e == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
       Serial.printf("[WLAN] LAN-IP %s\n", WiFi.localIP().toString().c_str());
+      applyStaDns();
       staReason = 0;
       staIpChanged = true;
       dirty = true;

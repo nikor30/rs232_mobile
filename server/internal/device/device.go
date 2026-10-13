@@ -5,6 +5,7 @@ package device
 
 import (
 	"bytes"
+	"crypto/md5"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -208,6 +209,31 @@ func (c *Client) Enroll(token, name string, info any) (sas string, err error) {
 	return sas, err
 }
 
+// EnrollOpen is Enroll for a device that was only given the server's address:
+// no invitation, so nothing to check the server's key against - it is taken as
+// shown. The server accepts this only while registration is open.
+func (c *Client) EnrollOpen(url, name string, info any) (sas string, err error) {
+	resp, err := c.HTTP.Get(strings.TrimRight(url, "/") + "/v1/server-key")
+	if err != nil {
+		return "", err
+	}
+	pub, err := io.ReadAll(io.LimitReader(resp.Body, proto.PubSize+1))
+	resp.Body.Close()
+	if err != nil {
+		return "", err
+	}
+	if len(pub) != proto.PubSize {
+		return "", ErrServerKey
+	}
+	c.State.URL, c.State.ServerPub, c.State.NextPub = url, pub, nil
+	if err := c.handshake(proto.KindEnroll, [proto.TokenIDSize]byte{}, make([]byte, proto.PSKSize)); err != nil {
+		return "", err
+	}
+	sas = c.sess.SAS()
+	_, err = c.exchange(map[string]any{"t": "enroll", "name": name, "info": info})
+	return sas, err
+}
+
 // Poll reports status and results and fetches new commands. It shakes hands
 // first if there is no session, and once more if the server has forgotten it.
 func (c *Client) Poll(status any, results []Result) (*Reply, error) {
@@ -284,12 +310,13 @@ func (c *Client) Image(cmdID uint64) (name string, data []byte, err error) {
 		N    string `json:"n"`
 		Size int    `json:"size"`
 		SHA  string `json:"sha"`
+		MD5  string `json:"md5"`
 		D    []byte `json:"d"`
 	}
 	if err = c.exchangeInto(msg{T: "img", ID: cmdID, Head: true}, &r); err != nil {
 		return
 	}
-	name, size, sha := r.N, r.Size, r.SHA
+	name, size, sha, sum5 := r.N, r.Size, r.SHA, r.MD5
 	for len(data) < size {
 		r.D = nil
 		if err = c.exchangeInto(msg{T: "img", ID: cmdID, Off: int64(len(data))}, &r); err != nil {
@@ -301,7 +328,8 @@ func (c *Client) Image(cmdID uint64) (name string, data []byte, err error) {
 		data = append(data, r.D...)
 	}
 	sum := sha256.Sum256(data)
-	if len(data) != size || hex.EncodeToString(sum[:]) != sha {
+	five := md5.Sum(data)
+	if len(data) != size || hex.EncodeToString(sum[:]) != sha || hex.EncodeToString(five[:]) != sum5 {
 		err = errors.New("the file is not the one the server named")
 	}
 	return

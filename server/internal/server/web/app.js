@@ -18,7 +18,7 @@
   const { t } = I18N;
   const STATES = { pending: t('waiting for confirmation'), active: t('connected'), revoked: t('revoked') };
   const CMD_STATES = { queued: t('queued'), sent: t('fetched'), done: t('done'), failed: t('refused'), expired: t('expired') };
-  const CMD_NAMES = { ping: t('Ping'), status: t('Status'), settings: t('Settings'), configs: t('Configurations'), play: t('Play'), reboot: t('Restart'), console: t('Remote console'), update: t('Firmware update'), sd_put: t('File to the SD card'),
+  const CMD_NAMES = { ping: t('Ping'), status: t('Status'), settings: t('Settings'), configs: t('Configurations'), play: t('Play'), reboot: t('Restart'), console: t('Remote console'), update: t('Firmware update'), sd_put: t('File to the SD card'), sd_delete: t('Delete from the SD card'),
     set: t('Change settings'), config_get: t('Read configuration'), config_put: t('Write configuration'), config_delete: t('Delete configuration') };
   const APP = t('RS232 Control Center');
 
@@ -134,6 +134,7 @@
     if (was !== selected) {
       if (was) conDetach();
       setFor = placeFor = sdNote = '';
+      sdChecked = {};
       window.scrollTo(0, 0);
     }
     if (!selected && TABS[view]) tabs(view, $(`[data-tabs=${view}]`));
@@ -281,6 +282,7 @@
   }
   function render() {
     renderSide();
+    renderOpen();
     if (admin) renderServer();
     if (selected) renderDevice(); else if (view === 'fleet') renderFleet();
   }
@@ -433,7 +435,7 @@
     tile('#oCtl', st.ctl == null ? '–' : st.ctl ? t('allowed') : t('read only'), st.ctl ? t('Commands, settings and templates are taken.') : t('Allowed only at the device itself.'));
     tile('#oBat', st.bat_pct != null ? `${st.bat_pct} %` : '–', st.bat_mv ? `${(st.bat_mv / 1000).toFixed(2)} V` : '');
     tile('#oSig', st.rssi != null ? el('span', {}, bars(st.rssi), ` ${st.rssi} dBm`) : '–', st.rssi == null ? '' : st.rssi >= -67 ? t('good') : st.rssi >= -78 ? t('fair') : t('weak – large transfers take long'));
-    tile('#oFw', st.fw || (d.info && d.info.fw) || '–', LANGS[st.lang] || st.lang || '');
+    tile('#oFw', st.fw || (d.info && d.info.fw) || '–', [LANGS[st.lang] || st.lang, st.hw || (d.info && d.info.hw)].filter(Boolean).join(' · '));
     const sd = st.sd || {};
     const sdText = sd.stick ? t('SD card lent to the USB port as a memory stick') : sd.on ? t('SD card: {used} of {total} MB used', { used: sd.used, total: sd.mb }) : st.sd ? t('no SD card') : '';
     tile('#oStore', st.cfgs ? (st.cfgs.length === 1 ? t('1 configuration') : t('{n} configurations', { n: st.cfgs.length })) : '–', sdText);
@@ -471,7 +473,22 @@
     $('#sdText').textContent = sdText || '–';
     const sb = $('#sdFiles').tBodies[0], files = sd.files || [];
     sb.textContent = '';
-    for (const f of files) sb.append(el('tr', {}, el('td', { textContent: f.n }), el('td', { textContent: f.s < 1024 ? `${f.s} B` : bytes(f.s) })));
+    for (const f of files) {
+      const acts = el('td', { className: 'acts' });
+      if (can) {
+        const del = el('button', { className: 'btn small danger', type: 'button', textContent: t('Delete') });
+        del.addEventListener('click', async () => {
+          if (await ask(t('Delete “{name}” from the SD card?', { name: f.n }), t('The file is gone from the card for good.'), t('Delete'))) send('sd_delete', { name: f.n });
+        });
+        acts.append(del);
+      }
+      // The green mark: this device has read the file back from its card and
+      // found the MD5 sum of the image the library holds under that name.
+      const lib = images.images.find((x) => x.name === f.n && x.size === f.s);
+      const mark = el('td');
+      if (lib && sdChecked[f.n] === lib.md5) mark.append(el('span', { className: 'chip ok', textContent: '✓ ' + t('MD5 ok'), title: lib.md5 }));
+      sb.append(el('tr', {}, el('td', { textContent: f.n }), el('td', { textContent: f.s < 1024 ? `${f.s} B` : bytes(f.s) }), mark, acts));
+    }
     label($('#sdFiles'));
     $('#sdFiles').hidden = !files.length;
     if (document.activeElement !== $('#sdPick')) {
@@ -516,10 +533,18 @@
     $('#dSeen').textContent = d.last_seen ? `${when(d.last_seen)} (${ago(d.last_seen)})` : '–';
     $('#dInfo').textContent = d.info ? Object.entries(d.info).map(([key, v]) => `${key}: ${v}`).join(' · ') : '–';
     $('#dStatus').textContent = d.status ? Object.entries(d.status).map(([key, v]) => `${key}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' · ') : '–';
-    if (tab !== 'activity') return;
+    if (tab !== 'activity' && tab !== 'content') return;
     let cmds = [];
     try { cmds = await api('GET', `/devices/${d.id}/commands`); } catch (e) { return; }
     if (selected !== d.id) return;                  // another device was picked meanwhile
+    // which files this device has checked on its card: its own answers say so
+    sdChecked = {};
+    for (const c of cmds) {
+      const m = c.type === 'sd_put' && c.state === 'done' && typeof c.result === 'string' && /^stored (.+) \(\d+ bytes, MD5 ([0-9a-f]{32}) checked on the card\)$/.exec(c.result);
+      if (m) sdChecked[m[1]] = m[2];
+      if (c.type === 'sd_delete' && c.state === 'done' && c.args) delete sdChecked[c.args.name];
+    }
+    if (tab !== 'activity') return;
     const body = $('#history tbody');
     body.textContent = '';
     for (const c of cmds.slice().reverse()) {
@@ -559,13 +584,13 @@
   });
   // An image from the library to the device's SD card. It travels through the
   // device's own channel in small pieces: fine for megabytes, hours for more.
-  let sdCmd = 0, sdNote = '';
+  let sdCmd = 0, sdNote = '', sdChecked = {};
   $('#sdForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const im = images.images.find((x) => x.id === $('#sdPick').value), dev = selected;
     if (!im) return;
     const min = Math.max(1, Math.round(im.size / 30000 / 60));
-    if (!await ask(t('Send “{name}” to the SD card?', { name: im.name }), t('{size} through the device\'s own connection: about {min} min on a good link, much longer on a weak one. The device does nothing else meanwhile. A file of the same name is replaced.', { size: bytes(im.size), min }), t('Send'), 'warn')) return;
+    if (!await ask(t('Send “{name}” to the SD card?', { name: im.name }), t('{size} through the device\'s own connection: about {min} min on a good link, much longer on a weak one. The device does nothing else meanwhile. A file of the same name is replaced. If it is interrupted, it continues where it stopped; at the end the device reads the file back from the card and compares its MD5 sum.', { size: bytes(im.size), min }), t('Send'), 'warn')) return;
     $('#sdForm').querySelector('button').disabled = true;
     sdNote = t('Waiting for the device …');
     try {
@@ -580,7 +605,7 @@
         if (now.state === 'done') done = now;
       }
       sdCmd = 0;
-      sdNote = t('On the SD card: {name}', { name: im.name });
+      sdNote = '✓ ' + t('On the SD card: {name}', { name: im.name }) + ' – ' + t('MD5 ok');
       toast(t('On the SD card: {name}', { name: im.name }));
     } catch (err) { sdCmd = 0; sdNote = err.message; toast(err.message, 6000); }
     $('#sdForm').querySelector('button').disabled = false;
@@ -731,10 +756,11 @@
       const name = el('button', { className: 'btn small', type: 'button', textContent: t('Rename') });
       const move = el('button', { className: 'btn small', type: 'button', textContent: t('Folder') });
       const del = el('button', { className: 'btn small danger', type: 'button', textContent: t('Delete') });
-      const sum = el('button', { className: 'btn small mono', type: 'button', textContent: im.sha256.slice(0, 12) + '…', title: im.sha256 });
+      const sum = el('button', { className: 'btn small mono', type: 'button', textContent: im.md5, title: 'SHA-256 ' + im.sha256 });
+      const proof = im.checked ? el('span', { className: 'chip ok', textContent: '✓ ' + t('MD5 ok'), title: t('The file had the MD5 sum given with the upload.') }) : '';
       // The whole checksum is what one compares with the maker's; the cell shows its beginning.
       sum.addEventListener('click', async () => {
-        try { await navigator.clipboard.writeText(im.sha256); toast(t('SHA-256 copied')); } catch (e) { toast(im.sha256, 15000); }
+        try { await navigator.clipboard.writeText(im.md5); toast(t('MD5 sum copied')); } catch (e) { toast(im.md5, 15000); }
       });
       get.addEventListener('click', async () => {
         try { location.assign((await api('POST', `/images/${im.id}/link`)).url); } catch (e) { toast(e.message, 5000); }
@@ -756,7 +782,7 @@
         try { await api('DELETE', `/images/${im.id}`); } catch (e) { toast(e.message, 5000); }
         loadLibrary();
       });
-      return el('tr', {}, el('td', { textContent: im.name }), el('td', { textContent: bytes(im.size) }), el('td', {}, sum),
+      return el('tr', {}, el('td', { textContent: im.name }), el('td', { textContent: bytes(im.size) }), el('td', {}, sum, ' ', proof),
         el('td', { textContent: ago(im.added) }), el('td', { textContent: im.by && im.by !== 'token' ? im.by : '' }), el('td', { className: 'acts' }, ...(admin ? [get, name, move, del] : [get])));
     }, (im, folder) => api('PUT', `/images/${im.id}`, { name: im.name, folder }));
     label($('#imgs'));
@@ -767,13 +793,19 @@
   // An image is large: it goes up as it is, and the bar of the browser is not
   // enough to know how far it has got.
   $('#imgAdd').addEventListener('click', () => { $('#imgFile').value = ''; $('#imgFile').click(); });
-  $('#imgFile').addEventListener('change', () => {
+  $('#imgFile').addEventListener('change', async () => {
     const file = $('#imgFile').files[0];
     if (!file || imgBusy) return;
     if (file.size > images.max) { toast(t('the file is larger than this server takes'), 6000); return; }
+    // The maker's MD5 sum, if there is one: the server then takes the file
+    // only if it has it. Without one the server works it out and shows it.
+    const want = await pick(t('Upload “{name}”', { name: file.name }), t('MD5 sum from the maker (leave empty to have it worked out)'), t('Upload'), [], '');
+    if (want === null) return;
+    const md5 = want.replace(/[^0-9a-f]/gi, '').toLowerCase();
+    if (want.trim() && md5.length !== 32) { toast(t('an MD5 sum has 32 characters from 0-9 and a-f'), 6000); return; }
     const done = (text, bad) => { imgBusy = false; $('#imgAdd').disabled = false; if (bad) toast(text, 6000); loadLibrary().then(() => { if (bad) $('#imgState').textContent = text; }); };
     const x = new XMLHttpRequest();
-    x.open('POST', '/admin/v1/images?name=' + encodeURIComponent(file.name));
+    x.open('POST', '/admin/v1/images?name=' + encodeURIComponent(file.name) + (md5 ? '&md5=' + md5 : ''));
     for (const [k, v] of Object.entries(authHeaders())) x.setRequestHeader(k, v);
     x.setRequestHeader('Content-Type', 'application/octet-stream');
     x.upload.addEventListener('progress', (e) => {
@@ -999,15 +1031,26 @@
     $('#fwNow').textContent = fw ? t('This device runs {v}.', { v: fw + (st.lang ? ' (' + (LANGS[st.lang] || st.lang) + ')' : '') }) : '';
     const body = $('#fwList').tBodies[0];
     body.textContent = '';
-    for (const p of packages) {
-      const install = el('button', { className: 'btn small warn', type: 'button', textContent: t('Install'), disabled: fwBusy });
+    // Only what fits this hardware (a device that does not say what it is
+    // sees everything and decides alone). Of those, the one to take: its
+    // language, signed later than what it runs, the newest.
+    const hw = st.hw || (d.info && d.info.hw) || '';
+    const fits = packages.filter((p) => !hw || p.board === hw).sort((a, b) => b.seq - a.seq);
+    const best = hw && fits.find((p) => p.lang === st.lang && p.seq > (st.seq || 0));
+    $('#fwOther').hidden = fits.length === packages.length;
+    $('#fwOther').textContent = t('{n} packages for other hardware are not shown. This device is “{hw}”.', { n: packages.length - fits.length, hw });
+    for (const p of fits) {
+      const install = el('button', { className: 'btn small ' + (p === best ? 'primary' : 'warn'), type: 'button', textContent: t('Install'), disabled: fwBusy });
       install.addEventListener('click', () => installFirmware(d, p));
-      body.append(el('tr', {}, el('td', { textContent: p.fw }), el('td', { textContent: LANGS[p.lang] || p.lang }),
+      const ver = el('td', { textContent: p.fw + ' ' });
+      if (p === best) ver.append(el('span', { className: 'chip ok', textContent: t('fits this device') }));
+      else if (hw && p.seq <= (st.seq || 0)) ver.append(el('span', { className: 'chip', textContent: p.seq === st.seq ? t('installed') : t('older') }));
+      body.append(el('tr', {}, ver, el('td', { textContent: LANGS[p.lang] || p.lang }),
         el('td', { textContent: when(new Date(p.seq * 1000).toISOString()) }), el('td', { textContent: (p.size / 1048576).toFixed(1) + ' MB' }),
         el('td', { className: 'acts' }, install)));
     }
     label($('#fwList'));
-    $('#fwList').hidden = !packages.length;
+    $('#fwList').hidden = !fits.length;
     $('#fwNone').hidden = !!packages.length;
     if (d.update) fwNote(t('Sending the package: {n} %', { n: Math.floor(d.update.sent * 100 / d.update.size) }));
   }
@@ -1257,6 +1300,25 @@
     for (let y = 0; y < n; y++)
       for (let x = 0; x < n; x++)
         if (qr.isDark(y, x)) g.fillRect((x + margin) * scale, (y + margin) * scale, scale, scale);
+  }
+  // Registration without an invitation: closed unless opened here, for 15
+  // minutes to 3 hours; the server closes it by itself.
+  const mins = (min) => (min >= 60 ? `${Math.floor(min / 60)} h` : '') + (min >= 60 && min % 60 ? ' ' : '') + (min % 60 ? `${min % 60} min` : '');
+  for (let m = 15; m <= 180; m += 15) $('#openFor').append(new Option(mins(m), m));
+  async function openFor(minutes) {
+    try {
+      await api('POST', '/enrollment/open', { minutes });
+      toast(minutes ? t('Registration is open for {time}', { time: mins(minutes) }) : t('Registration closed'));
+      refresh();
+    } catch (err) { toast(err.message); }
+  }
+  $('#openSet').addEventListener('click', () => { openFor(+$('#openFor').value); $('#inviteDlg').close(); });
+  $('#openEnd').addEventListener('click', () => openFor(0));
+  function renderOpen() {
+    const s = admin && server ? server.open_s || 0 : 0;
+    $('#openNote').hidden = !s;
+    if (s) $('#openText').textContent = t('Registration without invitation is open for another {time}. Devices that register appear under “Waiting”.', { time: mins(Math.max(1, Math.ceil(s / 60))) });
+    $('#openUrl').textContent = server ? server.public_url || '' : '';
   }
   $('#invite').addEventListener('click', async () => {
     let inv;

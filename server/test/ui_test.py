@@ -104,6 +104,17 @@ with sync_playwright() as p:
         assert size > 100, size
         page.locator("#qr").screenshot(path="/out/qr.png")
         shot(path="/out/ui-invite.png")
+        # registration without an invitation: closed, opened for a time, closed again
+        expect(page.locator("#openNote")).to_be_hidden()
+        assert page.locator("#openFor option").count() == 12, "15 minutes to 3 hours in steps of 15"
+        expect(page.locator("#openUrl")).to_contain_text("http")
+        page.select_option("#openFor", "45")
+        page.click("#openSet")
+        expect(page.locator("#openNote")).to_be_visible()
+        expect(page.locator("#openText")).to_contain_text("45 min")
+        shot(path="/out/ui-open.png")
+        page.click("#openEnd")
+        expect(page.locator("#openNote")).to_be_hidden()
         print("TOKEN " + token)
 
     elif stage == "approve":
@@ -386,7 +397,18 @@ with sync_playwright() as p:
         go("library", "images")
         # another image: kept, renamed, sorted, fetched again byte for byte, deleted
         blob = bytes(range(256)) * 2000
+        # with a wrong MD5 sum the server does not keep it; with the right one it does
         page.set_input_files("#imgFile", {"name": "cat9k_lite.17.09.bin", "mimeType": "application/octet-stream", "buffer": blob})
+        page.fill("#pickText", "0" * 32)
+        page.click("#pickOk")
+        expect(page.locator("#imgState")).to_contain_text("does not have the MD5 sum")
+        errors.clear()
+        expect(page.locator("#noImgs")).to_be_visible()
+        page.set_input_files("#imgFile", {"name": "cat9k_lite.17.09.bin", "mimeType": "application/octet-stream", "buffer": blob})
+        page.fill("#pickText", hashlib.md5(blob).hexdigest().upper())
+        page.click("#pickOk")
+        expect(page.locator("#imgs tbody tr", has_text="cat9k")).to_contain_text(hashlib.md5(blob).hexdigest())
+        expect(page.locator("#imgs tbody tr", has_text="cat9k").locator(".chip.ok")).to_contain_text("MD5 ok")
         irow = page.locator("#imgs tbody tr", has_text="cat9k")
         expect(irow).to_contain_text("500 kB")
         expect(page.locator("#imgState")).to_contain_text("per file")
@@ -414,7 +436,11 @@ with sync_playwright() as p:
         yes("cat9k-lite.bin")
         expect(page.locator("#sdState")).to_contain_text("On the SD card: cat9k-lite.bin", timeout=60000)
         expect(page.locator("#sdFiles tbody tr")).to_contain_text("cat9k-lite.bin", timeout=20000)
+        expect(page.locator("#sdFiles tbody tr .chip.ok")).to_contain_text("MD5 ok", timeout=20000)   # the device has checked it on its card
         shot(path="/out/ui-sdcard.png", full_page=True)
+        page.locator("#sdFiles tbody tr", has_text="cat9k-lite.bin").get_by_role("button", name="Delete").click()
+        yes("from the SD card")
+        expect(page.locator("#sdFiles")).to_be_hidden(timeout=20000)
         go("library", "images")
         with page.expect_download() as dl:
             irow.get_by_role("button", name="Download").click()

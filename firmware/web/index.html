@@ -236,6 +236,7 @@
         <p class="hint">The device always stays reachable as a hotspot. In addition it can join an existing Wi-Fi network – also a company network with 802.1X.</p>
         <div class="grid2">
           <label>SSID <input name="staSsid" maxlength="32" placeholder="off"></label>
+          <label>DNS server <input name="staDns" maxlength="15" inputmode="decimal" placeholder="from the network" autocomplete="off"></label>
           <label>Security
             <select name="staAuth">
               <option value="0">WPA2/WPA3 Personal (password)</option>
@@ -277,10 +278,12 @@
 
       <h3>Control center</h3>
       <p class="hint">Through the Wi-Fi client the device reports to a server in the network that manages it and can give it commands. The server invites it with an <b>invitation token</b> ; after that the device shows a six-digit code which the administrator types in at the server.</p>
+      <p class="hint">Without a token: enter the server address. The device then asks that server by itself whenever its Wi-Fi is connected, until an administrator opens registration there.</p>
       <table class="kv">
         <tr><th>State</th><td id="c2State">–</td></tr>
         <tr id="c2CodeRow" hidden><th>Code</th><td><b id="c2Code" style="font-size:2.8em;line-height:1.2;letter-spacing:.12em"></b><br><span class="hint">Enter this code at the server. It is on the display too (page Info).</span></td></tr>
         <tr><th>Server</th><td id="c2Url">–</td></tr>
+        <tr id="c2ServerRow"><th>Server address</th><td><input id="c2Server" maxlength="95" placeholder="https://…" autocomplete="off" autocapitalize="off" spellcheck="false"> <button id="c2ServerSet" class="btn" type="button">Set</button><br><span class="hint" id="c2ServerHint"></span></td></tr>
         <tr><th>Device ID</th><td id="c2Id">–</td></tr>
         <tr id="c2ConRow" hidden><th>Remote console</th><td><span id="c2Con"></span> <button id="c2ConEnd" class="btn danger" type="button" hidden>End</button></td></tr>
       </table>
@@ -300,6 +303,7 @@
       </label>
       <p class="hint" id="c2UnattState">While it runs, the control center opens a remote console without anybody at the device agreeing. It ends by itself.</p>
       <div class="row">
+        <button id="c2Retry" class="btn" type="button" hidden>Connect now</button>
         <button id="c2Enroll" class="btn" type="button">Enroll</button>
         <button id="c2Forget" class="btn danger" type="button" hidden>Sign off</button>
       </div>

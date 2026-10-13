@@ -486,7 +486,7 @@ func TestWebInterface(t *testing.T) {
 		Fingerprint string
 		Commands    []string
 	}
-	if code := e.admin("GET", "/admin/v1/server", nil, &info); code != 200 || len(info.Fingerprint) != 64 || len(info.Commands) != 13 {
+	if code := e.admin("GET", "/admin/v1/server", nil, &info); code != 200 || len(info.Fingerprint) != 64 || len(info.Commands) != 14 {
 		t.Fatalf("server info: HTTP %d %+v", code, info)
 	}
 }

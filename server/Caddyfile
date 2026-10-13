@@ -8,7 +8,7 @@
 	default_sni {$C2_DOMAIN}
 }
 
-{$C2_DOMAIN} {
+{$C2_SITES} {
 	# an e-mail address: certificate from Let's Encrypt (the name must point here,
 	# ports 80 and 443 must be reachable); "internal": Caddy's own authority,
 	# for a test without the internet

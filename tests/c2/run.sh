@@ -70,6 +70,17 @@ print('c2e1:'+base64.urlsafe_b64encode(json.dumps(d).encode()).decode().rstrip('
 if host /build/c2host enroll /build/other.bin "$BAD" >/dev/null 2>&1; then fail "token for another server accepted"; fi
 echo "ok   token naming another server key refused"
 
+# without an invitation: only while an administrator has opened registration
+if host /build/c2host enroll /build/open.bin http://c2server:8080 >/dev/null 2>&1; then fail "enrolled without invitation while registration was closed"; fi
+echo "ok   no invitation, registration closed: refused"
+expect "open registration" "$(admin POST /admin/v1/enrollment/open '{"minutes":15}' | json 'd["open_s"]')" 900
+OUT=$(host /build/c2host enroll /build/open.bin http://c2server:8080) || fail "enroll without invitation"
+OID=$(echo "$OUT" | awk '/^ID/{print $2}'); OCODE=$(echo "$OUT" | awk '/^CODE/{print $2}')
+expect "without invitation: waits for its code" "$(admin GET /admin/v1/devices | json "[x['state'] for x in d if x['id']=='$OID'][0]")" pending
+expect "without invitation: approved with the code" "$(admin POST /admin/v1/devices/$OID/approve "{\"sas\":\"$OCODE\"}" | json 'd["state"]')" active
+expect "without invitation: poll" "$(host /build/c2host poll /build/open.bin | head -1)" "STATE active"
+expect "close registration" "$(admin POST /admin/v1/enrollment/open '{"minutes":0}' | json 'd["open_s"]')" 0
+
 echo "== remote console"
 # The firmware's stream code plays the port: 2000 characters of greeting, an
 # echo, "[BREAK]". Every third answer of the server is thrown away and asked

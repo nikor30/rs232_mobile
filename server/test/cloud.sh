@@ -11,7 +11,7 @@ cd "$(dirname "$0")/.."
 export COMPOSE_PROJECT_NAME=rs232c2-cloud
 export C2_ADMIN_TOKEN="cloud-$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 export C2_POLL_S=1 C2_BIND=127.0.0.1
-export C2_DOMAIN=c2.test C2_PUBLIC_URL=https://c2.test:8443
+export C2_DOMAIN=c2.test C2_SITES=c2.test C2_PUBLIC_URL=https://c2.test:8443
 export C2_CADDY_TLS=internal C2_HTTPS_PORT=8443 C2_HTTP_PORT=28080
 export C2_DB_PASSWORD="$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 export C2_TLS_HOSTS=c2.test

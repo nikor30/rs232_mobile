@@ -130,6 +130,8 @@ Damit weiß das Gerät: richtiger Server (Fingerabdruck aus dem Token, im Handsh
 
 **Sperren:** Ein gesperrtes Gerät wird sofort getrennt und kommt auch mit neuem Token nicht zurück (sein Schlüssel ist bekannt und gesperrt).
 
+**Anmeldung ohne Einladung (seit 13. Oktober 2026).** Ein Gerät, dem nur die Adresse des Servers eingetragen wurde, hat kein Token: Es nimmt den Schlüssel, den der Server ihm zeigt, und meldet sich mit der Token-Kennung aus lauter Nullen und einem Geheimnis aus lauter Nullen an (am Handshake ändert sich nichts). Damit fehlen die beiden Dinge, die das Token leistet — das Geheimnis, das entscheidet, wer sich überhaupt anmelden darf, und die Bindung an den Serverschlüssel. Was bleibt, ist der sechsstellige Code: Er hängt am ganzen Handshake samt Serverschlüssel, ein Angreifer in der Mitte bekäme einen anderen. Deshalb ist dieser Weg **geschlossen**, bis ein Administrator ihn öffnet (15 Minuten bis 3 Stunden in Schritten von 15, `POST /admin/v1/enrollment/open`), schließt sich von selbst und nach einem Neustart des Servers; höchstens 20 Geräte warten gleichzeitig auf ihren Code, und ein Gerät, das schon aktiv oder gesperrt ist, lässt sich so nicht zurück auf „wartet“ setzen. Sechs Ziffern sind als einziger Schutz weniger als Token plus Code — im Internet nur kurz öffnen.
+
 ### 4.5 Fernkonsole
 
 Der Administrator bedient einen seriellen Port des Geräts aus seinem Browser. Das ist die heikelste Funktion der Leitstelle, deshalb gilt der Haken aus §4.3 hier nicht: **Jede Sitzung braucht einen Tipp auf dem Touch-Display des Geräts.**

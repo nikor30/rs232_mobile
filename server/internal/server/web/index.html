@@ -132,6 +132,7 @@
         <button type="button" data-f="pending" data-admin>Waiting <i id="nPending"></i></button>
       </div>
     </div>
+    <p id="openNote" class="banner warn" hidden><span id="openText"></span> <button id="openEnd" class="btn" type="button">Close now</button></p>
     <div id="cards" class="cards" role="list"></div>
     <p id="noDevices" class="empty" hidden>No device yet. “Add a device” starts the enrollment.</p>
     <p id="noMatch" class="empty" hidden>No device matches.</p>
@@ -232,7 +233,7 @@
         <h2>SD card</h2>
         <p id="sdText" class="dim">–</p>
         <table id="sdFiles" class="stack" hidden>
-          <thead><tr><th>Name</th><th>Size</th></tr></thead>
+          <thead><tr><th>Name</th><th>Size</th><th>Checked</th><th></th></tr></thead>
           <tbody></tbody>
         </table>
         <form id="sdForm" class="row left wrap" data-manage hidden>
@@ -252,6 +253,7 @@
           <tbody></tbody>
         </table>
         <p id="fwNone" class="dim">No package has been uploaded yet.</p>
+        <p id="fwOther" class="dim" hidden></p>
         <p id="fwState" class="dim" role="status"></p>
       </section>
     </div>
@@ -379,7 +381,7 @@
       </div>
       <p class="dim">Files for the equipment itself, such as a switch's operating system. They are kept here to download; they are not sent to a device.</p>
       <table id="imgs" class="stack" hidden>
-        <thead><tr><th>Name</th><th>Size</th><th>SHA-256</th><th>Added</th><th>By</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th>Size</th><th>MD5</th><th>Added</th><th>By</th><th></th></tr></thead>
         <tbody></tbody>
       </table>
       <p id="noImgs" class="dim">No image has been uploaded yet.</p>
@@ -635,6 +637,13 @@
       <button id="copyToken" class="btn">Copy</button>
       <button id="closeInvite" class="btn primary">Close</button>
     </span>
+  </div>
+  <h3>Without an invitation</h3>
+  <p class="dim">For a limited time, devices that were only given this server's address may register. Each one still needs its code typed in here. Anybody who reaches the server can ask during that time.</p>
+  <p><span class="dim">Server address for the device:</span> <code id="openUrl"></code></p>
+  <div class="row wrap">
+    <label>Open for <select id="openFor"></select></label>
+    <span class="acts"><button id="openSet" class="btn" type="button">Open registration</button></span>
   </div>
 </dialog>
 

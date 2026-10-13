@@ -7,6 +7,7 @@ services:
     image: caddy:2-alpine
     environment:
       C2_DOMAIN: ${C2_DOMAIN:?set C2_DOMAIN in .env}
+      C2_SITES: ${C2_SITES:-${C2_DOMAIN}}
       C2_CADDY_TLS: ${C2_CADDY_TLS:?set C2_CADDY_TLS in .env}
     ports:
       - "${C2_BIND:-0.0.0.0}:${C2_HTTP_PORT:-80}:80"     # certificate renewal, redirect to https

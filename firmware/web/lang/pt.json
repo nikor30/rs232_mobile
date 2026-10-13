@@ -130,6 +130,7 @@
   "Unticked, the server can only read: state, settings (without passwords) and the list of configurations. The box can be ticked only here, never from the server.": "Desmarcado, o servidor só pode ler: estado, configurações (sem senhas) e a lista de configurações salvas. A opção só pode ser marcada aqui, nunca pelo servidor.",
   "The": "O",
   "– the administrator operates a serial port through the server – does not depend on this box: every session has to be allowed on the device's touch display, runs for the requested time at most and can be ended there and here at any moment.": "– o administrador opera uma porta serial pelo servidor – não depende desta opção: cada sessão precisa ser permitida na tela do dispositivo, dura no máximo o tempo solicitado e pode ser encerrada lá e aqui a qualquer momento.",
+  "Connect now": "Conectar agora",
   "Enroll": "Registrar",
   "Sign off": "Sair da central",
   "Certificates": "Certificados",
@@ -196,7 +197,13 @@
   "24 hours": "24 horas",
   "3 days": "3 dias",
   "7 days": "7 dias",
-  "While it runs, the control center opens a remote console without anybody at the device agreeing. It ends by itself.": "Enquanto estiver ativo, a central abre um console remoto sem que alguém no dispositivo concorde. Termina sozinho."
+  "While it runs, the control center opens a remote console without anybody at the device agreeing. It ends by itself.": "Enquanto estiver ativo, a central abre um console remoto sem que alguém no dispositivo concorde. Termina sozinho.",
+  "DNS server": "Servidor DNS",
+  "from the network": "da rede",
+  "Server address": "Endereço do servidor",
+  "https://…": "https://…",
+  "Set": "Definir",
+  "Without a token: enter the server address. The device then asks that server by itself whenever its Wi-Fi is connected, until an administrator opens registration there.": "Sem token: informe o endereço do servidor. O dispositivo então pede sozinho a esse servidor sempre que o Wi-Fi estiver conectado, até que um administrador abra o registro lá."
  },
  "script": {
   "Port ": "Porta ",
@@ -336,6 +343,7 @@
   "Invitation token taken over – confirm with “Enroll”": "Token de convite recebido – confirme com “Registrar”",
   "Remote console ended": "Console remoto encerrado",
   "Sign off from the control center?\nThe device key is erased; enrolling again needs a new token.": "Sair da central?\nA chave do dispositivo é apagada; um novo registro exige um novo token.",
+  "Connecting to the control center …": "Conectando à central …",
   "Signed off": "Desconectado da central",
   "unchanged": "inalterada",
   "No web password set: in a company network anybody reaches the consoles. Tab Setup → Access.": "Nenhuma senha web definida: em uma rede corporativa qualquer pessoa alcança os consoles. Aba Ajustes → Acesso.",
@@ -396,6 +404,12 @@
   "While it runs, the control center opens a remote console without anybody at the device agreeing. It ends by itself.": "Enquanto estiver ativo, a central abre um console remoto sem que alguém no dispositivo concorde. Termina sozinho.",
   "For this time the control center can operate the serial ports without anybody at the device agreeing. Allow?": "Durante esse tempo a central pode operar as portas seriais sem que alguém no dispositivo concorde. Permitir?",
   "Unattended access granted": "Acesso sem supervisão concedido",
-  "Unattended access ended": "Acesso sem supervisão encerrado"
+  "Unattended access ended": "Acesso sem supervisão encerrado",
+  "Not possible": "Não é possível",
+  "Change it if the server has moved or is reached by name now. Its key stays the same.": "Altere se o servidor mudou de lugar ou agora é alcançado por nome. A chave dele continua a mesma.",
+  "The device asks this server to let it in. Empty the field and press “Set” to stop.": "O dispositivo pede a este servidor para entrar. Esvazie o campo e pressione “Definir” para parar.",
+  "Enough to enroll while the server has registration open – no token needed.": "Basta para registrar enquanto o servidor estiver com o registro aberto – sem token.",
+  "asking {0}": "pedindo a {0}",
+  "Server address set": "Endereço do servidor definido"
  }
 }

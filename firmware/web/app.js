@@ -1332,7 +1332,7 @@
   $('#netForm').staAuth.addEventListener('change', authVisibility);
 
   // ---- command-and-control server
-  let c2Timer = 0;
+  let c2Timer = 0, c2Shown = null;
   async function loadC2() {
     clearTimeout(c2Timer);
     if ($('.tab[data-tab="net"]').hidden) return;       // only while the tab is open
@@ -1348,6 +1348,14 @@
       $('#c2Url').textContent = c.url || '–';
       $('#c2Id').textContent = c.id || '–';
       $('#c2Forget').hidden = c.state === 'off' || c.state === 'failed';
+      $('#c2Retry').hidden = !c.down;
+      const inside = ['active', 'pending', 'refused'].includes(c.state);
+      $('#c2ServerRow').hidden = c.state === 'failed';
+      if (document.activeElement !== $('#c2Server') && c2Shown !== (c.url || c.want)) $('#c2Server').value = c2Shown = c.url || c.want || '';
+      $('#c2ServerHint').textContent = inside ? tr('Change it if the server has moved or is reached by name now. Its key stays the same.')
+        : c.want ? tr('The device asks this server to let it in. Empty the field and press “Set” to stop.')
+          : tr('Enough to enroll while the server has registration open – no token needed.');
+      if (c.state === 'off' && c.want) $('#c2State').textContent = tr('asking {0}', [c.want]) + (c.error ? ` – ${c.error}` : '');
       if (document.activeElement !== $('#c2Control')) $('#c2Control').checked = !!c.control;
       $('#c2Enroll').disabled = c.state === 'failed' || c.state === 'enrolling';
       const un = c.unattS || 0;
@@ -1407,6 +1415,19 @@
   $('#c2ConEnd').addEventListener('click', async () => {
     try { await fetch('/api/c2/console/end', { method: 'POST' }); toast(tr('Remote console ended')); loadC2(); } catch (e) { toast(tr('Device not reachable')); }
   });
+  $('#c2ServerSet').addEventListener('click', async () => {
+    try {
+      const r = await fetch('/api/c2/server', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: $('#c2Server').value.trim() }) });
+      const d = await r.json();
+      if (!r.ok) return toast(d.error || tr('Not possible'));
+      c2Shown = null;
+      toast(tr('Server address set'));
+      loadC2();
+    } catch (e) { toast(tr('Device not reachable')); }
+  });
+  $('#c2Retry').addEventListener('click', async () => {
+    try { await fetch('/api/c2/reconnect', { method: 'POST' }); toast(tr('Connecting to the control center …')); loadC2(); } catch (e) { toast(tr('Device not reachable')); }
+  });
   $('#c2Forget').addEventListener('click', async () => {
     if (!confirm(tr('Sign off from the control center?\nThe device key is erased; enrolling again needs a new token.'))) return;
     try { await fetch('/api/c2/forget', { method: 'POST' }); toast(tr('Signed off')); loadC2(); } catch (e) { toast(tr('Device not reachable')); }
@@ -1418,6 +1439,7 @@
       const s = await r.json();
       const f = $('#netForm');
       f.staSsid.value = s.staSsid || '';
+      f.staDns.value = s.staDns || '';
       f.staPass.value = '';
       f.staEapPass.value = '';
       f.staPass.placeholder = s.staPassSet ? tr('unchanged') : '';
@@ -1446,6 +1468,7 @@
     const auth = +f.staAuth.value;
     const body = {
       staSsid: f.staSsid.value.trim(),
+      staDns: f.staDns.value.trim(),
       staAuth: auth,
       staIdentity: f.staIdentity.value.trim(),
       staUser: f.staUser.value.trim(),

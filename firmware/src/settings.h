@@ -23,6 +23,7 @@ struct Settings {
   String   apSsid;
   String   apPass;          // generated randomly on first boot
   String   staSsid;         // empty = station mode off
+  String   staDns;          // DNS server for the WLAN client (IPv4), empty = the one the network names
   String   staPass;         // WPA2/3-PSK key or 802.1X password (PEAP/TTLS)
   uint8_t  staAuth = 0;     // 0 = PSK, 1 = 802.1X EAP-TLS (certificate), 2 = PEAP, 3 = EAP-TTLS
   String   staIdentity;     // 802.1X outer identity (empty = CN of the client certificate)

@@ -18,6 +18,7 @@ import (
 	"slices"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -113,6 +114,18 @@ var commandArgs = map[string]func(args json.RawMessage) error{
 		}
 		return nil
 	},
+	// A file in the top folder of the device's SD card, removed.
+	"sd_delete": func(args json.RawMessage) error {
+		var a struct {
+			Name string `json:"name"`
+		}
+		dec := json.NewDecoder(bytes.NewReader(args))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&a); err != nil || a.Name == "" || len(a.Name) > 96 || strings.ContainsAny(a.Name, `/\`) || strings.HasPrefix(a.Name, ".") {
+			return errors.New(`sd_delete needs {"name": "<file in the card's top folder>"}`)
+		}
+		return nil
+	},
 	// Remote console on a serial port. Somebody at the device has to agree on
 	// its touch display, each time; minutes is the most they are asked for.
 	"console": func(args json.RawMessage) error {
@@ -199,6 +212,9 @@ type Server struct {
 	sess  map[[proto.IDSize]byte]*session
 	cons  map[string]*console // remote consoles by device ID, open or just ended
 	sweep time.Time
+	// Until then devices may enroll without an invitation (enrollment.go).
+	// Not kept across a restart: closed is the state to fall back to.
+	openUntil time.Time
 
 	authMu    sync.Mutex
 	web       map[[32]byte]*webSession // signed-in browsers, by the hash of their cookie
@@ -274,6 +290,7 @@ func (sv *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /admin/v1/server/rotate-key", sv.admin(sv.rotateKey))
 	mux.HandleFunc("POST /admin/v1/server/rotate-key/end", sv.admin(sv.endKeyChange))
 	mux.HandleFunc("POST /admin/v1/enroll-tokens", sv.admin(sv.newToken))
+	mux.HandleFunc("POST /admin/v1/enrollment/open", sv.admin(sv.openEnrollment))
 	mux.HandleFunc("GET /admin/v1/firmware", sv.signed(sv.listFirmware))
 	mux.HandleFunc("POST /admin/v1/firmware", sv.adminMax(sv.addFirmware, fwMaxPkg))
 	mux.HandleFunc("DELETE /admin/v1/firmware/{id}", sv.admin(sv.deleteFirmware))
@@ -347,7 +364,14 @@ func (sv *Server) handshake(w http.ResponseWriter, r *http.Request) {
 	if h.Kind == proto.KindEnroll {
 		e.enroll, e.tokenID = true, hex.EncodeToString(h.TokenID[:])
 		devPub = h.DevicePub
-		psk, err = sv.st.TokenSecret(e.tokenID)
+		if e.tokenID == store.OpenToken {
+			// no invitation: only while an administrator has opened registration
+			if psk = make([]byte, proto.PSKSize); sv.openLeft() <= 0 {
+				err = store.ErrToken
+			}
+		} else {
+			psk, err = sv.st.TokenSecret(e.tokenID)
+		}
 	} else {
 		var d *store.Device
 		if d, err = sv.st.Device(e.deviceID); err == nil {
@@ -470,7 +494,15 @@ func (sv *Server) msg(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "", http.StatusBadRequest)
 			return
 		}
-		if err := sv.st.Enroll(e.tokenID, e.pub, m.Name, m.Info, e.s.SAS()); err != nil {
+		var err error
+		if e.tokenID != store.OpenToken {
+			err = sv.st.Enroll(e.tokenID, e.pub, m.Name, m.Info, e.s.SAS())
+		} else if sv.openLeft() <= 0 {
+			err = store.ErrToken
+		} else {
+			err = sv.st.EnrollOpen(e.pub, m.Name, m.Info, e.s.SAS())
+		}
+		if err != nil {
 			log.Printf("enroll %s refused: %v", e.deviceID, err)
 			sv.drop(sid)
 			http.Error(w, "", http.StatusForbidden)
@@ -600,6 +632,7 @@ func (sv *Server) serverInfo(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"fingerprint": hex.EncodeToString(fp[:]),
 		"public_url":  sv.cfg.PublicURL,
+		"open_s":      int(sv.openLeft() / time.Second), // registration without invitation: seconds left
 		"commands":    sv.cfg.Commands,
 		"poll_s":      sv.cfg.PollS,
 		"key_change":  sv.keyChange(),
@@ -825,6 +858,8 @@ func (sv *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 			for _, c := range d.Commands {
 				if c.ID == p.Cmd && c.State == store.CmdSent {
 					v.Update = p
+					// a device that is fetching a file does not poll meanwhile: it is there all the same
+					v.Online = v.Online || sv.now().Sub(p.At) < 2*time.Minute
 				}
 			}
 		}
@@ -907,6 +942,13 @@ func (sv *Server) enqueue(w http.ResponseWriter, r *http.Request) {
 		p := sv.fw.get(a.FW)
 		if p == nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown firmware package"})
+			return
+		}
+		// A device says which hardware it is; a package for another one is
+		// not even sent. The device would refuse it anyway (and one that does
+		// not say what it is decides alone, as before).
+		if hw := sv.hardware(r.PathValue("id")); hw != "" && hw != p.info.Board {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "this package is for other hardware than this device"})
 			return
 		}
 		note(r).detail = "update " + p.info.FW + " " + p.info.Lang

@@ -10,8 +10,8 @@ import html.parser, json, os, re, sys
 
 WEB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "internal", "server", "web")
 SAME = {  # English word = German word / Portuguese word, or nothing to translate
-    "de": {"Server", "Ping", "Port", "Name", "BREAK", "Status", "Admin-Token", "Microsoft Entra ID", "firmware {v}", "Hotspot", "Port {n}", "Firmware", "Version", "Region", "Board", "Text", "online", "offline", "Bluetooth", "port {n}: {who}", "Images", "SHA-256", "Offline", "Online"},
-    "pt": {"Ping", "BREAK", "Microsoft Entra ID", "firmware {v}", "Hotspot", "Backup", "Firmware", "online", "offline", "Bluetooth", "SHA-256", "Offline", "Online", "Console"},
+    "de": {"Server", "Ping", "Port", "Name", "BREAK", "Status", "Admin-Token", "Microsoft Entra ID", "firmware {v}", "Hotspot", "Port {n}", "Firmware", "Version", "Region", "Board", "Text", "online", "offline", "Bluetooth", "port {n}: {who}", "Images", "SHA-256", "MD5", "Offline", "Online"},
+    "pt": {"Ping", "BREAK", "Microsoft Entra ID", "firmware {v}", "Hotspot", "Backup", "Firmware", "online", "offline", "Bluetooth", "SHA-256", "MD5", "Offline", "Online", "Console", "MD5 ok"},
 }
 
 

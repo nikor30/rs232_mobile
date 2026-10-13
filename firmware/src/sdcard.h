@@ -30,9 +30,11 @@ namespace Sd {
   // Written to the card's top folder, where a switch that gets the card as a
   // USB stick looks first. It arrives as "<name>.part" and gets its name only
   // when all of it is there.
-  const char *putBegin(const char *name, uint32_t size);   // nullptr = go ahead, otherwise why not
+  const char *putBegin(const char *name, uint32_t size, const char *tag, uint32_t &have);   // nullptr = go ahead (have: bytes that are there already), otherwise why not
   bool putWrite(const uint8_t *data, size_t len);
-  bool putEnd(bool keep);             // keep = false throws the part away
+  void putPause();                    // stop for now; the part stays and is continued
+  const char *putFinish(uint32_t size, const uint8_t md5[16], void (*progress)(int pct));   // read back, compare, name it; nullptr = stored
+  const char *removeRoot(const char *name);              // a file of the top folder; nullptr = gone
   String rootJson(size_t room);       // the files of the top folder as [{"n":..,"s":..}], as many as fit
 
   // ---- USB memory stick ----

@@ -51,7 +51,10 @@ static const uint32_t REFUSED_RETRY_MS = 600000;
 static SemaphoreHandle_t mux;
 static Info shared;                      // under mux
 static String reqToken;                  // under mux: token waiting for the task
+static String reqUrl;                    // under mux: new address of the server
+static bool reqUrlSet = false;           // under mux
 static bool reqForget = false;           // under mux
+static volatile bool reqRetry = false;   // somebody pressed "connect now"
 
 // Most of what the server can ask for touches state that belongs to the main
 // loop (ports, settings, the configuration player). The task hands such
@@ -120,9 +123,14 @@ struct BigJob {
 // caller removes it and frees the stack.
 static void connClose();
 
-static bool big(const std::function<void()> &fn) {
+// The handshake itself has been measured at under 20 kB of stack; it asks for
+// 24 kB (KEM_SMALL), because a block of 28 kB is not always to be had in one
+// piece once the device has run for a while - then it would never get a
+// session. Self-test (at the start) and the signature check keep the full size.
+static const uint32_t KEM_SMALL = 24 * 1024;
+static bool big(const std::function<void()> &fn, uint32_t size = KEM_STACK) {
   connClose();                           // never together with a TLS connection
-  StackType_t *stack = (StackType_t *)heap_caps_malloc(KEM_STACK, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  StackType_t *stack = (StackType_t *)heap_caps_malloc(size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   StaticTask_t *tcb = (StaticTask_t *)heap_caps_malloc(sizeof(StaticTask_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   BigJob job = {&fn, xTaskGetCurrentTaskHandle()};
   auto entry = [](void *p) {
@@ -132,7 +140,7 @@ static bool big(const std::function<void()> &fn) {
     xTaskNotifyGive(j->caller);
     for (;;) vTaskSuspend(nullptr);
   };
-  TaskHandle_t h = stack && tcb ? xTaskCreateStaticPinnedToCore(entry, "c2kem", KEM_STACK, &job, 1, stack, tcb, 0) : nullptr;
+  TaskHandle_t h = stack && tcb ? xTaskCreateStaticPinnedToCore(entry, "c2kem", size, &job, 1, stack, tcb, 0) : nullptr;
   if (h) {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     while (eTaskGetState(h) != eSuspended) vTaskDelay(1);
@@ -168,6 +176,9 @@ static C2Proto::Session session;
 static bool haveSession = false;
 static JsonDocument results;             // answers to commands, handed in with the next poll
 static uint32_t nextPollAt = 0, retryMs = RETRY_MIN_MS, pollS = 30;
+// Not enrolled, but somebody has named a server: ask there without invitation.
+static std::string wantUrl;
+static uint32_t wantAt = 0, wantRetryMs = RETRY_MIN_MS;
 
 static void publish(const char *error = nullptr, const char *code = nullptr) {
   Lock l;
@@ -176,6 +187,7 @@ static void publish(const char *error = nullptr, const char *code = nullptr) {
   if (code) strlcpy(shared.code, code, sizeof(shared.code));
   if (state != PENDING) shared.code[0] = 0;
   strlcpy(shared.url, serverUrl.c_str(), sizeof(shared.url));
+  strlcpy(shared.want, serverPub ? "" : wantUrl.c_str(), sizeof(shared.want));
   shared.stackFree = kemStackFree;
   shared.taskStackFree = uxTaskGetStackHighWaterMark(nullptr);
 }
@@ -184,7 +196,7 @@ static void publishId() {
   uint8_t pub[C2Proto::PUB_SIZE], fp[32];
   char id[33] = "";
   bool ok = false;
-  if (haveKey) big([&] { ok = C2Proto::publicKey(priv, pub); });
+  if (haveKey) big([&] { ok = C2Proto::publicKey(priv, pub); }, KEM_SMALL);
   if (ok) {
     C2Proto::fingerprint(pub, fp);
     for (size_t i = 0; i < C2Proto::ID_SIZE; i++) snprintf(id + 2 * i, 3, "%02x", fp[i]);
@@ -199,6 +211,7 @@ static void loadStored() {
   Preferences p;
   if (!p.begin(NVS, true)) return;
   haveKey = p.getBytes("key", priv, sizeof(priv)) == sizeof(priv);
+  wantUrl = p.getString("want", "").c_str();
   String url = p.getString("url", "");
   uint8_t st = p.getUChar("st", 0);
   String sas = p.getString("sas", "");
@@ -243,6 +256,7 @@ static void forgetAll() {
   free(serverPub);
   serverPub = nullptr;
   serverUrl.clear();
+  wantUrl.clear();                       // or it would ask to be let in again at once
   results.clear();
   state = OFF;
   {
@@ -424,7 +438,7 @@ static Ex handshake(C2Proto::Kind kind, const C2Proto::Token *tok) {
   uint32_t t0 = millis(), crypto = 0;
   C2Proto::Result r = C2Proto::ERR_CRYPTO;
   if (req && resp)
-    big([&] { r = hs.begin(kind, priv, serverPub, tok ? tok->id : nullptr, tok ? tok->secret : nullptr, req, n); });
+    big([&] { r = hs.begin(kind, priv, serverPub, tok ? tok->id : nullptr, tok ? tok->secret : nullptr, req, n); }, KEM_SMALL);
   if (r != C2Proto::OK)
     Serial.printf("[C2]   Handshake nicht begonnen: Heap %u B, groesster Block %u B\n", (unsigned)ESP.getFreeHeap(),
                   (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
@@ -436,7 +450,7 @@ static Ex handshake(C2Proto::Kind kind, const C2Proto::Token *tok) {
     if (ex == EX_OK) {
       uint32_t t1 = millis();
       r = C2Proto::ERR_CRYPTO;
-      big([&] { r = hs.finish(resp, got, session); });
+      big([&] { r = hs.finish(resp, got, session); }, KEM_SMALL);
       crypto += millis() - t1;
       if (r == C2Proto::OK) haveSession = true;
       else {
@@ -552,9 +566,13 @@ static Ex exchange(JsonDocument &msg, JsonDocument &reply, bool once = false) {
 
 // ---------------------------------------------------------------- commands
 
+static uint32_t fwSeq = 0;               // "fwseq" in the NVS: when the installed package was signed
+
 static void fillStatus(JsonObject o) {
   o["fw"] = FW_VERSION;
   o["lang"] = LANG_CODE;
+  o["hw"] = FW_BOARD_ID;                 // which packages fit: the server offers and sends only those
+  o["seq"] = fwSeq;                      // and only a package signed later than this one is taken
   // who is on the serial ports here, at the device: the control center shows it
   o["web"] = Net::webClients();
   o["tcp"] = Net::tcpConnected();
@@ -634,9 +652,17 @@ static size_t collectJobResults() {
 
 // ---------------------------------------------------------------- enroll / poll
 
-static void doEnroll(const String &text) {
+// open: without an invitation, at the server whose address somebody typed in
+// (tok.url). There is no secret then and nothing to check the server's key
+// against - it is taken as shown, and the code on the display, typed in at the
+// server, is what ties the two together.
+static void doEnroll(const String &text, bool open = false) {
   C2Proto::Token tok;
-  if (!C2Proto::parseToken(text.c_str(), tok)) return publish(TR("unusable token", "Token unbrauchbar", "token invalido"));
+  if (open) {
+    tok.url = text.c_str();
+    memset(tok.id, 0, sizeof(tok.id));
+    memset(tok.secret, 0, sizeof(tok.secret));
+  } else if (!C2Proto::parseToken(text.c_str(), tok)) return publish(TR("unusable token", "Token unbrauchbar", "token invalido"));
   if (WiFi.status() != WL_CONNECTED) return publish(TR("Wi-Fi client not connected", "kein WLAN-Client verbunden", "cliente Wi-Fi nao conectado"));
   State before = state;
   state = ENROLLING;
@@ -648,7 +674,7 @@ static void doEnroll(const String &text) {
   const char *err = nullptr;
   int code = key ? request(tok.url, "/v1/server-key", nullptr, 0, key, C2Proto::PUB_SIZE, got) : -1;
   if (code != 200 || got != C2Proto::PUB_SIZE) err = TR("server not reachable", "Server nicht erreichbar", "servidor inacessivel");
-  else if (!C2Proto::tokenPinsServer(tok, key)) err = TR("the server key does not match the token", "Serverschluessel passt nicht zum Token", "a chave do servidor nao confere com o token");
+  else if (!open && !C2Proto::tokenPinsServer(tok, key)) err = TR("the server key does not match the token", "Serverschluessel passt nicht zum Token", "a chave do servidor nao confere com o token");
   if (err) {
     free(key);
     state = before;
@@ -675,6 +701,7 @@ static void doEnroll(const String &text) {
     msg["name"] = devName;
     msg["info"]["fw"] = FW_VERSION;
     msg["info"]["board"] = BOARD_NAME;
+    msg["info"]["hw"] = FW_BOARD_ID;
     ex = exchange(msg, reply);
   }
   if (ex != EX_OK) {
@@ -683,7 +710,8 @@ static void doEnroll(const String &text) {
     serverUrl.clear();
     skTag[0] = 0;
     state = OFF;
-    err = ex == EX_REFUSED ? TR("token refused (used or expired)", "Token abgelehnt (verbraucht oder abgelaufen)", "token recusado (usado ou expirado)")
+    err = ex == EX_REFUSED ? (open ? TR("the server takes no new devices now", "Server nimmt gerade keine neuen Geraete", "o servidor nao aceita novos agora")
+                                   : TR("token refused (used or expired)", "Token abgelehnt (verbraucht oder abgelaufen)", "token recusado (usado ou expirado)"))
           : ex == EX_NET ? TR("server not reachable", "Server nicht erreichbar", "servidor inacessivel") : TR("enrollment failed", "Anmeldung gescheitert", "falha no registro");
     Serial.printf("[C2]   Anmeldung gescheitert: %s\n", err);
     Preferences p;                       // the previous server (if any) is no longer valid either
@@ -706,8 +734,10 @@ static void doEnroll(const String &text) {
     p.remove("spub2");
     p.putUChar("st", state);
     p.putString("sas", session.sas);
+    p.remove("want");                    // it is in; from here on the pinned server counts
     p.end();
   }
+  wantUrl.clear();
   publish("", session.sas);
   Serial.printf("[C2]   angemeldet, wartet auf Bestaetigung - Code %s\n", session.sas);
   Display::wake();
@@ -991,12 +1021,29 @@ static void doUpdate(uint32_t id) {
 }
 
 // Fetches the file behind an "sd_put" command and writes it to the SD card.
-// The server names size and hash first; the file gets its name on the card
-// only when both hold.
+// The server names size and MD5 sum first. What has arrived stays on the card
+// when the connection breaks or the device restarts, and is continued from
+// there; at the end the file is read back from the card and has to have the
+// sum, only then does it get its name.
+static void sdJobKeep(uint32_t id) {     // across a restart: the command the device is working on
+  Preferences p;
+  if (!p.begin(NVS, false)) return;
+  if (id) p.putUInt("sdjob", id);
+  else p.remove("sdjob");
+  p.end();
+}
+
+static void sdShow(int pct) {
+  char line[24];
+  snprintf(line, sizeof(line), TR("checking  %d %%", "pruefe  %d %%", "verificando  %d %%"), pct);
+  Display::message(TR("To the SD card", "Auf die SD-Karte", "Para o cartao SD"), line, 120000);
+}
+
 static void doSdPut(uint32_t id) {
   auto refuse = [&](const char *why) {
-    Serial.printf("[C2]   Datei fuer die SD-Karte abgelehnt: %s\n", why);
+    Serial.printf("[C2]   Datei fuer die SD-Karte: %s\n", why);
     Display::message(TR("SD card", "SD-Karte", "Cartao SD"), TR("transfer failed", "Uebertragung gescheitert", "transferencia falhou"), 4000);
+    sdJobKeep(0);
     answer(id, false, quoted(why));
     nextPollAt = millis();
   };
@@ -1004,30 +1051,30 @@ static void doSdPut(uint32_t id) {
   if (!updAsk(id, -1, reply, "img")) return refuse("the file could not be fetched");
   String name = reply["n"] | "";
   uint32_t size = reply["size"] | 0UL;
-  uint8_t want[32];
-  const char *sha = reply["sha"] | "";
-  bool shaOk = strlen(sha) == 64;
-  for (int i = 0; shaOk && i < 32; i++) {
-    char b[3] = {sha[2 * i], sha[2 * i + 1], 0};
+  uint8_t want[16];
+  String md5 = reply["md5"] | "";
+  bool sumOk = md5.length() == 32;
+  for (int i = 0; sumOk && i < 16; i++) {
+    char b[3] = {md5[2 * i], md5[2 * i + 1], 0};
     char *end;
     want[i] = (uint8_t)strtoul(b, &end, 16);
-    shaOk = *end == 0;
+    sumOk = *end == 0;
   }
   reply.clear();
-  if (!size || !shaOk) return refuse("the server's answer is not usable");
+  if (!size || !sumOk) return refuse("the server's answer is not usable");
   uint8_t *buf = ext(4096);
   if (!buf) return refuse("not enough memory");
-  const char *err = Sd::putBegin(name.c_str(), size);
+  uint32_t off = 0;
+  const char *err = Sd::putBegin(name.c_str(), size, md5.substring(0, 8).c_str(), off);
   if (err) {
     free(buf);
     return refuse(err);
   }
-  Serial.printf("[C2]   SD-Karte: lade \"%s\", %lu Bytes\n", name.c_str(), (unsigned long)size);
-  mbedtls_sha256_context ctx;
-  mbedtls_sha256_init(&ctx);
-  mbedtls_sha256_starts_ret(&ctx, 0);
-  uint32_t off = 0;
-  int shown = -1;
+  sdJobKeep(id);
+  Serial.printf("[C2]   SD-Karte: lade \"%s\", %lu Bytes%s", name.c_str(), (unsigned long)size, off ? "" : "\n");
+  if (off) Serial.printf(" - setzt bei %lu fort\n", (unsigned long)off);
+  int shown = -1, misses = 0;
+  bool paused = false;
   while (off < size && !err) {
     int pct = (int)((uint64_t)off * 100 / size);
     if (pct != shown) {
@@ -1036,29 +1083,43 @@ static void doSdPut(uint32_t id) {
       snprintf(line, sizeof(line), "%d %%", pct);
       Display::message(TR("To the SD card", "Auf die SD-Karte", "Para o cartao SD"), line, 120000);
     }
-    if (!settings.c2Control) { err = "stopped at the device"; break; }
-    if (!updAsk(id, (int32_t)off, reply, "img")) { err = "the download broke off"; break; }
-    const char *d = reply["d"] | "";
+    if (!settings.c2Control) { err = "stopped at the device - send it again to continue"; paused = true; break; }
+    bool got = updAsk(id, (int32_t)off, reply, "img");
     size_t n = 0;
-    if (mbedtls_base64_decode(buf, 4096, &n, (const uint8_t *)d, strlen(d)) || !n || off + n > size) err = "the download is damaged";
-    else if (!Sd::putWrite(buf, n)) err = "writing to the SD card failed";
-    else {
-      mbedtls_sha256_update_ret(&ctx, buf, n);
-      off += n;
+    const char *d = reply["d"] | "";
+    if (got && (mbedtls_base64_decode(buf, 4096, &n, (const uint8_t *)d, strlen(d)) || !n || off + n > size)) { err = "the download is damaged"; break; }
+    bool stored = got && Sd::putWrite(buf, n);
+    if (!stored) {
+      // The link is down, or the server is, or it has forgotten the session:
+      // wait and ask again, for half an hour. Nothing is lost - the file is
+      // closed and continued at the place the card says it has. Closing it
+      // also matters for the handshake: an open file and the connection cut
+      // up the heap, and the key exchange needs 28 kB in one piece.
+      Sd::putPause();
+      reply.clear();
+      connClose();
+      paused = true;
+      if (++misses > 360) { err = got ? "writing to the SD card failed - send it again to continue" : "the download broke off - send it again to continue"; break; }
+      if (misses % 6 == 1) Serial.printf("[C2]   SD-Karte: %s bei %lu, neuer Versuch %d\n", got ? "Schreiben gescheitert" : "keine Antwort", (unsigned long)off, misses);
+      vTaskDelay(pdMS_TO_TICKS(got ? 300 : 5000));
+      if (!haveSession && WiFi.status() == WL_CONNECTED) sessionHandshake();
+      if ((err = Sd::putBegin(name.c_str(), size, md5.substring(0, 8).c_str(), off))) break;
+      paused = false;
+      continue;
     }
+    misses = 0;
+    off += n;
     reply.clear();
   }
-  uint8_t hash[32];
-  mbedtls_sha256_finish_ret(&ctx, hash);
-  mbedtls_sha256_free(&ctx);
   free(buf);
-  if (!err && memcmp(hash, want, 32)) err = "the file arrived damaged";
-  if (!Sd::putEnd(!err) && !err) err = "the file could not be stored on the SD card";
+  if (paused) Sd::putPause();            // what is there stays for the next attempt
+  else err = Sd::putFinish(size, want, sdShow);   // also after "damaged": that removes the part
   inventoryAt = 0;                       // the next status names it
   if (err) return refuse(err);
-  Serial.printf("[C2]   SD-Karte: \"%s\" gespeichert\n", name.c_str());
+  sdJobKeep(0);
+  Serial.printf("[C2]   SD-Karte: \"%s\" gespeichert, MD5 stimmt\n", name.c_str());
   Display::message(TR("SD card", "SD-Karte", "Cartao SD"), TR("file stored", "Datei gespeichert", "arquivo salvo"), 4000);
-  answer(id, true, quoted((String("stored ") + name + " (" + size + " bytes)").c_str()));
+  answer(id, true, quoted((String("stored ") + name + " (" + size + " bytes, MD5 " + md5 + " checked on the card)").c_str()));
   nextPollAt = millis();
 }
 
@@ -1080,17 +1141,45 @@ static void task(void *) {
   Serial.printf("[C2]   %s\n", "UI_LANG=" LANG_CODE ";");
   Serial.printf("[C2]   Selbsttest ok, %s%s%s\n", stateName(state), serverUrl.empty() ? "" : " bei ", serverUrl.c_str());
   nextPollAt = millis() + 8000;          // give the WLAN client time to join
+  bool wifiWas = false;
   for (;;) {
     String token;
-    bool forget;
+    bool forget, changed = false;
     {
       Lock l;
       token = reqToken;
       reqToken = "";
+      if (reqUrl.length() && serverPub) {
+        serverUrl = reqUrl.c_str();
+        Preferences p;
+        if (p.begin(NVS, false)) {
+          p.putString("url", serverUrl.c_str());
+          p.end();
+        }
+        Serial.printf("[C2]   Server jetzt unter %s\n", serverUrl.c_str());
+        connClose();
+        haveSession = false;
+        reqRetry = true;
+      } else if (reqUrlSet && !serverPub) {
+        wantUrl = reqUrl.c_str();
+        Preferences p;
+        if (p.begin(NVS, false)) {
+          if (wantUrl.empty()) p.remove("want");
+          else p.putString("want", wantUrl.c_str());
+          p.end();
+        }
+        wantAt = millis();
+        wantRetryMs = RETRY_MIN_MS;
+        changed = true;
+      }
+      reqUrl = "";
+      reqUrlSet = false;
       forget = reqForget;
       reqForget = false;
     }
     if (forget) forgetAll();
+    if (reqRetry) publish();             // a changed address shows at once
+    if (changed) publish("");
     if (token.length()) doEnroll(token);
     bool answers;
     {
@@ -1098,7 +1187,31 @@ static void task(void *) {
       answers = !jobResults.empty();
     }
     if (answers && state == ACTIVE) nextPollAt = millis();   // answers go back at once
-    bool online = serverPub && WiFi.status() == WL_CONNECTED;
+    bool wifi = WiFi.status() == WL_CONNECTED;
+    bool online = serverPub && wifi;
+    // The moment the WLAN is there the device reports in - it does not sit out
+    // what is left of a wait that began while the server could not be reached.
+    // The same when somebody asks for it at the device.
+    if (serverPub && ((wifi && !wifiWas) || reqRetry)) {
+      if (wifi) {
+        Serial.printf("[C2]   %s - meldet sich sofort\n", reqRetry ? "Verbinden verlangt" : "WLAN verbunden");
+        connClose();
+        retryMs = RETRY_MIN_MS;
+        nextPollAt = millis() + (reqRetry ? 0 : 1500);   // DHCP has just finished: let the stack settle
+      }
+    } else if (!serverPub && wifi && (!wifiWas || reqRetry)) {
+      wantAt = millis() + (reqRetry ? 0 : 1500);
+      wantRetryMs = RETRY_MIN_MS;
+      reqRetry = false;
+    } else if (serverPub && !wifi && wifiWas) publish(TR("Wi-Fi client not connected", "kein WLAN-Client verbunden", "cliente Wi-Fi nao conectado"));
+    if (wifi || !serverPub) reqRetry = false;            // without WLAN the wish waits for it
+    wifiWas = wifi;
+    if (!serverPub && !wantUrl.empty() && wifi && (int32_t)(millis() - wantAt) >= 0) {
+      doEnroll(wantUrl.c_str(), true);
+      wantAt = millis() + wantRetryMs;   // not taken: ask again, with growing pauses
+      wantRetryMs = min(wantRetryMs * 2, RETRY_MAX_MS);
+      continue;
+    }
     if (online && (int32_t)(millis() - nextPollAt) >= 0) doPoll();
     if (sdJob && online && state == ACTIVE) {
       uint32_t id = sdJob;
@@ -1142,6 +1255,14 @@ void begin() {
   strlcpy(devName, settings.apSsid.c_str(), sizeof(devName));
   unattLeft = unattSavedS = settings.c2UnattS > UNATTENDED_MAX_S ? UNATTENDED_MAX_S : settings.c2UnattS;
   unattTickMs = millis();
+  {                                      // a file for the SD card that a restart interrupted is continued
+    Preferences p;
+    if (p.begin(NVS, true)) {
+      sdJob = p.getUInt("sdjob", 0);
+      fwSeq = p.getUInt("fwseq", 0);
+      p.end();
+    }
+  }
   // core 0, next to WiFi and the display: the serial bridge has core 1 to itself
   xTaskCreatePinnedToCore(task, "c2", TASK_STACK, nullptr, 1, nullptr, 0);
 }
@@ -1213,6 +1334,16 @@ static void execute(const MainJob &job) {
       Serial.println("[C2]   Firmware-Update angefragt");
       updateJob = job.id;
     }
+  } else if (job.type == "sd_delete") {
+    const char *name = args["name"] | "";
+    if (!settings.c2Control) answer(job.id, false, quoted(denied));
+    else if (sdJob) answer(job.id, false, quoted("a transfer is under way already"));
+    else {
+      const char *err = Sd::removeRoot(name);
+      inventoryAt = 0;                   // the next status no longer names it
+      Serial.printf("[C2]   SD-Karte: \"%s\" loeschen: %s\n", name, err ? err : "geloescht");
+      answer(job.id, !err, quoted(err ? err : "deleted"));
+    }
   } else if (job.type == "sd_put") {
     // A file from the server's library to the SD card. It takes the device's
     // channel for as long as it lasts - minutes for megabytes.
@@ -1222,6 +1353,7 @@ static void execute(const MainJob &job) {
     else if (conBusy || Xfer::active()) answer(job.id, false, quoted("the device is busy (console, playback or file transfer)"));
     else {
       Serial.println("[C2]   Datei fuer die SD-Karte angefragt");
+      sdJobKeep(job.id);                 // from here on a restart does not lose it
       sdJob = job.id;
     }
   } else if (job.type == "set") {
@@ -1486,6 +1618,7 @@ String line() {
   Info i = info();
   if (i.state == PENDING) return String(TR("Code ", "Code ", "Codigo ")) + i.code;
   if (i.state == ACTIVE && i.error[0]) return TR("not reachable", "nicht erreichbar", "inacessivel");
+  if (i.state == OFF && i.want[0]) return TR("asking the server", "fragt beim Server an", "pedindo ao servidor");
   if (i.state == ACTIVE && conBusy) {
     Console c = console();
     if (c.state == 2) return String(TR("Remote console port ", "Fernkonsole Port ", "Console remoto porta ")) + (c.port + 1);
@@ -1512,6 +1645,45 @@ void forget() {
   if (!mux) return;
   Lock l;
   reqForget = true;
+}
+
+const char *setServer(const String &text) {
+  String url = text;
+  url.trim();
+  if (url.isEmpty()) {                   // stop asking; an enrolled device keeps its server
+    if (!mux) return nullptr;
+    Lock l;
+    if (shared.state != OFF) return TR("Sign off to leave the server", "Zum Verlassen des Servers abmelden", "Para sair do servidor, use Sair da central");
+    reqUrl = "";
+    reqUrlSet = true;
+    return nullptr;
+  }
+  while (url.endsWith("/")) url.remove(url.length() - 1);
+  bool ok = (url.startsWith("https://") && url.length() > 8) || (url.startsWith("http://") && url.length() > 7);
+  for (size_t i = 0; ok && i < url.length(); i++) ok = url[i] > ' ' && url[i] < 127 && url[i] != '"' && url[i] != '\\';
+  if (!ok || url.length() >= sizeof(shared.url)) return TR("The address has to look like https://name-or-address (at most 95 characters)", "Die Adresse muss wie https://name-oder-adresse aussehen (höchstens 95 Zeichen)", "O endereço deve ser como https://nome-ou-endereco (no máximo 95 caracteres)");
+  if (!mux) return TR("The device is still starting", "Gerät startet noch", "O dispositivo ainda está iniciando");
+  Lock l;
+  if (shared.state == FAILED) return TR("Control center not available on this device", "Leitstelle auf diesem Gerät nicht verfügbar", "Central não disponível neste dispositivo");
+  if (shared.state == ENROLLING) return TR("The device is enrolling right now", "Das Gerät meldet sich gerade an", "O dispositivo está se registrando agora");
+  reqUrl = url;
+  reqUrlSet = true;
+  return nullptr;
+}
+
+bool down() {
+  if (!mux) return false;
+  Lock l;
+  if (shared.state == OFF && shared.want[0]) return true;   // asking to be let in, not taken yet
+  if (shared.state != ACTIVE && shared.state != PENDING && shared.state != REFUSED) return false;
+  return shared.state == REFUSED || shared.error[0] || WiFi.status() != WL_CONNECTED;
+}
+
+void reconnect() {
+  if (!mux) return;
+  // "whatever was lost": a WLAN client that has given up is asked to join again as well
+  if (settings.staSsid.length() && WiFi.status() != WL_CONNECTED) WiFi.reconnect();
+  reqRetry = true;
 }
 
 }  // namespace C2

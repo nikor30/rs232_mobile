@@ -23,6 +23,7 @@ namespace C2 {
     char     code[7];       // PENDING: the six digits to show
     char     id[33];        // device ID (hex), empty until a key exists
     char     url[96];       // server, empty when not enrolled
+    char     want[96];      // not enrolled: the server this device asks to be let in at, by itself
     char     error[64];     // last thing that went wrong, empty after a success
     uint32_t lastOkMs;      // millis() of the last answered poll, 0 = none yet
     uint32_t handshakeMs;   // duration of the last handshake, network included
@@ -41,6 +42,19 @@ namespace C2 {
   // From the main loop. Both return at once; the task does the work.
   const char *enroll(const String &token);  // nullptr, or why the token is not usable
   void forget();                            // drop server and device key
+
+  // The device reports in by itself as soon as its WLAN client is connected and
+  // tries again when the server does not answer, with growing pauses. For
+  // somebody standing in front of it there is a way to not wait for that.
+  // The address of the server. For an enrolled device: where it is reached
+  // now (it has moved, or has a name); its key stays the pinned one. For one
+  // that is not enrolled: the server it asks to be let in at, without an
+  // invitation, as soon as the WLAN is there and again until the server takes
+  // it (which it does only while an administrator has opened registration).
+  // Empty ends that asking. nullptr, or why not.
+  const char *setServer(const String &url);
+  bool down();                              // enrolled, but no contact with the server right now
+  void reconnect();                         // try now (and ask the WLAN client to join again)
 
   // Remote console: the server asks, a person at the display decides - every
   // time. While it is open, what the administrator types goes to the port as

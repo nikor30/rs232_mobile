@@ -166,6 +166,7 @@ struct Snapshot {
   char    apSsid[33], apPass[65], apIp[16], staIp[16], hostname[33];
   char    c2[32];              // command-and-control server: state, or the code to confirm
   char    c2Code[8];           // the code alone while the server waits for it, else empty
+  bool    c2Down;              // enrolled, but the server is not reached right now
   bool    adminUi;             // the administrator's pages are shown (settings.adminUi)
   bool    stick, stickHost, stickEjected;   // the card is lent to the USB port as a memory stick
   uint32_t stickReadKb, stickWrittenKb;
@@ -274,7 +275,7 @@ enum Cmd : uint8_t {
   // carried out by the main loop
   B_BAUD, B_AUTO, B_BREAK, B_ENTER, B_CTRLC, B_REC, B_BT, B_SD, B_PLAY, B_STOP, B_SCAN, B_JOIN, B_FORGET,
   B_BRIGHT_DOWN, B_BRIGHT_UP, B_TIMEOUT, B_POWEROFF, B_CAL_FULL, B_CAL_EMPTY, B_CAL_RESET,
-  B_CON_ALLOW, B_CON_DENY, B_CON_END, B_STICK, B_STICK_END
+  B_CON_ALLOW, B_CON_DENY, B_CON_END, B_STICK, B_STICK_END, B_C2_RETRY
 };
 static const uint8_t FIRST_LOOP_CMD = B_BAUD;
 
@@ -434,6 +435,7 @@ static void buildSnapshot() {
   {
     C2::Info ci = C2::info();
     copyStr(s.c2Code, sizeof(s.c2Code), ci.state == C2::PENDING ? ci.code : "");
+    s.c2Down = C2::down();
   }
   C2::Console rc = C2::console();
   s.conState = rc.state;
@@ -674,6 +676,10 @@ static void runCommand(uint8_t id, uint8_t arg, uint8_t port) {
       if (err) message(TR("USB stick", "USB-Stick", "Pendrive USB"), err, 2500);
       break;
     }
+    case B_C2_RETRY:
+      C2::reconnect();
+      message(TR("Control center", "Leitstelle", "Central"), TR("connecting ...", "verbindet ...", "conectando ..."), 2500);
+      break;
     case B_STICK_END:                    // the USB port only comes back with a restart
       message(TR("Restarting ...", "Neustart ...", "Reiniciando ..."), "", 4000);
       rebootAt = millis() + 600;
@@ -1853,9 +1859,11 @@ static void screenBt() {
 static void screenInfo() {
   int bottom = H - NAV_H;
   {
-    BtnDef def = {TR("Mount SD card", "SD-Karte einbinden", "Montar cartao SD"), B_SD, C_TEXT};
-    if (S.sdMounted) def = {TR("SD card as USB stick", "SD-Karte als USB-Stick", "Cartao SD como pendrive"), B_STICK, C_TEXT};
-    bottom = buttonRow(&def, 1) - 2;
+    BtnDef def[2] = {{TR("Mount SD card", "SD-Karte einbinden", "Montar cartao SD"), B_SD, C_TEXT},
+                     {TR("Connect to center", "Leitstelle verbinden", "Conectar a central"), B_C2_RETRY, C_ACCENT}};
+    if (S.sdMounted) def[0] = {TR("SD card as USB stick", "SD-Karte als USB-Stick", "Cartao SD como pendrive"), B_STICK, C_TEXT};
+    // only while there is something to do about it: no contact with the server
+    bottom = buttonRow(def, S.c2Down ? 2 : 1) - 2;
   }
   contentBegin(HEAD_H, bottom);
   String tcp = !S.tcpEnabled ? String(TR("off", "aus", "desligado"))

@@ -172,14 +172,21 @@ int main(int argc, char **argv) {
     return 0;
   }
   if (cmd == "enroll" && argc == 4) {
+    // An address instead of a token: without invitation, as c2.cpp does it -
+    // no secret, and the server's key is taken as shown.
+    bool open = !strncmp(argv[3], "http://", 7) || !strncmp(argv[3], "https://", 8);
     C2Proto::Token tok;
-    if (!C2Proto::parseToken(argv[3], tok)) die("not a valid enrollment token");
+    if (open) {
+      tok.url = argv[3];
+      memset(tok.id, 0, sizeof(tok.id));
+      memset(tok.secret, 0, sizeof(tok.secret));
+    } else if (!C2Proto::parseToken(argv[3], tok)) die("not a valid enrollment token");
     Device d;
     d.url = tok.url;
     C2Proto::generateKey(d.priv);
     Bytes key;
     if (http(d.url, "GET", "/v1/server-key", {}, key) != 200 || key.size() != C2Proto::PUB_SIZE) die("cannot fetch the server key");
-    if (!C2Proto::tokenPinsServer(tok, key.data())) die("server key does not match the token");
+    if (!open && !C2Proto::tokenPinsServer(tok, key.data())) die("server key does not match the token");
     memcpy(d.serverPub, key.data(), C2Proto::PUB_SIZE);
     C2Proto::Session s = handshake(d, C2Proto::KIND_ENROLL, &tok);
     JsonDocument msg;

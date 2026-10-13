@@ -36,6 +36,8 @@ const (
 	// something twice can be worse than not running it.
 	QueueTTL  = 24 * time.Hour
 	AnswerTTL = 2 * time.Hour
+	// TransferTTL is how long a device may take to fetch a file for its SD card.
+	TransferTTL = 48 * time.Hour
 	// A request for the remote console is only worth something while the
 	// administrator is waiting for it: somebody at the device has to agree.
 	ConsoleQueueTTL  = 2 * time.Minute
@@ -46,6 +48,11 @@ const (
 	// Wrong codes typed for one pending device before its enrollment is thrown
 	// away: six digits must not be guessable by trying.
 	MaxSASAttempts = 5
+	// OpenToken stands in the place of a token ID when a device enrolls
+	// without an invitation (EnrollOpen); MaxOpenPending is how many devices
+	// may wait for their code at a time when it does.
+	OpenToken      = "0000000000000000"
+	MaxOpenPending = 20
 	MaxQueued      = 100
 )
 
@@ -477,6 +484,8 @@ func (s *Store) expire(d *Device) {
 		queue, answer := QueueTTL, AnswerTTL
 		if c.Type == CmdConsole {
 			queue, answer = ConsoleQueueTTL, ConsoleAnswerTTL
+		} else if c.Type == "sd_put" {
+			answer = TransferTTL // a large file over a weak link, interruptions included
 		}
 		if (c.State == CmdQueued && now.Sub(c.Created) > queue) ||
 			(c.State == CmdSent && c.Sent != nil && now.Sub(*c.Sent) > answer) {
@@ -532,6 +541,38 @@ func (s *Store) Enroll(tokenID string, pub []byte, name string, info json.RawMes
 	s.ch.device(id)
 	d.Name, d.Info, d.State, d.SAS, d.SASAttempts, d.Enrolled = name, info, StatePending, sas, 0, s.now()
 	d.OldKey = false // it enrolled with the current key
+	return s.save()
+}
+
+// EnrollOpen takes in a device that knows nothing but the server's address.
+// The server calls it only while an administrator has opened registration
+// (Server.openLeft). Such a device can only ask to be let in: one that is in
+// already, or was thrown out, stays as it is, and no more than MaxOpenPending
+// wait at a time - anybody who reaches the server can ask.
+func (s *Store) EnrollOpen(pub []byte, name string, info json.RawMessage, sas string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id := proto.IDString(proto.DeviceID(pub))
+	d := s.d.Devices[id]
+	if d != nil && d.State != StatePending {
+		return ErrState
+	}
+	if d == nil {
+		n := 0
+		for _, o := range s.d.Devices {
+			if o.State == StatePending {
+				n++
+			}
+		}
+		if n >= MaxOpenPending {
+			return ErrToken
+		}
+		d = &Device{ID: id, Pub: pub}
+		s.d.Devices[id] = d
+	}
+	s.ch.device(id)
+	d.Name, d.Info, d.State, d.SAS, d.SASAttempts, d.Enrolled = name, info, StatePending, sas, 0, s.now()
+	d.OldKey = false
 	return s.save()
 }
 

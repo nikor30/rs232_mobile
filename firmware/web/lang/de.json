@@ -132,6 +132,7 @@
   "Unticked, the server can only read: state, settings (without passwords) and the list of configurations. The box can be ticked only here, never from the server.": "Ohne Haken kann der Server nur lesen: Zustand, Einstellungen (ohne Passwörter) und die Liste der Konfigurationen. Der Haken lässt sich nur hier setzen, nie vom Server aus.",
   "The": "Die",
   "– the administrator operates a serial port through the server – does not depend on this box: every session has to be allowed on the device's touch display, runs for the requested time at most and can be ended there and here at any moment.": "– der Administrator bedient einen seriellen Port über den Server – hängt nicht an diesem Haken: Jede Sitzung muss am Touch-Display des Geräts erlaubt werden, läuft höchstens die angefragte Zeit und lässt sich dort und hier jederzeit beenden.",
+  "Connect now": "Jetzt verbinden",
   "Enroll": "Anmelden",
   "Sign off": "Abmelden",
   "Certificates": "Zertifikate",
@@ -198,7 +199,13 @@
   "24 hours": "24 Stunden",
   "3 days": "3 Tage",
   "7 days": "7 Tage",
-  "While it runs, the control center opens a remote console without anybody at the device agreeing. It ends by itself.": "Solange er läuft, öffnet die Leitstelle eine Fernkonsole, ohne dass jemand am Gerät zustimmt. Er endet von selbst."
+  "While it runs, the control center opens a remote console without anybody at the device agreeing. It ends by itself.": "Solange er läuft, öffnet die Leitstelle eine Fernkonsole, ohne dass jemand am Gerät zustimmt. Er endet von selbst.",
+  "DNS server": "DNS-Server",
+  "from the network": "vom Netz",
+  "Server address": "Serveradresse",
+  "https://…": "https://…",
+  "Set": "Setzen",
+  "Without a token: enter the server address. The device then asks that server by itself whenever its Wi-Fi is connected, until an administrator opens registration there.": "Ohne Token: die Serveradresse eintragen. Das Gerät fragt dann von selbst bei diesem Server an, sobald sein WLAN verbunden ist – bis ein Administrator dort die Anmeldung öffnet."
  },
  "script": {
   "Not connected": "Nicht verbunden",
@@ -335,6 +342,7 @@
   "Invitation token taken over – confirm with “Enroll”": "Einladungs-Token übernommen – mit „Anmelden“ bestätigen",
   "Remote console ended": "Fernkonsole beendet",
   "Sign off from the control center?\nThe device key is erased; enrolling again needs a new token.": "Von der Leitstelle abmelden?\nDer Geräteschlüssel wird gelöscht; für eine neue Anmeldung braucht es ein neues Token.",
+  "Connecting to the control center …": "Verbindet mit der Leitstelle …",
   "Signed off": "Abgemeldet",
   "unchanged": "unverändert",
   "No web password set: in a company network anybody reaches the consoles. Tab Setup → Access.": "Kein Web-Passwort gesetzt: im Firmennetz kommt jeder an die Konsolen. Tab Setup → Zugriff.",
@@ -394,6 +402,12 @@
   "While it runs, the control center opens a remote console without anybody at the device agreeing. It ends by itself.": "Solange er läuft, öffnet die Leitstelle eine Fernkonsole, ohne dass jemand am Gerät zustimmt. Er endet von selbst.",
   "For this time the control center can operate the serial ports without anybody at the device agreeing. Allow?": "So lange kann die Leitstelle die seriellen Ports bedienen, ohne dass jemand am Gerät zustimmt. Erlauben?",
   "Unattended access granted": "Unbeaufsichtigter Zugriff erlaubt",
-  "Unattended access ended": "Unbeaufsichtigter Zugriff beendet"
+  "Unattended access ended": "Unbeaufsichtigter Zugriff beendet",
+  "Not possible": "Nicht möglich",
+  "Change it if the server has moved or is reached by name now. Its key stays the same.": "Ändern, wenn der Server umgezogen ist oder jetzt über einen Namen erreicht wird. Sein Schlüssel bleibt derselbe.",
+  "The device asks this server to let it in. Empty the field and press “Set” to stop.": "Das Gerät fragt bei diesem Server an. Zum Beenden das Feld leeren und „Setzen“ drücken.",
+  "Enough to enroll while the server has registration open – no token needed.": "Genügt zur Anmeldung, solange der Server die Anmeldung geöffnet hat – ohne Token.",
+  "asking {0}": "fragt an bei {0}",
+  "Server address set": "Serveradresse gesetzt"
  }
 }

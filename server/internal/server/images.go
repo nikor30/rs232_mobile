@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/md5"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -41,13 +42,16 @@ const (
 
 // ImageInfo describes one kept file.
 type ImageInfo struct {
-	ID     string    `json:"id"`
-	Name   string    `json:"name"`
-	Folder string    `json:"folder,omitempty"`
-	Size   int64     `json:"size"`
-	SHA256 string    `json:"sha256"`
-	Added  time.Time `json:"added"`
-	By     string    `json:"by,omitempty"`
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Folder string `json:"folder,omitempty"`
+	Size   int64  `json:"size"`
+	SHA256 string `json:"sha256"`
+	// Checked: the MD5 sum was given with the upload and the file had it.
+	Checked bool      `json:"checked,omitempty"`
+	MD5     string    `json:"md5"` // what makers of switch images publish, and what a device checks the stored file against
+	Added   time.Time `json:"added"`
+	By      string    `json:"by,omitempty"`
 }
 
 type imgTicket struct {
@@ -97,6 +101,16 @@ func newImageShelf(dir string, max, total int64) *imageShelf {
 		st, err := os.Stat(sh.path(info.ID))
 		if err != nil || st.Size() != info.Size {
 			continue
+		}
+		if info.MD5 == "" { // kept since before the MD5 sum was: worked out once
+			if f, err := os.Open(sh.path(info.ID)); err == nil {
+				h := md5.New()
+				if _, err := io.Copy(h, f); err == nil {
+					info.MD5 = hex.EncodeToString(h.Sum(nil))
+					sh.write(&info)
+				}
+				f.Close()
+			}
 		}
 		sh.imgs[info.ID] = &info
 	}
@@ -169,8 +183,17 @@ var (
 	errImgSpace = errors.New("the library is full: delete an image first")
 )
 
+var (
+	md5Pattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
+	errImgSum  = errors.New("the file does not have the MD5 sum that was given: it is damaged, or not the file meant")
+)
+
 // add stores what r delivers. size is what the sender announced (-1: nothing).
-func (sh *imageShelf) add(r io.Reader, size int64, name, folder, by string, now time.Time) (*ImageInfo, error) {
+// wantMD5 is the sum the file has to have ("": whatever it has is noted).
+func (sh *imageShelf) add(r io.Reader, size int64, name, folder, by, wantMD5 string, now time.Time) (*ImageInfo, error) {
+	if wantMD5 != "" && !md5Pattern.MatchString(wantMD5) {
+		return nil, errors.New("an MD5 sum has 32 characters from 0-9 and a-f")
+	}
 	if sh.dir == "" {
 		return nil, errors.New("this server keeps no images (no data directory)")
 	}
@@ -213,8 +236,8 @@ func (sh *imageShelf) add(r io.Reader, size int64, name, folder, by string, now 
 		release()
 		return nil, failed
 	}
-	h := sha256.New()
-	n, err := io.Copy(io.MultiWriter(f, h), io.LimitReader(r, hold+1))
+	h, h5 := sha256.New(), md5.New()
+	n, err := io.Copy(io.MultiWriter(f, h, h5), io.LimitReader(r, hold+1))
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
@@ -232,13 +255,15 @@ func (sh *imageShelf) add(r io.Reader, size int64, name, folder, by string, now 
 		err = errors.New("the file is empty")
 	case size >= 0 && n != size:
 		err = errors.New("the upload broke off")
+	case wantMD5 != "" && wantMD5 != hex.EncodeToString(h5.Sum(nil)):
+		err = errImgSum
 	}
 	if err != nil {
 		os.Remove(tmp)
 		release()
 		return nil, err
 	}
-	info := &ImageInfo{ID: id, Name: name, Folder: folder, Size: n, SHA256: hex.EncodeToString(h.Sum(nil)), Added: now.UTC(), By: by}
+	info := &ImageInfo{ID: id, Name: name, Folder: folder, Size: n, SHA256: hex.EncodeToString(h.Sum(nil)), MD5: hex.EncodeToString(h5.Sum(nil)), Checked: wantMD5 != "", Added: now.UTC(), By: by}
 	if err := os.Rename(tmp, sh.path(id)); err == nil {
 		err = sh.write(info)
 	}
@@ -320,6 +345,7 @@ type imgReply struct {
 	N    string `json:"n,omitempty"`    // head: the name to store it under
 	Size int64  `json:"size,omitempty"` // head
 	SHA  string `json:"sha,omitempty"`  // head: SHA-256, hex
+	MD5  string `json:"md5,omitempty"`  // head: what the stored file is checked against
 	D    []byte `json:"d"`              // a piece of the file
 }
 
@@ -348,7 +374,7 @@ func (sv *Server) imgDevice(dev string, cmdID uint64, off int64, head bool) (*im
 		return nil, errors.New("the image is gone")
 	}
 	if head {
-		return &imgReply{N: i.Name, Size: i.Size, SHA: i.SHA256, D: []byte{}}, nil
+		return &imgReply{N: i.Name, Size: i.Size, SHA: i.SHA256, MD5: i.MD5, D: []byte{}}, nil
 	}
 	if off < 0 || off > i.Size {
 		return nil, errors.New("offset outside the image")
@@ -393,7 +419,7 @@ func (sv *Server) addImage(w http.ResponseWriter, r *http.Request) {
 	name, folder := fileName(q.Get("name")), clean(strings.ToValidUTF8(q.Get("folder"), ""))
 	n := note(r)
 	n.target, n.detail = name, folder
-	info, err := sv.img.add(r.Body, r.ContentLength, name, folder, who(r).Name, sv.now())
+	info, err := sv.img.add(r.Body, r.ContentLength, name, folder, who(r).Name, strings.ToLower(strings.TrimSpace(q.Get("md5"))), sv.now())
 	if err != nil {
 		code := http.StatusBadRequest
 		if err == errImgSize {
