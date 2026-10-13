@@ -67,6 +67,7 @@ var (
 type principal struct {
 	Name string
 	Kind string // kindToken, store.UserLocal, store.UserEntra
+	Role string // store.RoleAdmin or store.RoleMember; looked up anew for every request
 }
 
 type webSession struct {
@@ -212,12 +213,49 @@ func (w *statusWriter) WriteHeader(code int) {
 }
 
 // admin guards the admin API and writes down every call that changes something.
+// It is for administrators only.
 func (sv *Server) admin(h http.HandlerFunc) http.HandlerFunc { return sv.adminMax(h, 64*1024) }
 
 // adminMax is admin() for the rare call that takes a large body.
 func (sv *Server) adminMax(h http.HandlerFunc, maxBody int64) http.HandlerFunc {
+	return sv.guard(h, maxBody, func(p principal, _ *http.Request) int {
+		if p.Role != store.RoleAdmin {
+			return http.StatusForbidden
+		}
+		return 0
+	})
+}
+
+// signed lets every signed-in account through: what a member of a group
+// needs to see. The handler decides what it shows to whom.
+func (sv *Server) signed(h http.HandlerFunc) http.HandlerFunc { return sv.guard(h, 64*1024, nil) }
+
+// onDevice is for calls about the device {id}: the account needs that right
+// on it (groups.go in the store). A device one has no right on does not exist.
+func (sv *Server) onDevice(right string, h http.HandlerFunc) http.HandlerFunc {
+	return sv.guard(h, 64*1024, func(p principal, r *http.Request) int {
+		switch sv.st.Right(p.Name, p.Role, r.PathValue("id")) {
+		case store.RightManage:
+			return 0
+		case store.RightUse:
+			if right == store.RightUse {
+				return 0
+			}
+			return http.StatusForbidden
+		}
+		return http.StatusNotFound
+	})
+}
+
+func (sv *Server) guard(h http.HandlerFunc, maxBody int64, allow func(principal, *http.Request) int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p, ok := sv.authenticate(r)
+		if ok && p.Kind != kindToken {
+			u, err := sv.st.User(p.Name)
+			if ok = err == nil && !u.Disabled; ok {
+				p.Role = u.Role
+			}
+		}
 		if !ok {
 			if sv.limited(sv.limFail, w, r) {
 				return
@@ -232,6 +270,15 @@ func (sv *Server) adminMax(h http.HandlerFunc, maxBody int64) http.HandlerFunc {
 		if p.Kind != kindToken && r.Method != http.MethodGet && r.Header.Get("X-C2") == "" {
 			http.Error(w, "missing X-C2 header", http.StatusForbidden)
 			return
+		}
+		if allow != nil {
+			if code := allow(p, r); code != 0 {
+				if r.Method != http.MethodGet {
+					sv.audit(r, p.Name, strings.Replace(r.Pattern, "/admin/v1", "", 1), r.PathValue("id")+r.PathValue("name"), "not allowed", false)
+				}
+				writeJSON(w, code, map[string]string{"error": map[int]string{http.StatusForbidden: "your account may not do this", http.StatusNotFound: "not found"}[code]})
+				return
+			}
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 		n := &auditNote{}
@@ -505,6 +552,14 @@ type userView struct {
 	EntraOID  string     `json:"entra_oid,omitempty"`
 	Created   time.Time  `json:"created"`
 	LastLogin *time.Time `json:"last_login,omitempty"`
+	Role      string     `json:"role"` // "admin" or "member"
+}
+
+func roleName(role string) string {
+	if role == store.RoleMember {
+		return "member"
+	}
+	return "admin"
 }
 
 func (sv *Server) listUsers(w http.ResponseWriter, _ *http.Request) {
@@ -512,7 +567,7 @@ func (sv *Server) listUsers(w http.ResponseWriter, _ *http.Request) {
 	now := sv.now()
 	for _, u := range sv.st.Users() {
 		v := userView{Name: u.Name, Kind: u.Kind, Disabled: u.Disabled, EntraName: u.EntraName, EntraOID: u.EntraOID,
-			Created: u.Created, LastLogin: u.LastLogin}
+			Created: u.Created, LastLogin: u.LastLogin, Role: roleName(u.Role)}
 		v.Ready = !u.Disabled && (u.Kind == store.UserEntra || u.TOTPOk)
 		if u.SetupExpires != nil && now.Before(*u.SetupExpires) {
 			v.Setup = u.SetupExpires
@@ -534,11 +589,14 @@ func newSetupCode() (code string, hash []byte) {
 }
 
 func (sv *Server) addUser(w http.ResponseWriter, r *http.Request) {
-	var in struct{ Name, Kind, Entra string }
+	var in struct{ Name, Kind, Entra, Role string }
 	if !decode(w, r, &in) {
 		return
 	}
 	u := &store.User{Name: normName(in.Name), Kind: in.Kind}
+	if in.Role == "member" {
+		u.Role = store.RoleMember
+	}
 	note(r).target = u.Name
 	note(r).detail = in.Kind
 	if !userNames.MatchString(u.Name) || u.Name == kindToken {
@@ -572,6 +630,43 @@ func (sv *Server) addUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, out)
+}
+
+// roleUser makes an account an administrator or a member of groups only.
+// Nobody changes the own role: the last administrator cannot lock everyone out.
+func (sv *Server) roleUser(w http.ResponseWriter, r *http.Request) {
+	var in struct{ Role string }
+	if !decode(w, r, &in) {
+		return
+	}
+	name := r.PathValue("name")
+	note(r).detail = in.Role
+	if in.Role != "admin" && in.Role != "member" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "role: admin or member"})
+		return
+	}
+	if p := who(r); p.Kind != kindToken && p.Name == name {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "nobody changes the own role"})
+		return
+	}
+	err := sv.st.UpdateUser(name, func(u *store.User) error {
+		u.Role = store.RoleAdmin
+		if in.Role == "member" {
+			u.Role = store.RoleMember
+		}
+		return nil
+	})
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// me tells the page who is signed in and what that account may see.
+func (sv *Server) me(w http.ResponseWriter, r *http.Request) {
+	p := who(r)
+	writeJSON(w, http.StatusOK, map[string]any{"name": p.Name, "kind": p.Kind, "admin": p.Role == store.RoleAdmin})
 }
 
 // resetUser takes password and authenticator away from a local account and

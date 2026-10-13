@@ -3,6 +3,13 @@
 // of a signed-in account or with the admin token typed in at login. Names and
 // answers of devices and the names of accounts are data: they only ever go into
 // the page as text, never as HTML.
+//
+// The page has four places (the #-part of the address says where one is):
+//   #fleet                 the devices, as cards; the side filters by location and group
+//   #fleet/<id>/<tab>      one device: overview, console, what is on it, settings, activity
+//   #library/<tab>         templates, firmware, images
+//   #access/<tab>          groups and users (administrators)
+//   #server/<tab>          status, key, audit log (administrators)
 (() => {
   'use strict';
   const $ = (s) => document.querySelector(s);
@@ -11,15 +18,20 @@
   const { t } = I18N;
   const STATES = { pending: t('waiting for confirmation'), active: t('connected'), revoked: t('revoked') };
   const CMD_STATES = { queued: t('queued'), sent: t('fetched'), done: t('done'), failed: t('refused'), expired: t('expired') };
-  const CMD_NAMES = { ping: t('Ping'), status: t('Status'), settings: t('Settings'), configs: t('Configurations'), play: t('Play'), reboot: t('Restart'), console: t('Remote console'), update: t('Firmware update'),
+  const CMD_NAMES = { ping: t('Ping'), status: t('Status'), settings: t('Settings'), configs: t('Configurations'), play: t('Play'), reboot: t('Restart'), console: t('Remote console'), update: t('Firmware update'), sd_put: t('File to the SD card'),
     set: t('Change settings'), config_get: t('Read configuration'), config_put: t('Write configuration'), config_delete: t('Delete configuration') };
   const APP = t('RS232 Control Center');
 
   let token = sessionStorage.getItem('c2admin') || '';   // admin token, if that is how this tab got in
-  let signedIn = false, me = '', methods = { token: false, entra: false };
-  let devices = [], selected = '', timer = 0, expTimer = 0;
-  let view = 'devices', shownView = '', server = null, status = null, loaded = false;
-  const VIEWS = { devices: t('Devices'), manage: t('Manage'), library: t('Library'), users: t('Users'), audit: t('Audit log'), server: t('Server') };
+  let signedIn = false, me = '', admin = false, methods = { token: false, entra: false };
+  let devices = [], groups = [], users = [], selected = '', timer = 0, expTimer = 0, libAt = 0;
+  let view = 'fleet', tab = '', server = null, status = null, loaded = false;
+  // what the side and the bar above the cards have narrowed the fleet down to
+  let place = null, groupFilter = 0, filter = 'all';
+  const VIEWS = { fleet: t('Devices'), library: t('Library'), access: t('Access'), server: t('Server') };
+  const TABS = { device: ['overview', 'console', 'content', 'settings', 'activity'], library: ['templates', 'firmware', 'images'], access: ['groups', 'users'], server: ['status', 'key', 'audit'] };
+  const PANEL = { device: 'p', library: 'l', access: 'a', server: 's' };
+  const RIGHTS = { use: t('use'), manage: t('manage') };
   // The cookie of a signed-in account travels by itself. The X-C2 header shows
   // the server that the call comes from this page and not from another site.
   const authHeaders = () => (token ? { Authorization: 'Bearer ' + token } : { 'X-C2': '1' });
@@ -38,11 +50,23 @@
   }
 
   async function api(method, path, body) {
-    const r = await fetch('/admin/v1' + path, {
-      method, cache: 'no-store',
-      headers: Object.assign(authHeaders(), body ? { 'Content-Type': 'application/json' } : {}),
-      body: body ? JSON.stringify(body) : undefined,
-    });
+    // A request that does not get through at all (the connection was dropped
+    // under the browser: WebKit then says no more than "Load failed") is tried
+    // again - but not what a console session types, which must not arrive twice.
+    let r;
+    for (let i = 0; ; i++) {
+      try {
+        r = await fetch('/admin/v1' + path, {
+          method, cache: 'no-store',
+          headers: Object.assign(authHeaders(), body ? { 'Content-Type': 'application/json' } : {}),
+          body: body ? JSON.stringify(body) : undefined,
+        });
+        break;
+      } catch (e) {
+        if (i >= 2 || path.includes('/console/')) throw new Error(t('The server cannot be reached'));
+        await new Promise((ok) => setTimeout(ok, 500 * (i + 1)));
+      }
+    }
     if (r.status === 401) { showLogin(); throw new Error(token ? t('The token was not accepted') : t('No longer signed in')); }
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw Object.assign(new Error(j.error ? t(j.error) : 'HTTP ' + r.status), { status: r.status });   // the server answers in English
@@ -83,47 +107,43 @@
   $('#askNo').addEventListener('click', () => $('#askDlg').close(''));
   $('#askYes').addEventListener('click', () => $('#askDlg').close('yes'));
 
-  // ---- where one is: #devices, #devices/<id>, #users, #audit, #server
-  function route() {
-    const [v, id] = location.hash.slice(1).split('/');
-    const was = selected;
-    view = VIEWS[v] ? v : 'devices';
-    // "Devices" is for using a device, "Manage" for looking after it: the same
-    // list and the same device, with different things shown (style.css).
-    const wasView = shownView, listed = view === 'devices' || view === 'manage';
-    shownView = view;
-    selected = listed && id ? id : '';
-    document.body.classList.toggle('manage', view === 'manage');
-    document.body.classList.toggle('detail', !!selected);
-    document.body.classList.toggle('popped', !!was && !selected && listed);   // back from a device: the list returns from the left
-    for (const name of Object.keys(VIEWS)) if (name !== 'manage') $('#v-' + name).hidden = (name === 'devices' ? !listed : name !== view) || !signedIn;
-    $('#back').href = '#' + view;
-    $('#back').textContent = $('#listTitle').textContent = VIEWS[listed ? view : 'devices'];
-    for (const a of $('#nav').children) {
-      if (a.dataset.view === view) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+  // ---- where one is
+  function tabs(kind, box, href) {
+    for (const a of box.children) {
+      if (a.dataset.tab === tab) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+      if (href) a.href = href(a.dataset.tab);
     }
-    $('#title').textContent = signedIn ? VIEWS[view] : APP;
+    for (const name of TABS[kind]) $(`#${PANEL[kind]}-${name}`).hidden = name !== tab;
+  }
+  function route() {
+    const [v, a, b] = location.hash.slice(1).split('/');
+    const was = selected;
+    view = VIEWS[v] && (admin || v === 'fleet' || v === 'library') ? v : 'fleet';
+    selected = view === 'fleet' && a ? a : '';
+    const kind = selected ? 'device' : view;
+    const want = selected ? b : a;
+    tab = TABS[kind] ? (TABS[kind].includes(want) ? want : TABS[kind][0]) : '';
+    document.body.classList.toggle('one', !!selected);
+    for (const name of Object.keys(VIEWS)) $('#v-' + name).hidden = name !== view || (name === 'fleet' && !!selected) || !signedIn;
+    $('#v-device').hidden = !selected || !signedIn;
+    for (const n of $('#nav').children) {
+      if (n.dataset.view === view) n.setAttribute('aria-current', 'page'); else n.removeAttribute('aria-current');
+    }
     document.title = signedIn ? `${VIEWS[view]} – ${APP}` : APP;
     if (!signedIn) return;
     if (was !== selected) {
       if (was) conDetach();
-      renderDevices();
-      if (selected) { renderDetail(); window.scrollTo(0, 0); }
-    } else if (wasView !== view && listed) {
-      renderDevices();                              // the list leads to the same device in the other place
-      if (selected) renderDetail();
+      setFor = placeFor = sdNote = '';
+      window.scrollTo(0, 0);
     }
-    showDetail();
-    if (view === 'users' || view === 'audit') loadAdmin();
-    if (view === 'server') renderServer();
+    if (!selected && TABS[view]) tabs(view, $(`[data-tabs=${view}]`));
+    render();
     if (view === 'library') loadLibrary();
+    if (view === 'access') loadAccess();
+    if (view === 'server' && tab === 'audit') loadAudit();
+    if (con && tab === 'console') con.fit.fit();
   }
   window.addEventListener('hashchange', route);
-  function showDetail() {
-    const d = devices.find((x) => x.id === selected);
-    $('#detail').hidden = !d;
-    $('#pick').hidden = !!d || !devices.length;
-  }
 
   // ---- login
   async function auth(path, body) {             // the calls around signing in: no token, no session yet
@@ -138,19 +158,17 @@
   }
   function showLogin() {
     token = '';
-    signedIn = loaded = false;
+    signedIn = loaded = admin = false;
     me = '';
     sessionStorage.removeItem('c2admin');
     clearTimeout(timer);
     conDetach();
     $('#app').hidden = true;
-    document.body.classList.remove('in');
-    $('#logout').hidden = $('#nav').hidden = true;
-    $('#whoami').textContent = '';
-    document.body.classList.remove('detail', 'popped');
-    $('#title').textContent = document.title = APP;
+    document.body.classList.remove('admin', 'can-manage', 'one');
+    document.title = APP;
     $('#entraLogin').hidden = !methods.entra;
     $('#tokenBox').hidden = !methods.token;
+    $('#loginLang').append($('#lang'));              // the language can be chosen before signing in, too
     $('#login').hidden = false;
     $('#loginName').focus();
   }
@@ -160,17 +178,21 @@
   }
   async function start() {
     try {
-      server = await api('GET', '/server');
+      const who = await api('GET', '/me');
+      admin = who.admin;
+      if (who.kind !== 'token') me = who.name;
       if (token) sessionStorage.setItem('c2admin', token);
       signedIn = true;
+      document.body.classList.toggle('admin', admin);
       $('#whoami').textContent = token ? t('Admin token') : me;
+      $('#foot').insertBefore($('#lang'), $('#logout'));
       $('#login').hidden = true;
       $('#app').hidden = false;
-      document.body.classList.add('in');            // the layout of someone who is signed in
-      $('#logout').hidden = $('#nav').hidden = false;
+      $('#treeBox').open = !matchMedia('(max-width: 860px)').matches;
       selected = '';
+      libAt = 0;
+      await refresh();
       route();
-      refresh();
     } catch (e) {
       showLogin();
       loginError(e.message);
@@ -239,67 +261,70 @@
     } catch (err) { $('#totpCode').value = ''; setupError(err.message); }
   });
 
-  // ---- device list
+  // ---- everything that changes by itself: asked for every few seconds
   async function refresh() {
     clearTimeout(timer);
     try {
-      [devices, server, status] = await Promise.all([api('GET', '/devices'), api('GET', '/server'), api('GET', '/status')]);
-      if (view === 'manage' && selected) [packages, templates] = await Promise.all([api('GET', '/firmware'), api('GET', '/templates')]);
+      const calls = [api('GET', '/devices'), api('GET', '/groups')];
+      if (admin) calls.push(api('GET', '/server'), api('GET', '/status'));
+      const r = await Promise.all(calls);
+      [devices, groups] = r;
+      if (admin) [server, status] = r.slice(2);
+      if (Date.now() - libAt > 15000) {             // the library changes rarely, and templates are large
+        [templates, packages, images] = await Promise.all([api('GET', '/templates'), api('GET', '/firmware'), api('GET', '/images')]);
+        libAt = Date.now();
+      }
       loaded = true;
-      renderDevices();
-      renderServer();
-      if (selected) await renderDetail();
-    } catch (e) { if (signedIn) toast(e.message); }
+      render();
+    } catch (e) { if (signedIn && e.status !== 401) toast(e.message); }
     if (signedIn) timer = setTimeout(refresh, 3000);
   }
-  function renderDevices() {
-    const list = $('#devices');
-    const at = document.activeElement && document.activeElement.closest && document.activeElement.closest('.dev');
-    const focus = at && at.dataset.id;
-    list.textContent = '';
-    // Sorted by where they are: region, site, name. A device without a place comes last.
-    const find = $('#find').value.trim().toLowerCase();
-    $('#find').hidden = devices.length < 6 && !find;
-    const place = (d) => [d.region, d.site].filter(Boolean).join(' · ');
-    const shown = devices.filter((d) => !find || [d.name, d.id, d.region, d.site].some((x) => (x || '').toLowerCase().includes(find)))
-      .sort((x, y) => (!place(x) - !place(y)) || place(x).localeCompare(place(y)) || (x.name || x.id).localeCompare(y.name || y.id));
-    const grouped = devices.some((d) => place(d));
-    let group = null;
-    for (const d of shown) {
-      if (grouped && place(d) !== group) {
-        group = place(d);
-        list.append(el('div', { className: 'grp', textContent: group || t('No site') }));
-      }
-      const st = d.status || {}, meta = [];
-      const use = uses(d);
-      if (use.length) meta.push(use.join(', '));
-      else if (d.state === 'active' && !d.online && d.last_seen) meta.push(t('last seen {ago}', { ago: ago(d.last_seen) }));
-      if (st.bat_pct != null) meta.push(t('battery {n} %', { n: st.bat_pct }));
-      if (view === 'manage') {
-        if (st.rssi != null) meta.push(`${st.rssi} dBm`);
-        const fw = st.fw || (d.info && d.info.fw);
-        if (fw) meta.push(t('firmware {v}', { v: fw }));
-        if (d.open_commands) meta.push(d.open_commands === 1 ? t('1 command open') : t('{n} commands open', { n: d.open_commands }));
-        if (d.old_key) meta.push(t('old server key'));
-      }
-      // connected right now, in a word and a colour; a state other than "active" says more than that
-      const now = d.state !== 'active' ? badge(d.state, STATES) : el('span', { className: 'now ' + (use.length ? 'busy' : d.online ? 'on' : 'off'), textContent: use.length ? t('in use') : d.online ? t('online') : t('offline') });
-      const a = el('a', { className: 'dev', href: `#${view === 'manage' ? 'manage' : 'devices'}/${d.id}`, role: 'listitem' },
-        el('b', { textContent: d.name || d.id.slice(0, 8) }), now,
-        el('span', { className: 'meta', textContent: meta.join(' · ') || (d.last_seen ? '' : t('has not reported in yet')) }));
-      a.dataset.id = d.id;
-      if (d.id === selected) a.setAttribute('aria-current', 'true');
-      list.append(a);
-      if (d.id === focus) a.focus({ preventScroll: true });     // the list is rebuilt under the keyboard's feet
-    }
-    $('#noDevices').hidden = !!devices.length;
-    if (loaded && selected && !devices.some((d) => d.id === selected)) { conDetach(); location.hash = '#' + view; }   // it is gone
-    showDetail();
+  function render() {
+    renderSide();
+    if (admin) renderServer();
+    if (selected) renderDevice(); else if (view === 'fleet') renderFleet();
   }
 
-  $('#find').addEventListener('input', renderDevices);
-  // Who is on the serial ports of a device right now: an administrator through
-  // this server, or somebody at the device itself (it says so when it reports in).
+  // ---- the side: where the devices are, and which groups there are
+  const where = (d) => [d.region || '', d.country || '', d.site || ''];
+  const placeText = (d) => where(d).filter(Boolean).join(' › ');
+  const inPlace = (d) => !place || place.every((p, i) => where(d)[i] === p);
+  const inGroup = (d) => !groupFilter || (d.groups || []).includes(groupFilter);
+  const groupName = (id) => (groups.find((g) => g.id === id) || {}).name || '';
+  const same = (x, y) => JSON.stringify(x) === JSON.stringify(y);
+  function renderSide() {
+    const live = devices.filter((d) => d.state !== 'revoked');
+    const tree = $('#tree');
+    tree.textContent = '';
+    const row = (box, cls, text, list, current, pickIt) => {
+      const a = el('a', { className: cls, href: '#fleet', role: 'listitem' }, el('span', { textContent: text }),
+        el('i', { textContent: `${list.filter((d) => d.online).length}/${list.length}`, title: t('online / all') }));
+      if (current) a.setAttribute('aria-current', 'true');
+      a.addEventListener('click', () => { pickIt(); filter = 'all'; if (location.hash === '#fleet') render(); });
+      box.append(a);
+    };
+    const at = (path) => row(tree, path.filter((p, i) => i && (p || i < path.length - 1)).length > 1 ? 'l2' : path.length > 1 ? 'l1' : '', path[path.length - 1],
+      live.filter((d) => path.every((p, i) => where(d)[i] === p)), !groupFilter && same(place, path), () => { place = path; groupFilter = 0; });
+    row(tree, '', t('All devices'), live, !place && !groupFilter, () => { place = null; groupFilter = 0; });
+    const uniq = (list) => [...new Set(list)].sort((x, y) => !x - !y || x.localeCompare(y));
+    for (const region of uniq(live.map((d) => d.region || ''))) {
+      const inR = live.filter((d) => (d.region || '') === region);
+      if (region) at([region]);
+      for (const country of uniq(inR.map((d) => d.country || ''))) {
+        const inC = inR.filter((d) => (d.country || '') === country);
+        if (country) at([region, country]);
+        for (const site of uniq(inC.map((d) => d.site || ''))) if (site) at([region, country, site]);
+      }
+    }
+    const nowhere = live.filter((d) => !placeText(d));
+    if (nowhere.length && nowhere.length < live.length) row(tree, '', t('No location'), nowhere, !groupFilter && same(place, ['', '', '']), () => { place = ['', '', '']; groupFilter = 0; });
+    const gn = $('#grpNav');
+    gn.textContent = '';
+    for (const g of groups) row(gn, '', g.name, live.filter((d) => (d.groups || []).includes(g.id)), groupFilter === g.id, () => { groupFilter = g.id; place = null; });
+    $('#grpCap').hidden = !groups.length;
+  }
+
+  // ---- the fleet
   function uses(d) {
     const out = [], st = d.status || {};
     if (d.console) out.push(d.console.by && d.console.by !== 'token' ? t('port {n}: {who}', { n: d.console.port, who: d.console.by }) : t('port {n}: remote console', { n: d.console.port }));
@@ -309,46 +334,156 @@
     if (st.bt) out.push(t('Bluetooth'));
     return out;
   }
+  const kind = (d) => (d.state !== 'active' ? d.state : uses(d).length ? 'busy' : d.online ? 'on' : 'off');
+  const WORD = { on: t('online'), busy: t('in use'), off: t('offline'), pending: t('waiting'), revoked: t('revoked') };
+  const left = (s) => (s >= 172800 ? t('{n} days', { n: Math.round(s / 86400) }) : s >= 7200 ? `${Math.round(s / 3600)} h` : `${Math.max(1, Math.round(s / 60))} min`);
+  function bars(rssi) {
+    const n = rssi >= -60 ? 4 : rssi >= -70 ? 3 : rssi >= -80 ? 2 : 1;
+    return el('span', { className: 'bars s' + n }, el('i'), el('i'), el('i'), el('i'));
+  }
+  // What a device carries with it, as small marks: groups, and what is unusual.
+  function chips(d, box) {
+    const st = d.status || {};
+    for (const g of d.groups || []) if (groupName(g)) box.append(el('span', { className: 'chip', textContent: groupName(g) }));
+    if (d.online && st.unatt) box.append(el('span', { className: 'chip warn', textContent: t('unattended, {left} left', { left: left(st.unatt) }) }));
+    if (d.old_key) box.append(el('span', { className: 'chip warn', textContent: t('old server key') }));
+    if (d.update) box.append(el('span', { className: 'chip acc', textContent: t('transfer {n} %', { n: Math.floor(d.update.sent * 100 / d.update.size) }) }));
+    return box;
+  }
+  function renderFleet() {
+    const find = $('#find').value.trim().toLowerCase();
+    const scope = devices.filter((d) => inPlace(d) && inGroup(d) && (!find || [d.name, d.id, d.region, d.country, d.site].concat((d.groups || []).map(groupName)).some((x) => (x || '').toLowerCase().includes(find))));
+    const count = (f) => scope.filter(f).length;
+    $('#nAll').textContent = count((d) => d.state !== 'revoked');
+    $('#nOnline').textContent = count((d) => d.state === 'active' && d.online);
+    $('#nBusy').textContent = count((d) => kind(d) === 'busy');
+    $('#nOffline').textContent = count((d) => kind(d) === 'off');
+    $('#nPending').textContent = count((d) => d.state === 'pending');
+    for (const b of $('#filters').children) b.setAttribute('aria-pressed', String(b.dataset.f === filter));
+    const pass = { all: () => true, online: (d) => d.state === 'active' && d.online, busy: (d) => kind(d) === 'busy', offline: (d) => kind(d) === 'off', pending: (d) => d.state === 'pending' }[filter];
+    const order = { pending: 0, busy: 1, on: 1, off: 2, revoked: 3 };
+    const shown = scope.filter(pass).sort((x, y) => order[kind(x)] - order[kind(y)] || (x.name || x.id).localeCompare(y.name || y.id));
+    $('#crumb').textContent = groupFilter ? t('Group {name}', { name: groupName(groupFilter) }) : place ? place.filter(Boolean).join(' › ') || t('No location') : '';
+    const list = $('#cards');
+    const focus = document.activeElement && document.activeElement.dataset && document.activeElement.dataset.id;
+    list.textContent = '';
+    for (const d of shown) {
+      const st = d.status || {}, k = kind(d), use = uses(d);
+      const a = el('a', { className: 'dev ' + k, href: `#fleet/${d.id}`, role: 'listitem' },
+        el('div', { className: 'top' }, el('span', { className: 'dot ' + k }), el('b', { textContent: d.name || d.id.slice(0, 8) }), el('span', { className: 'pill ' + k, textContent: WORD[k] || k })));
+      a.dataset.id = d.id;
+      if (placeText(d)) a.append(el('div', { className: 'where', textContent: placeText(d) }));
+      a.append(chips(d, el('div', { className: 'chips' })));
+      const facts = el('div', { className: 'facts' });
+      if (st.bat_pct != null) facts.append(el('span', { textContent: t('battery {n} %', { n: st.bat_pct }) }));
+      if (st.rssi != null && d.online) facts.append(el('span', {}, bars(st.rssi), `${st.rssi} dBm`));
+      const fw = st.fw || (d.info && d.info.fw);
+      if (fw) facts.append(el('span', { textContent: t('firmware {v}', { v: fw }) }));
+      if (st.cfgs) facts.append(el('span', { textContent: st.cfgs.length === 1 ? t('1 configuration') : t('{n} configurations', { n: st.cfgs.length }) }));
+      a.append(facts);
+      const foot = d.state === 'pending' ? t('Type in the code from its display') : d.state === 'revoked' ? '' : use.length ? use.join(', ')
+        : d.online ? t('ports free') : d.last_seen ? t('last seen {ago}', { ago: ago(d.last_seen) }) : t('has not reported in yet');
+      a.append(el('div', { className: 'use' + (use.length ? ' busy' : ''), textContent: foot }));
+      list.append(a);
+      if (d.id === focus) a.focus({ preventScroll: true });     // the list is rebuilt under the keyboard's feet
+    }
+    $('#noDevices').hidden = !!devices.length || !loaded;
+    $('#noMatch').hidden = !devices.length || !!shown.length;
+  }
+  $('#find').addEventListener('input', renderFleet);
+  $('#filters').addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (b) { filter = b.dataset.f; renderFleet(); }
+  });
 
   // ---- one device
   function pretty(v) {
     return typeof v === 'string' ? t(v) : JSON.stringify(v, null, 1);   // a refusal comes in English: 'refused at the device'
   }
-  async function renderDetail() {
+  let placeFor = '', histFor = '';
+  const tile = (id, value, sub, state) => {
+    $(id).textContent = '';
+    $(id).append(value);
+    $(id + 'Sub').textContent = sub || '';
+    $(id).parentNode.className = state || '';
+  };
+  async function renderDevice() {
     const d = devices.find((x) => x.id === selected);
-    if (!d) return;
-    showDetail();
-    $('#dOldKey').hidden = !d.old_key;
+    if (!d) { if (loaded) { conDetach(); location.hash = '#fleet'; } return; }     // it is gone, or not ours to see
+    const st = d.status || {}, k = kind(d), live = d.state === 'active', use = uses(d);
+    document.body.classList.toggle('can-manage', d.right === 'manage');
     $('#dName').textContent = d.name || d.id;
-    const b = $('#dState');
-    b.className = 'badge ' + d.state;
-    b.textContent = STATES[d.state] || d.state;
-    $('#dId').textContent = d.id;
-    $('#dFp').textContent = d.fingerprint;
-    $('#dEnrolled').textContent = when(d.enrolled);
-    $('#dSeen').textContent = d.last_seen ? `${when(d.last_seen)} (${ago(d.last_seen)})` : '–';
-    $('#dInfo').textContent = d.info ? Object.entries(d.info).map(([k, v]) => `${k}: ${v}`).join(' · ') : '–';
-    $('#dStatus').textContent = d.status ? Object.entries(d.status).map(([k, v]) => `${k}: ${v}`).join(' · ') : '–';
-    const st = d.status || {}, line = [];
-    if (d.last_seen) line.push(t('last seen {ago}', { ago: ago(d.last_seen) }));
-    if (st.bat_pct != null) line.push(t('battery {n} %', { n: st.bat_pct }));
-    $('#dLine').textContent = [d.online ? t('online') : d.state === 'active' ? t('offline') : '', [d.region, d.site].filter(Boolean).join(' · ')].concat(d.online ? line.slice(1) : line).filter(Boolean).join(' · ');
-    const use = uses(d);
-    $('#dUse').hidden = !use.length;
-    $('#dUse').textContent = use.length ? t('In use – {list}', { list: use.join(', ') }) : '';
-    for (const [id, key] of [['#dRegion', 'region'], ['#dSite', 'site']]) {
-      if (document.activeElement !== $(id) && placeFor !== d.id + (d[key] || '')) $(id).value = d[key] || '';
-      const dl = $(id).list;
-      dl.textContent = '';
-      for (const v of [...new Set(devices.map((x) => x[key]).filter(Boolean))].sort()) dl.append(el('option', { value: v }));
+    $('#dPlace').textContent = placeText(d);
+    $('#dState').className = 'pill ' + k;
+    $('#dState').textContent = d.state === 'pending' ? STATES.pending : WORD[k] || k;
+    $('#dChips').textContent = '';
+    chips(d, $('#dChips'));
+    $('#dOldKey').hidden = !d.old_key || !admin;
+    $('#approveForm').hidden = d.state !== 'pending' || !admin;
+    $('#dTabs').hidden = !live;
+    if (!live) tab = 'activity';
+    if (tab === 'settings' && d.right !== 'manage') tab = 'overview';
+    tabs('device', $('#dTabs'), (name) => `#fleet/${d.id}/${name}`);
+
+    // overview: the state of things, in a few words
+    tile('#oConn', d.online ? t('online') : t('offline'), d.last_seen ? t('reported in {ago}', { ago: ago(d.last_seen) }) : t('has not reported in yet'), d.online ? 'good' : 'attn');
+    tile('#oUse', use.length ? t('in use') : d.online ? t('free') : '–', use.join(', '), use.length ? 'attn' : '');
+    tile('#oUnatt', st.unatt ? t('on') : t('off'), st.unatt ? t('{left} left: a console opens without anybody at the device agreeing', { left: left(st.unatt) })
+      : t('Somebody at the device has to allow every console. Granted only at the device.'), st.unatt ? 'attn' : '');
+    tile('#oCtl', st.ctl == null ? '–' : st.ctl ? t('allowed') : t('read only'), st.ctl ? t('Commands, settings and templates are taken.') : t('Allowed only at the device itself.'));
+    tile('#oBat', st.bat_pct != null ? `${st.bat_pct} %` : '–', st.bat_mv ? `${(st.bat_mv / 1000).toFixed(2)} V` : '');
+    tile('#oSig', st.rssi != null ? el('span', {}, bars(st.rssi), ` ${st.rssi} dBm`) : '–', st.rssi == null ? '' : st.rssi >= -67 ? t('good') : st.rssi >= -78 ? t('fair') : t('weak – large transfers take long'));
+    tile('#oFw', st.fw || (d.info && d.info.fw) || '–', LANGS[st.lang] || st.lang || '');
+    const sd = st.sd || {};
+    const sdText = sd.stick ? t('SD card lent to the USB port as a memory stick') : sd.on ? t('SD card: {used} of {total} MB used', { used: sd.used, total: sd.mb }) : st.sd ? t('no SD card') : '';
+    tile('#oStore', st.cfgs ? (st.cfgs.length === 1 ? t('1 configuration') : t('{n} configurations', { n: st.cfgs.length })) : '–', sdText);
+    $('#oStore').className = 'text';
+    $('#oConsole').href = `#fleet/${d.id}/console`;
+
+    // console
+    $('#conHint').textContent = st.unatt ? t('Unattended access is on at this device: the console opens without anybody there agreeing.') : t('Somebody at the device has to tap “Allow” on its display.');
+    renderConsole(d);
+
+    // what is on it
+    const cb = $('#cfgs').tBodies[0], cfgs = st.cfgs || [], can = d.right === 'manage';
+    cb.textContent = '';
+    for (const c of cfgs) {
+      const tpl = templates.find((x) => x.name === c.n);
+      const mark = el('td');
+      if (tpl) mark.append(el('span', { className: 'chip ' + (new Blob([tpl.text]).size === c.s ? 'ok' : 'warn'), textContent: new Blob([tpl.text]).size === c.s ? t('as in the library') : t('differs from the library') }));
+      const acts = el('td', { className: 'acts' });
+      if (can) {
+        const b = (text, cls, fn) => { const x = el('button', { className: 'btn small ' + cls, type: 'button', textContent: text }); x.addEventListener('click', fn); acts.append(x); };
+        b(t('View'), '', () => viewConfig(d, c.n));
+        b(t('Play'), 'warn', () => playConfig(d, c.n));
+        b(t('Delete'), 'danger', async () => {
+          if (await ask(t('Delete “{name}” from the device?', { name: c.n }), t('The library keeps its copy.'), t('Delete'))) send('config_delete', { name: c.n });
+        });
+      }
+      cb.append(el('tr', {}, el('td', { textContent: c.n }), el('td', { textContent: c.s < 1024 ? `${c.s} B` : bytes(c.s) }), mark, acts));
     }
-    placeFor = d.id + (d.region || '') + (d.site || '');
-    $('#dNotActive').hidden = d.state === 'active';
-    $('#dNotActiveText').textContent = d.state === 'pending' ? t('This device still waits for its confirmation.') : t('This device is revoked.');
-    $('#toManage').href = '#manage/' + d.id;
-    $('#approveForm').hidden = d.state !== 'pending';
-    $('#commands').hidden = $('#backup').hidden = $('#settings').hidden = $('#firmware').hidden = d.state !== 'active';
-    renderFirmware(d);
+    label($('#cfgs'));
+    $('#cfgs').hidden = !cfgs.length;
+    $('#noCfgs').hidden = !!cfgs.length;
+    $('#noCfgs').textContent = st.cfgs ? t('Nothing is stored on this device.') : t('This device does not say what is stored on it (older firmware).');
+    $('#cfgAge').textContent = st.cfgs && d.last_seen ? t('as reported {ago}', { ago: ago(d.last_seen) }) : '';
+    $('#ctlHint').hidden = st.ctl !== false || !can;
+    $('#sdText').textContent = sdText || '–';
+    const sb = $('#sdFiles').tBodies[0], files = sd.files || [];
+    sb.textContent = '';
+    for (const f of files) sb.append(el('tr', {}, el('td', { textContent: f.n }), el('td', { textContent: f.s < 1024 ? `${f.s} B` : bytes(f.s) })));
+    label($('#sdFiles'));
+    $('#sdFiles').hidden = !files.length;
+    if (document.activeElement !== $('#sdPick')) {
+      const was = $('#sdPick').value;
+      $('#sdPick').textContent = '';
+      for (const im of images.images) $('#sdPick').append(el('option', { value: im.id, textContent: `${im.folder ? im.folder + ' / ' : ''}${im.name} (${bytes(im.size)})` }));
+      $('#sdPick').value = was;
+      if ($('#sdPick').selectedIndex < 0) $('#sdPick').selectedIndex = 0;
+    }
+    $('#sdForm').hidden = !sd.on || !images.images.length;
+    $('#sdNone').hidden = !sd.on || !!images.images.length || !can;
+    $('#sdState').textContent = sdCmd && d.update && d.update.cmd === sdCmd ? t('On its way: {n} %', { n: Math.floor(d.update.sent * 100 / d.update.size) }) : sdNote;
     if (document.activeElement !== $('#tplPick')) {
       const was = $('#tplPick').value;
       $('#tplPick').textContent = '';
@@ -357,12 +492,31 @@
       if ($('#tplPick').selectedIndex < 0) $('#tplPick').selectedIndex = 0;
     }
     $('#tplSendForm').hidden = !templates.length;
+    renderFirmware(d);
+
+    // settings: where it belongs. Filled once per device, so typing is not undone.
+    if (placeFor !== d.id) {
+      placeFor = d.id;
+      for (const [id, key] of [['#dRegion', 'region'], ['#dCountry', 'country'], ['#dSite', 'site']]) {
+        $(id).value = d[key] || '';
+        $(id).list.textContent = '';
+        for (const v of [...new Set(devices.map((x) => x[key]).filter(Boolean))].sort()) $(id).list.append(el('option', { value: v }));
+      }
+      $('#dGroups').textContent = '';
+      for (const g of groups) $('#dGroups').append(el('label', { className: 'check' }, el('input', { type: 'checkbox', value: g.id, checked: (d.groups || []).includes(g.id) }), ' ' + g.name));
+      $('#dNoGroups').hidden = !!groups.length;
+    }
     if (setFor !== d.id) { setFor = d.id; setLoaded = null; $('#setForm').hidden = true; $('#setState').textContent = $('#bkState').textContent = $('#fwState').textContent = ''; }
     $('#revoke').hidden = d.state === 'revoked';
 
-    $('#console').hidden = d.state !== 'active' && !con;
-    renderConsole(d);
-
+    // activity: fetched only when somebody looks at it
+    $('#dId').textContent = d.id;
+    $('#dFp').textContent = d.fingerprint;
+    $('#dEnrolled').textContent = when(d.enrolled);
+    $('#dSeen').textContent = d.last_seen ? `${when(d.last_seen)} (${ago(d.last_seen)})` : '–';
+    $('#dInfo').textContent = d.info ? Object.entries(d.info).map(([key, v]) => `${key}: ${v}`).join(' · ') : '–';
+    $('#dStatus').textContent = d.status ? Object.entries(d.status).map(([key, v]) => `${key}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' · ') : '–';
+    if (tab !== 'activity') return;
     let cmds = [];
     try { cmds = await api('GET', `/devices/${d.id}/commands`); } catch (e) { return; }
     if (selected !== d.id) return;                  // another device was picked meanwhile
@@ -379,18 +533,15 @@
         el('td', { className: c.result === undefined ? 'none' : 'wide' }, c.result === undefined ? '' : el('pre', { textContent: pretty(c.result) }))));
     }
     label($('#history'));
-    $('#history').hidden = $('#histTitle').hidden = !cmds.length;
-    // names for "Abspielen": from the most recent answer to "Konfigurationen"
-    const list = cmds.filter((c) => c.type === 'configs' && c.state === 'done' && c.result && c.result.configs).pop();
-    const names = $('#playNames');
-    names.textContent = '';
-    if (list) for (const cfg of list.result.configs) names.append(el('option', { value: cfg.name }));
+    $('#history').hidden = !cmds.length;
+    $('#noHistory').hidden = !!cmds.length;
   }
 
-  let placeFor = '';
   $('#placeSave').addEventListener('click', async () => {
+    const dev = selected;
     try {
-      await api('POST', `/devices/${selected}/place`, { region: $('#dRegion').value, site: $('#dSite').value });
+      await api('POST', `/devices/${dev}/place`, { region: $('#dRegion').value, country: $('#dCountry').value, site: $('#dSite').value });
+      await api('POST', `/devices/${dev}/groups`, { groups: [...$('#dGroups').querySelectorAll('input:checked')].map((x) => +x.value) });
       toast(t('Saved'));
     } catch (e) { toast(e.message, 5000); }
     placeFor = '';
@@ -406,18 +557,96 @@
     } catch (err) { toast(err.message, 5000); }
     refresh();
   });
+  // An image from the library to the device's SD card. It travels through the
+  // device's own channel in small pieces: fine for megabytes, hours for more.
+  let sdCmd = 0, sdNote = '';
+  $('#sdForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const im = images.images.find((x) => x.id === $('#sdPick').value), dev = selected;
+    if (!im) return;
+    const min = Math.max(1, Math.round(im.size / 30000 / 60));
+    if (!await ask(t('Send “{name}” to the SD card?', { name: im.name }), t('{size} through the device\'s own connection: about {min} min on a good link, much longer on a weak one. The device does nothing else meanwhile. A file of the same name is replaced.', { size: bytes(im.size), min }), t('Send'), 'warn')) return;
+    $('#sdForm').querySelector('button').disabled = true;
+    sdNote = t('Waiting for the device …');
+    try {
+      const c = await api('POST', `/devices/${dev}/commands`, { type: 'sd_put', args: { img: im.id } });
+      sdCmd = c.id;
+      let done = null;
+      while (!done) {                               // as long as it takes: the page shows how far it is
+        await new Promise((r) => setTimeout(r, 2000));
+        const now = (await api('GET', `/devices/${dev}/commands`)).find((x) => x.id === c.id);
+        if (!now) throw new Error(t('The device did not answer'));
+        if (now.state === 'failed' || now.state === 'expired') throw new Error(typeof now.result === 'string' ? t(now.result) : CMD_STATES[now.state]);
+        if (now.state === 'done') done = now;
+      }
+      sdCmd = 0;
+      sdNote = t('On the SD card: {name}', { name: im.name });
+      toast(t('On the SD card: {name}', { name: im.name }));
+    } catch (err) { sdCmd = 0; sdNote = err.message; toast(err.message, 6000); }
+    $('#sdForm').querySelector('button').disabled = false;
+    refresh();
+  });
+  // A stored configuration: read it from the device, play it to a port.
+  let cfgShown = null;
+  async function viewConfig(d, name) {
+    toast(t('Waiting for the device …'), 30000);
+    try {
+      cfgShown = await run(d.id, 'config_get', { name });
+      $('#toast').hidden = true;
+      $('#cfgTitle').textContent = cfgShown.name;
+      $('#cfgText').textContent = cfgShown.text;
+      $('#cfgDlg').showModal();
+    } catch (e) { toast(e.message, 6000); }
+  }
+  $('#cfgClose').addEventListener('click', () => $('#cfgDlg').close());
+  $('#cfgKeep').addEventListener('click', async () => {
+    try {
+      const have = templates.find((x) => x.name === cfgShown.name);
+      await api(have ? 'PUT' : 'POST', have ? `/templates/${have.id}` : '/templates', { name: cfgShown.name, folder: have ? have.folder || '' : '', text: cfgShown.text });
+      libAt = 0;
+      toast(t('Kept as a template'));
+      $('#cfgDlg').close();
+    } catch (e) { toast(e.message, 6000); }
+  });
+  async function playConfig(d, name) {
+    const port = await pick(t('Play “{name}”', { name }), t('Port'), t('Play'), [1, 2, 3, 4].map((n) => [String(n), t('Port {n}', { n })]));
+    if (!port) return;
+    if (!await ask(t('Play “{name}” on port {port}?', { name, port }), t('The lines go to the console of whatever is connected there.'), t('Play'))) return;
+    send('play', { name, port: +port });
+  }
 
-  // ---- the library: templates and firmware, kept here for every device
+  // ---- the library: templates, firmware and images, kept here for every device
   let templates = [], images = { images: [] }, imgBusy = false;
   const bytes = (n) => (n >= 1073741824 ? (n / 1073741824).toFixed(2) + ' GB' : n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' kB');
   const byFolder = (x, y) => (x.folder || '').localeCompare(y.folder || '');
   // One row per folder in front of what is in it.
-  function folderRows(body, items, cols, row) {
+  // A folder is nothing but a name on what is in it: renaming it renames that
+  // name everywhere, removing it leaves its contents without a folder. move()
+  // puts one item into a folder.
+  function folderRows(body, items, cols, row, move) {
     let folder = null;
     for (const it of items.slice().sort(byFolder)) {
       if ((it.folder || '') !== folder && items.some((x) => x.folder)) {
         folder = it.folder || '';
-        body.append(el('tr', { className: 'grp' }, el('td', { colSpan: cols, textContent: folder || t('No folder') })));
+        const cell = el('td', { colSpan: cols }, el('span', { textContent: folder || t('No folder') }));
+        if (folder && admin && move) {
+          const name = folder, inside = items.filter((x) => x.folder === name);
+          const all = async (to) => {
+            try { for (const x of inside) await move(x, to); } catch (e) { toast(e.message, 5000); }
+            loadLibrary();
+          };
+          const ren = el('button', { className: 'btn small', type: 'button', textContent: t('Rename') });
+          const del = el('button', { className: 'btn small danger', type: 'button', textContent: t('Remove folder') });
+          ren.addEventListener('click', async () => {
+            const to = await pick(t('Rename the folder “{name}”', { name }), t('Folder'), t('Save'), [...new Set(items.map((x) => x.folder).filter((f) => f && f !== name))], name);
+            if (to && to !== name) all(to);
+          });
+          del.addEventListener('click', async () => {
+            if (await ask(t('Remove the folder “{name}”?', { name }), t('What is in it stays, without a folder.'), t('Remove folder'))) all('');
+          });
+          cell.append(el('span', { className: 'acts' }, ren, del));
+        }
+        body.append(el('tr', { className: 'grp' }, cell));
       }
       body.append(row(it));
     }
@@ -447,51 +676,50 @@
   $('#pickForm').addEventListener('submit', (e) => { e.preventDefault(); $('#pickDlg').close('ok'); });
 
   async function loadLibrary() {
+    tabs('library', $('[data-tabs=library]'));
     try { [templates, packages, images] = await Promise.all([api('GET', '/templates'), api('GET', '/firmware'), api('GET', '/images')]); } catch (e) { return; }
-    const active = devices.filter((d) => d.state === 'active').map((d) => [d.id, (d.name || d.id.slice(0, 8)) + ([d.region, d.site].filter(Boolean).length ? ' – ' + [d.region, d.site].filter(Boolean).join(' · ') : '')]);
+    libAt = Date.now();
+    const mine = devices.filter((d) => d.state === 'active' && d.right === 'manage').map((d) => [d.id, (d.name || d.id.slice(0, 8)) + (placeText(d) ? ' – ' + placeText(d) : '')]);
+    const on = (list) => (list.length ? el('span', { className: 'chip', textContent: list.length === 1 ? list[0].name || list[0].id.slice(0, 8) : t('{n} devices', { n: list.length }), title: list.map((d) => d.name || d.id.slice(0, 8)).join(', ') }) : '');
+    const act = (text, cls, fn, off) => { const b = el('button', { className: 'btn small ' + cls, type: 'button', textContent: text, disabled: !!off }); b.addEventListener('click', fn); return b; };
     const tb = $('#tpls').tBodies[0];
     tb.textContent = '';
-    folderRows(tb, templates, 4, (tpl) => {
-      const send = el('button', { className: 'btn small', type: 'button', textContent: t('Send'), disabled: !active.length });
-      const edit = el('button', { className: 'btn small', type: 'button', textContent: t('Edit') });
-      const del = el('button', { className: 'btn small danger', type: 'button', textContent: t('Delete') });
-      send.addEventListener('click', async () => {
-        const dev = await pick(t('Send “{name}”', { name: tpl.name }), t('Device'), t('Send'), active);
+    folderRows(tb, templates, 5, (tpl) => {
+      const acts = el('td', { className: 'acts' }, act(t('Send'), '', async () => {
+        const dev = await pick(t('Send “{name}”', { name: tpl.name }), t('Device'), t('Send'), mine);
         if (!dev) return;
         try { await api('POST', `/templates/${tpl.id}/send`, { device: dev }); toast(t('{cmd}: queued – the device fetches the command the next time it reports in', { cmd: tpl.name })); } catch (e) { toast(e.message, 5000); }
-      });
-      edit.addEventListener('click', () => editTemplate(tpl));
-      del.addEventListener('click', async () => {
+      }, !mine.length));
+      if (admin) acts.append(act(t('Edit'), '', () => editTemplate(tpl)), act(t('Delete'), 'danger', async () => {
         if (!await ask(t('Delete this template?'), tpl.name, t('Delete'))) return;
         try { await api('DELETE', `/templates/${tpl.id}`); } catch (e) { toast(e.message, 5000); }
         loadLibrary();
-      });
-      return el('tr', {}, el('td', { textContent: tpl.name }), el('td', { textContent: ago(tpl.updated) }),
-        el('td', { textContent: tpl.by && tpl.by !== 'token' ? tpl.by : '' }), el('td', { className: 'acts' }, send, edit, del));
-    });
+      }));
+      return el('tr', {}, el('td', { textContent: tpl.name }), el('td', {}, on(devices.filter((d) => ((d.status || {}).cfgs || []).some((c) => c.n === tpl.name)))),
+        el('td', { textContent: ago(tpl.updated) }), el('td', { textContent: tpl.by && tpl.by !== 'token' ? tpl.by : '' }), acts);
+    }, (tpl, folder) => api('PUT', `/templates/${tpl.id}`, { name: tpl.name, folder, text: tpl.text }));
     label($('#tpls'));
     $('#tpls').hidden = !templates.length;
     $('#noTpls').hidden = !!templates.length;
 
     const fb = $('#libFw').tBodies[0];
     fb.textContent = '';
-    folderRows(fb, packages, 6, (p) => {
-      const move = el('button', { className: 'btn small', type: 'button', textContent: t('Folder') });
-      const del = el('button', { className: 'btn small danger', type: 'button', textContent: t('Delete') });
-      move.addEventListener('click', async () => {
+    folderRows(fb, packages, 7, (p) => {
+      const acts = el('td', { className: 'acts' });
+      if (admin) acts.append(act(t('Folder'), '', async () => {
         const folder = await pick(t('Folder'), t('Folder'), t('Save'), [...new Set(packages.map((x) => x.folder).filter(Boolean))], p.folder || '');
         if (folder === null) return;
         try { await api('POST', `/firmware/${p.id}/folder`, { folder }); } catch (e) { toast(e.message, 5000); }
         loadLibrary();
-      });
-      del.addEventListener('click', async () => {
+      }), act(t('Delete'), 'danger', async () => {
         if (!await ask(t('Delete this package?'), t('Version {v} ({lang}), signed {when}. Devices that have it installed keep it.', { v: p.fw, lang: LANGS[p.lang] || p.lang, when: when(new Date(p.seq * 1000).toISOString()) }), t('Delete'))) return;
         try { await api('DELETE', `/firmware/${p.id}`); } catch (e) { toast(e.message, 5000); }
         loadLibrary();
-      });
+      }));
       return el('tr', {}, el('td', { textContent: p.fw }), el('td', { textContent: LANGS[p.lang] || p.lang }), el('td', { textContent: p.board }),
-        el('td', { textContent: when(new Date(p.seq * 1000).toISOString()) }), el('td', { textContent: (p.size / 1048576).toFixed(1) + ' MB' }), el('td', { className: 'acts' }, move, del));
-    });
+        el('td', { textContent: when(new Date(p.seq * 1000).toISOString()) }), el('td', { textContent: (p.size / 1048576).toFixed(1) + ' MB' }),
+        el('td', {}, on(devices.filter((d) => (d.status || {}).fw === p.fw && (d.status || {}).lang === p.lang))), acts);
+    }, (p, folder) => api('POST', `/firmware/${p.id}/folder`, { folder }));
     label($('#libFw'));
     $('#libFw').hidden = !packages.length;
     $('#noLibFw').hidden = !!packages.length;
@@ -529,8 +757,8 @@
         loadLibrary();
       });
       return el('tr', {}, el('td', { textContent: im.name }), el('td', { textContent: bytes(im.size) }), el('td', {}, sum),
-        el('td', { textContent: ago(im.added) }), el('td', { textContent: im.by && im.by !== 'token' ? im.by : '' }), el('td', { className: 'acts' }, get, name, move, del));
-    });
+        el('td', { textContent: ago(im.added) }), el('td', { textContent: im.by && im.by !== 'token' ? im.by : '' }), el('td', { className: 'acts' }, ...(admin ? [get, name, move, del] : [get])));
+    }, (im, folder) => api('PUT', `/images/${im.id}`, { name: im.name, folder }));
     label($('#imgs'));
     $('#imgs').hidden = !list.length;
     $('#noImgs').hidden = !!list.length;
@@ -607,17 +835,11 @@
     } catch (err) { toast(err.message, 5000); }
     refresh();
   }
-  $('#commands').addEventListener('click', async (e) => {
+  $('#v-device').addEventListener('click', async (e) => {
     const type = e.target.dataset && e.target.dataset.cmd;
     if (!type) return;
     if (type === 'reboot' && !await ask(t('Restart the device?'), t('Console sessions that are running break off.'), t('Restart'))) return;
     send(type);
-  });
-  $('#playForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const name = $('#playName').value.trim(), port = +$('#playPort').value;
-    if (!await ask(t('Play “{name}” on port {port}?', { name, port }), t('The lines go to the console of whatever is connected there.'), t('Play'))) return;
-    send('play', { name, port });
   });
   // ---- settings and backup: commands whose answer the page waits for
   let setFor = '', setLoaded = null;
@@ -723,7 +945,6 @@
     });
     const first = box.querySelector('[data-path="ports.0.enabled"]');
     if (first) first.disabled = true;                // the first port is always there
-    $('#setHint').hidden = false;
     $('#setForm').hidden = false;
   }
   // Only what was changed goes to the device; the ports go as a whole list.
@@ -779,17 +1000,11 @@
     const body = $('#fwList').tBodies[0];
     body.textContent = '';
     for (const p of packages) {
-      const install = el('button', { className: 'btn warn', type: 'button', textContent: t('Install'), disabled: fwBusy });
-      const remove = el('button', { className: 'btn', type: 'button', textContent: t('Delete'), disabled: fwBusy });
+      const install = el('button', { className: 'btn small warn', type: 'button', textContent: t('Install'), disabled: fwBusy });
       install.addEventListener('click', () => installFirmware(d, p));
-      remove.addEventListener('click', async () => {
-        if (!await ask(t('Delete this package?'), t('Version {v} ({lang}), signed {when}. Devices that have it installed keep it.', { v: p.fw, lang: LANGS[p.lang] || p.lang, when: when(new Date(p.seq * 1000).toISOString()) }), t('Delete'))) return;
-        try { await api('DELETE', `/firmware/${p.id}`); } catch (e) { toast(e.message, 6000); }
-        refresh();
-      });
       body.append(el('tr', {}, el('td', { textContent: p.fw }), el('td', { textContent: LANGS[p.lang] || p.lang }),
         el('td', { textContent: when(new Date(p.seq * 1000).toISOString()) }), el('td', { textContent: (p.size / 1048576).toFixed(1) + ' MB' }),
-        el('td', {}, el('span', { className: 'row left wrap' }, install, remove))));
+        el('td', { className: 'acts' }, install)));
     }
     label($('#fwList'));
     $('#fwList').hidden = !packages.length;
@@ -818,7 +1033,6 @@
     fwBusy = false;
     refresh();
   }
-  $('#fwAdd').addEventListener('click', () => { $('#fwFile').value = ''; $('#fwFile').click(); });
   $('#fwFile').addEventListener('change', async () => {
     const file = $('#fwFile').files[0];
     if (!file) return;
@@ -829,6 +1043,7 @@
       if (!r.ok) throw new Error(j.error ? t(j.error) : 'HTTP ' + r.status);
       fwNote(t('Uploaded: version {v} ({lang}).', { v: j.fw, lang: LANGS[j.lang] || j.lang }));
     } catch (e) { fwNote(e.message); toast(e.message, 6000); }
+    libAt = 0;
     refresh();
     if (view === 'library') loadLibrary();
   });
@@ -978,7 +1193,7 @@
       const cur = v.console, st = $('#conState');
       let text = '', cls = '';
       // why a session ended comes from the server in English, or from the device in the device's language
-      if (cur && cur.state === 'requested') { text = t('Requested (port {port}) – somebody at the device now has to tap “Allow” on its display.', { port: cur.port }); cls = 'wait'; }
+      if (cur && cur.state === 'requested') { text = (d.status || {}).unatt ? t('Requested (port {port}) – the device opens it the next time it reports in.', { port: cur.port }) : t('Requested (port {port}) – somebody at the device now has to tap “Allow” on its display.', { port: cur.port }); cls = 'wait'; }
       else if (cur && cur.state === 'granted') { text = t('Allowed at the device – the connection is coming up.'); cls = 'wait'; }
       else if (cur && cur.state === 'open') { text = t('Open on port {port}.', { port: cur.port }); cls = 'open'; }
       else if (cur && cur.state === 'refused') text = t('Did not come about: {why}', { why: t(cur.reason) });
@@ -987,7 +1202,7 @@
       st.className = 'dim ' + cls;
       const busy = cur && ['requested', 'granted', 'open'].includes(cur.state);
       $('#conForm').hidden = !!busy || d.state !== 'active';
-      if (cur && cur.state === 'open' && !(con && con.id === cur.id)) conAttach(d.id, cur.id, cur.left_s);
+      if (cur && cur.state === 'open' && !(con && con.id === cur.id) && tab === 'console') conAttach(d.id, cur.id, cur.left_s);
       if (con) {
         const left = Math.max(0, con.left - Math.round((Date.now() - con.leftAt) / 1000));
         $('#conInfo').textContent = con.ended ? t('ended') : t('Port {port} · {left} min left', { port: cur ? cur.port : '', left: mmss(left) });
@@ -1007,6 +1222,7 @@
       }
       label($('#conLog'));
       $('#conLog').hidden = !v.sessions.length;
+      $('#noConLog').hidden = !!v.sessions.length;
     }).catch(() => {});
   }
   $('#conForm').addEventListener('submit', (e) => {
@@ -1071,6 +1287,10 @@
     'DELETE /users/{name}': t('User deleted'), 'POST /enroll-tokens': t('Invitation created'), 'POST /devices/{id}/approve': t('Device confirmed'),
     'POST /devices/{id}/revoke': t('Device revoked'), 'POST /devices/{id}/commands': t('Command'), 'POST /devices/{id}/console/{sess}/close': t('Remote console ended'),
     'POST /server/rotate-key': t('Server key changed'), 'POST /server/rotate-key/end': t('Key change ended'),
+    'POST /devices/{id}/place': t('Location set'), 'POST /devices/{id}/groups': t('Groups of a device set'), 'POST /groups': t('Group added'), 'PUT /groups/{id}': t('Group changed'),
+    'DELETE /groups/{id}': t('Group deleted'), 'POST /users/{name}/role': t('Role changed'), 'POST /templates': t('Template added'), 'PUT /templates/{id}': t('Template changed'),
+    'DELETE /templates/{id}': t('Template deleted'), 'POST /templates/{id}/send': t('Template sent'), 'POST /firmware': t('Firmware uploaded'), 'DELETE /firmware/{id}': t('Firmware deleted'),
+    'POST /images': t('Image uploaded'), 'DELETE /images/{id}': t('Image deleted'), 'POST /images/{id}/link': t('Image downloaded'),
   };
   function showCode(name, code) {
     $('#codeFor').textContent = name;
@@ -1083,11 +1303,11 @@
       const r = await api(method, path, body);
       if (r.setup) showCode(r.name, r.setup);
     } catch (err) { toast(err.message, 5000); }
-    loadAdmin();
+    loadAccess();
   }
-  async function loadAdmin() {
-    let users, log;
-    try { [users, log] = await Promise.all([api('GET', '/users'), api('GET', '/audit?n=200')]); } catch (e) { return; }
+  async function loadAccess() {
+    tabs('access', $('[data-tabs=access]'));
+    try { [users, groups] = await Promise.all([api('GET', '/users'), api('GET', '/groups')]); } catch (e) { return; }
     const ub = $('#users tbody');
     ub.textContent = '';
     for (const u of users) {
@@ -1095,6 +1315,15 @@
       const how = KINDS[u.kind] + (u.kind === 'entra' ? ` (${u.entra_name || u.entra_oid}${u.entra_name && !u.entra_oid ? ', ' + t('never signed in') : ''})` : '');
       const acts = el('td', { className: 'acts' });
       const name = encodeURIComponent(u.name);
+      const role = el('select', { ariaLabel: t('May'), disabled: u.name === me && !token });
+      role.append(el('option', { value: 'admin', textContent: t('everything') }), el('option', { value: 'member', textContent: t('its groups only') }));
+      role.value = u.role;
+      role.addEventListener('change', async () => {
+        try { await api('POST', `/users/${name}/role`, { role: role.value }); toast(t('Saved')); } catch (e) { toast(e.message, 5000); }
+        loadAccess();
+      });
+      const mine = el('div', { className: 'chips' });
+      for (const g of groups) if (g.members && g.members[u.name]) mine.append(el('span', { className: 'chip', textContent: `${g.name}: ${RIGHTS[g.members[u.name]]}` }));
       if (u.kind === 'local') acts.append(el('button', { className: 'btn small', textContent: t('Reset'),
         onclick: () => userAction(t('Reset the account “{name}”?', { name: u.name }), t('Password and authenticator app stop working; there will be a new setup code.'), t('Reset'), 'POST', `/users/${name}/reset`) }));
       acts.append(el('button', { className: 'btn small', textContent: u.disabled ? t('Enable') : t('Disable'),
@@ -1103,12 +1332,84 @@
           u.disabled ? t('Enable') : t('Disable'), 'POST', `/users/${name}/disable`, { disabled: !u.disabled }, u.disabled) }));
       acts.append(el('button', { className: 'btn small danger', textContent: t('Delete'),
         onclick: () => userAction(t('Delete the account “{name}”?', { name: u.name }), t('This cannot be undone.'), t('Delete'), 'DELETE', `/users/${name}`) }));
-      ub.append(el('tr', null, el('td', { textContent: u.name }), el('td', { textContent: how }), el('td', { textContent: state }),
-        el('td', { textContent: when(u.last_login) }), acts));
+      ub.append(el('tr', null, el('td', { textContent: u.name }), el('td', { textContent: how }), el('td', {}, role), el('td', {}, mine), el('td', { textContent: state }),
+        el('td', { textContent: u.last_login ? ago(u.last_login) : '–', title: when(u.last_login) }), acts));
     }
     label($('#users'));
     $('#users').hidden = !users.length;
     $('#noUsers').hidden = !!users.length;
+
+    const box = $('#groups');
+    box.textContent = '';
+    for (const g of groups) {
+      const people = Object.entries(g.members || {}).sort().map(([n, r]) => `${n} (${RIGHTS[r]})`);
+      const devs = devices.filter((d) => (d.groups || []).includes(g.id));
+      const edit = el('button', { className: 'btn small', type: 'button', textContent: t('Edit') });
+      edit.addEventListener('click', () => editGroup(g));
+      box.append(el('div', { className: 'dev grpcard' },
+        el('div', { className: 'top' }, el('b', { textContent: g.name }), edit),
+        el('div', { className: 'where', textContent: g.note || '' }),
+        el('div', { className: 'facts' }, el('span', { textContent: devs.length === 1 ? t('1 device') : t('{n} devices', { n: devs.length }) }),
+          el('span', { textContent: people.length === 1 ? t('1 person') : t('{n} people', { n: people.length }) })),
+        el('div', { className: 'use people', textContent: people.join(', ') || t('Nobody yet – only administrators see these devices.') })));
+    }
+    $('#noGroups').hidden = !!groups.length;
+  }
+  // One group: who is in it with which right, and which devices belong to it.
+  let grpEditing = null;
+  function editGroup(g) {
+    grpEditing = g;
+    $('#grpTitle').textContent = g ? t('Edit group') : t('New group');
+    $('#grpName').value = g ? g.name : '';
+    $('#grpNote').value = g ? g.note || '' : '';
+    $('#grpErr').hidden = true;
+    $('#grpDelete').hidden = !g;
+    const mb = $('#grpMembers');
+    mb.textContent = '';
+    for (const u of users) {
+      const sel = el('select', { ariaLabel: u.name });
+      sel.append(el('option', { value: '', textContent: t('not in it') }), el('option', { value: 'use', textContent: t('use: look and console') }), el('option', { value: 'manage', textContent: t('manage: also change') }));
+      sel.value = (g && g.members && g.members[u.name]) || '';
+      sel.dataset.user = u.name;
+      mb.append(el('div', { className: 'line' }, el('span', { textContent: u.name + (u.role === 'admin' ? ' · ' + t('administrator') : '') }), sel));
+    }
+    $('#grpNoUsers').hidden = !!users.length;
+    $('#grpMembers').hidden = !users.length;
+    const db = $('#grpDevices');
+    db.textContent = '';
+    const live = devices.filter((d) => d.state !== 'revoked');
+    for (const d of live) db.append(el('label', { className: 'check' }, el('input', { type: 'checkbox', value: d.id, checked: !!g && (d.groups || []).includes(g.id) }), ' ' + (d.name || d.id.slice(0, 8)) + (placeText(d) ? ' – ' + placeText(d) : '')));
+    $('#grpNoDevs').hidden = !!live.length;
+    $('#grpDevices').hidden = !live.length;
+    $('#grpDlg').showModal();
+  }
+  $('#grpNew').addEventListener('click', () => editGroup(null));
+  $('#grpCancel').addEventListener('click', () => $('#grpDlg').close());
+  $('#grpForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const members = {};
+    for (const s of $('#grpMembers').querySelectorAll('select')) if (s.value) members[s.dataset.user] = s.value;
+    try {
+      const g = await api(grpEditing ? 'PUT' : 'POST', grpEditing ? `/groups/${grpEditing.id}` : '/groups', { name: $('#grpName').value, note: $('#grpNote').value, members });
+      for (const box of $('#grpDevices').querySelectorAll('input')) {
+        const d = devices.find((x) => x.id === box.value), has = (d.groups || []).includes(g.id);
+        if (has !== box.checked) await api('POST', `/devices/${d.id}/groups`, { groups: box.checked ? (d.groups || []).concat(g.id) : d.groups.filter((x) => x !== g.id) });
+      }
+      $('#grpDlg').close();
+      await refresh();
+      loadAccess();
+    } catch (err) { $('#grpErr').textContent = err.message; $('#grpErr').hidden = false; }
+  });
+  $('#grpDelete').addEventListener('click', async () => {
+    if (!await ask(t('Delete the group “{name}”?', { name: grpEditing.name }), t('Its members lose the devices they saw only through it. The devices stay.'), t('Delete'))) return;
+    try { await api('DELETE', `/groups/${grpEditing.id}`); } catch (e) { toast(e.message, 5000); }
+    $('#grpDlg').close();
+    await refresh();
+    loadAccess();
+  });
+  async function loadAudit() {
+    let log;
+    try { log = await api('GET', '/audit?n=200'); } catch (e) { return; }
     const ab = $('#audit tbody');
     ab.textContent = '';
     for (const a of log) {
@@ -1131,6 +1432,7 @@
   }
   function renderServer() {
     if (!server || !status) return;
+    if (view === 'server' && !selected) tabs('server', $('[data-tabs=server]'));
     const st = status.state, kc = server.key_change, dv = status.devices;
     // what is wrong is said on every page, not only where the numbers are
     $('#alert').hidden = st.ok;
@@ -1139,7 +1441,7 @@
     mark.hidden = st.ok && !kc;
     mark.className = 'mark' + (st.ok ? '' : ' bad');
     const b = $('#stState');
-    b.className = 'badge ' + (st.ok ? 'ok' : 'failed');
+    b.className = 'pill ' + (st.ok ? 'ok' : 'failed');
     b.textContent = st.ok ? t('all right') : t('error');
     $('#stError').hidden = st.ok;
     $('#stError').textContent = st.ok ? '' : t('Saving has been failing since {since}: {error}', { since: when(st.since), error: st.error });
@@ -1198,7 +1500,7 @@
     try { server = await api('POST', '/server/rotate-key/end'); toast(t('The old key is forgotten')); } catch (err) { toast(err.message, 5000); }
     refresh();
   });
-  $('#auditReload').addEventListener('click', loadAdmin);
+  $('#auditReload').addEventListener('click', loadAudit);
   $('#addUser').addEventListener('click', () => {
     $('#userForm').reset();
     $('#userErr').hidden = true;
@@ -1211,10 +1513,10 @@
   $('#userForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     try {
-      const r = await api('POST', '/users', { name: $('#userName').value, kind: $('#userKind').value, entra: $('#userEntra').value });
+      const r = await api('POST', '/users', { name: $('#userName').value, kind: $('#userKind').value, entra: $('#userEntra').value, role: $('#userRole').value });
       $('#userDlg').close();
       if (r.setup) showCode(r.name, r.setup); else toast(t('Added'));
-      loadAdmin();
+      loadAccess();
     } catch (err) {
       $('#userErr').textContent = err.message;
       $('#userErr').hidden = false;
@@ -1239,3 +1541,4 @@
     }
   })();
 })();
+

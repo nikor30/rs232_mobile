@@ -188,7 +188,15 @@
   "SD card": "Cartão SD",
   "Use the SD card as a USB stick": "Usar o cartão SD como pendrive",
   "The SD card belongs to the USB port now: the switch, firewall or computer it is plugged into sees a USB stick. Eject it there, then restart this device to get the card back.": "O cartão SD pertence agora à porta USB: o switch, o firewall ou o computador ao qual ela está ligada vê um pendrive. Ejete-o lá e depois reinicie este dispositivo para ter o cartão de volta.",
-  "As a USB stick the card can be read by a switch or firewall (firmware images, configurations) and filled from a computer. The USB port moves about half a megabyte per second.": "Como pendrive, o cartão pode ser lido por um switch ou firewall (imagens de firmware, configurações) e preenchido a partir de um computador. A porta USB transfere cerca de meio megabyte por segundo."
+  "As a USB stick the card can be read by a switch or firewall (firmware images, configurations) and filled from a computer. The USB port moves about half a megabyte per second.": "Como pendrive, o cartão pode ser lido por um switch ou firewall (imagens de firmware, configurações) e preenchido a partir de um computador. A porta USB transfere cerca de meio megabyte por segundo.",
+  "Unattended access": "Acesso sem supervisão",
+  "Off – every remote console needs a tap on the display": "Desligado – cada console remoto precisa de um toque na tela",
+  "1 hour": "1 hora",
+  "8 hours": "8 horas",
+  "24 hours": "24 horas",
+  "3 days": "3 dias",
+  "7 days": "7 dias",
+  "While it runs, the control center opens a remote console without anybody at the device agreeing. It ends by itself.": "Enquanto estiver ativo, a central abre um console remoto sem que alguém no dispositivo concorde. Termina sozinho."
  },
  "script": {
   "Port ": "Porta ",
@@ -383,6 +391,11 @@
   "connected": "conectado",
   "waiting for the USB port": "aguardando a porta USB",
   "inserted": "inserido",
-  "none": "nenhum"
+  "none": "nenhum",
+  "Unattended access is on: {0} h {1} min left. A remote console opens without a tap on the display.": "Acesso sem supervisão ativo: restam {0} h {1} min. Um console remoto abre sem toque na tela.",
+  "While it runs, the control center opens a remote console without anybody at the device agreeing. It ends by itself.": "Enquanto estiver ativo, a central abre um console remoto sem que alguém no dispositivo concorde. Termina sozinho.",
+  "For this time the control center can operate the serial ports without anybody at the device agreeing. Allow?": "Durante esse tempo a central pode operar as portas seriais sem que alguém no dispositivo concorde. Permitir?",
+  "Unattended access granted": "Acesso sem supervisão concedido",
+  "Unattended access ended": "Acesso sem supervisão encerrado"
  }
 }

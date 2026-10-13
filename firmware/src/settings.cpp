@@ -129,6 +129,7 @@ void load() {
   settings.httpsLanOnly = prefs.getBool("httpsLan", false);
   settings.httpsCert    = prefs.getUChar("httpsCrt", 0);
   settings.bleEnabled   = prefs.getBool("ble", true);
+  settings.c2UnattS     = prefs.getUInt("c2una", 0);
   settings.c2Control    = prefs.getBool("c2ctl", false);
   settings.adminUi      = prefs.getBool("admui", false);
   settings.hostname = prefs.getString("host", DEFAULT_HOSTNAME);
@@ -210,6 +211,7 @@ void save() {
   prefs.putBool("httpsLan", settings.httpsLanOnly);
   prefs.putUChar("httpsCrt", settings.httpsCert);
   prefs.putBool("ble", settings.bleEnabled);
+  prefs.putUInt("c2una", settings.c2UnattS);
   prefs.putBool("c2ctl", settings.c2Control);
   prefs.putBool("admui", settings.adminUi);
   prefs.putString("host", settings.hostname);

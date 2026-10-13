@@ -95,7 +95,9 @@ type Device struct {
 	Pub         []byte          `json:"pub"`
 	Name        string          `json:"name"`
 	Region      string          `json:"region,omitempty"` // where it belongs: given by an administrator,
+	Country     string          `json:"country,omitempty"`
 	Site        string          `json:"site,omitempty"`   // free text, the list is grouped by it
+	Groups      []uint64        `json:"groups,omitempty"` // groups.go: who may work with it
 	Info        json.RawMessage `json:"info,omitempty"`   // what the device said about itself when enrolling
 	State       string          `json:"state"`
 	SAS         string          `json:"sas,omitempty"` // pending only; never leaves the server
@@ -119,6 +121,8 @@ type data struct {
 	Audit     []*AuditEntry        `json:"audit,omitempty"`
 	Templates map[uint64]*Template `json:"templates,omitempty"`
 	NextTpl   uint64               `json:"next_tpl,omitempty"`
+	Groups    map[uint64]*Group    `json:"groups,omitempty"`
+	NextGroup uint64               `json:"next_group,omitempty"`
 }
 
 // Template is a configuration text kept at the server: written once, sorted
@@ -452,6 +456,7 @@ func (s *Store) TokenSecret(id string) ([]byte, error) {
 
 func clone(d *Device) *Device {
 	c := *d
+	c.Groups = append([]uint64(nil), d.Groups...)
 	c.Commands = nil
 	for _, cmd := range d.Commands {
 		cc := *cmd
@@ -733,8 +738,8 @@ func (s *Store) ConsoleClose(id string, cmdID uint64, reason string, in, out int
 }
 
 // Place says where a device belongs. Both are free text; empty takes it out.
-func (s *Store) Place(id, region, site string) error {
-	if len(region) > 48 || len(site) > 48 {
+func (s *Store) Place(id, region, country, site string) error {
+	if len(region) > 48 || len(country) > 48 || len(site) > 48 {
 		return ErrArgs
 	}
 	s.mu.Lock()
@@ -743,7 +748,7 @@ func (s *Store) Place(id, region, site string) error {
 	if d == nil {
 		return ErrNotFound
 	}
-	d.Region, d.Site = region, site
+	d.Region, d.Country, d.Site = region, country, site
 	s.ch.device(id)
 	return s.save()
 }

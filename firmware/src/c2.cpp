@@ -12,6 +12,7 @@
 #include "net.h"
 #include "ble.h"
 #include "configs.h"
+#include "sdcard.h"
 #include "player.h"
 
 #include <ArduinoJson.h>
@@ -63,6 +64,7 @@ static std::vector<MainJob> jobs;        // under mux: task -> main loop
 static std::vector<String> jobResults;   // under mux: main loop -> task, one JSON object each
 static const size_t MAX_JOBS = 8;
 static volatile bool rebootWanted = false, rebootNow = false;
+static volatile uint32_t sdJob = 0;      // the "sd_put" command the task is to carry out (main loop -> task)
 static volatile uint32_t updateJob = 0;  // the "update" command the task is to carry out (main loop -> task)
 static char devName[33];
 
@@ -93,6 +95,13 @@ static volatile bool conBusy = false;    // con.state != CON_NONE, readable with
 static bool conAnnounced = false;        // task: the server has the "yes" to the console that is open now
 static bool conAtCollect = false;
 static bool keepAlive = false;           // task: the connection stays up between requests (see requestOnce)
+// Unattended access (main loop counts, everybody reads): seconds left.
+static volatile uint32_t unattLeft = 0;
+static uint32_t unattTickMs = 0, unattSavedS = 0;
+// What is stored on the device, for the status: written by the main loop, read
+// by the task, both under mux.
+static String inventory = "[]", sdFiles = "[]";
+static uint32_t inventoryAt = 0;
 static uint32_t conRefuseUntil = 0;      // main loop: after a "no", further requests are turned down for a while
 static const uint32_t CON_ASK_MS = 60000, CON_REFUSE_MS = 60000, CON_MAX_MIN = 60;
 static const uint32_t CON_LOST_MS = 30000;   // without the server for this long, the console is closed
@@ -550,6 +559,21 @@ static void fillStatus(JsonObject o) {
   o["web"] = Net::webClients();
   o["tcp"] = Net::tcpConnected();
   o["bt"] = Ble::state() == Ble::CONNECTED;
+  o["ctl"] = settings.c2Control;         // may the server change things here?
+  if (unattLeft) o["unatt"] = (uint32_t)unattLeft;
+  {
+    Lock l;
+    o["cfgs"] = serialized(inventory);   // the stored configurations: name and size
+  }
+  JsonObject sd = o["sd"].to<JsonObject>();
+  sd["on"] = Sd::mounted();
+  if (Sd::stick().on) sd["stick"] = true;
+  if (Sd::mounted()) {
+    sd["mb"] = (uint32_t)Sd::totalMb();
+    sd["used"] = (uint32_t)Sd::usedMb();
+    Lock l;
+    sd["files"] = serialized(sdFiles);   // what lies in the card's top folder
+  }
   o["uptime_s"] = millis() / 1000;
   o["heap"] = ESP.getFreeHeap();
   o["rssi"] = WiFi.RSSI();
@@ -847,11 +871,11 @@ static String quoted(const char *text);
 
 // One question to the server about the package, with patience: a weak WLAN
 // loses requests, and the session may run out in the middle of a download.
-static bool updAsk(uint32_t id, int32_t off, JsonDocument &reply) {
+static bool updAsk(uint32_t id, int32_t off, JsonDocument &reply, const char *what = "fw") {
   uint32_t t0 = millis();
   for (;;) {
     JsonDocument msg;
-    msg["t"] = "fw";
+    msg["t"] = what;
     msg["id"] = id;
     if (off < 0) msg["head"] = true;
     else msg["off"] = off;
@@ -966,6 +990,78 @@ static void doUpdate(uint32_t id) {
 #endif
 }
 
+// Fetches the file behind an "sd_put" command and writes it to the SD card.
+// The server names size and hash first; the file gets its name on the card
+// only when both hold.
+static void doSdPut(uint32_t id) {
+  auto refuse = [&](const char *why) {
+    Serial.printf("[C2]   Datei fuer die SD-Karte abgelehnt: %s\n", why);
+    Display::message(TR("SD card", "SD-Karte", "Cartao SD"), TR("transfer failed", "Uebertragung gescheitert", "transferencia falhou"), 4000);
+    answer(id, false, quoted(why));
+    nextPollAt = millis();
+  };
+  JsonDocument reply;
+  if (!updAsk(id, -1, reply, "img")) return refuse("the file could not be fetched");
+  String name = reply["n"] | "";
+  uint32_t size = reply["size"] | 0UL;
+  uint8_t want[32];
+  const char *sha = reply["sha"] | "";
+  bool shaOk = strlen(sha) == 64;
+  for (int i = 0; shaOk && i < 32; i++) {
+    char b[3] = {sha[2 * i], sha[2 * i + 1], 0};
+    char *end;
+    want[i] = (uint8_t)strtoul(b, &end, 16);
+    shaOk = *end == 0;
+  }
+  reply.clear();
+  if (!size || !shaOk) return refuse("the server's answer is not usable");
+  uint8_t *buf = ext(4096);
+  if (!buf) return refuse("not enough memory");
+  const char *err = Sd::putBegin(name.c_str(), size);
+  if (err) {
+    free(buf);
+    return refuse(err);
+  }
+  Serial.printf("[C2]   SD-Karte: lade \"%s\", %lu Bytes\n", name.c_str(), (unsigned long)size);
+  mbedtls_sha256_context ctx;
+  mbedtls_sha256_init(&ctx);
+  mbedtls_sha256_starts_ret(&ctx, 0);
+  uint32_t off = 0;
+  int shown = -1;
+  while (off < size && !err) {
+    int pct = (int)((uint64_t)off * 100 / size);
+    if (pct != shown) {
+      shown = pct;
+      char line[24];
+      snprintf(line, sizeof(line), "%d %%", pct);
+      Display::message(TR("To the SD card", "Auf die SD-Karte", "Para o cartao SD"), line, 120000);
+    }
+    if (!settings.c2Control) { err = "stopped at the device"; break; }
+    if (!updAsk(id, (int32_t)off, reply, "img")) { err = "the download broke off"; break; }
+    const char *d = reply["d"] | "";
+    size_t n = 0;
+    if (mbedtls_base64_decode(buf, 4096, &n, (const uint8_t *)d, strlen(d)) || !n || off + n > size) err = "the download is damaged";
+    else if (!Sd::putWrite(buf, n)) err = "writing to the SD card failed";
+    else {
+      mbedtls_sha256_update_ret(&ctx, buf, n);
+      off += n;
+    }
+    reply.clear();
+  }
+  uint8_t hash[32];
+  mbedtls_sha256_finish_ret(&ctx, hash);
+  mbedtls_sha256_free(&ctx);
+  free(buf);
+  if (!err && memcmp(hash, want, 32)) err = "the file arrived damaged";
+  if (!Sd::putEnd(!err) && !err) err = "the file could not be stored on the SD card";
+  inventoryAt = 0;                       // the next status names it
+  if (err) return refuse(err);
+  Serial.printf("[C2]   SD-Karte: \"%s\" gespeichert\n", name.c_str());
+  Display::message(TR("SD card", "SD-Karte", "Cartao SD"), TR("file stored", "Datei gespeichert", "arquivo salvo"), 4000);
+  answer(id, true, quoted((String("stored ") + name + " (" + size + " bytes)").c_str()));
+  nextPollAt = millis();
+}
+
 static void task(void *) {
   const char *failed = TR("not enough memory", "zu wenig Speicher", "memoria insuficiente");
   big([&] { failed = C2Proto::selfTest(); });
@@ -1004,6 +1100,11 @@ static void task(void *) {
     if (answers && state == ACTIVE) nextPollAt = millis();   // answers go back at once
     bool online = serverPub && WiFi.status() == WL_CONNECTED;
     if (online && (int32_t)(millis() - nextPollAt) >= 0) doPoll();
+    if (sdJob && online && state == ACTIVE) {
+      uint32_t id = sdJob;
+      doSdPut(id);
+      sdJob = 0;
+    }
     if (updateJob && online && state == ACTIVE) {
       uint32_t id = updateJob;
       doUpdate(id);
@@ -1039,6 +1140,8 @@ void begin() {
   mux = xSemaphoreCreateMutex();
   memset(&shared, 0, sizeof(shared));
   strlcpy(devName, settings.apSsid.c_str(), sizeof(devName));
+  unattLeft = unattSavedS = settings.c2UnattS > UNATTENDED_MAX_S ? UNATTENDED_MAX_S : settings.c2UnattS;
+  unattTickMs = millis();
   // core 0, next to WiFi and the display: the serial bridge has core 1 to itself
   xTaskCreatePinnedToCore(task, "c2", TASK_STACK, nullptr, 1, nullptr, 0);
 }
@@ -1103,12 +1206,23 @@ static void execute(const MainJob &job) {
     // A signed firmware package. Whether it is the owner's is decided by the
     // signature (doUpdate), whether now is a good moment, here.
     if (!settings.c2Control) answer(job.id, false, quoted(denied));
-    else if (updateJob) answer(job.id, false, quoted("an update is under way already"));
+    else if (updateJob || sdJob) answer(job.id, false, quoted("an update is under way already"));
     else if (conBusy || Player::state() == Player::RUNNING || Xfer::active()) answer(job.id, false, quoted("the device is busy (console, playback or file transfer)"));
     else if (Power::low()) answer(job.id, false, quoted("the battery is too low for an update"));
     else {
       Serial.println("[C2]   Firmware-Update angefragt");
       updateJob = job.id;
+    }
+  } else if (job.type == "sd_put") {
+    // A file from the server's library to the SD card. It takes the device's
+    // channel for as long as it lasts - minutes for megabytes.
+    if (!settings.c2Control) answer(job.id, false, quoted(denied));
+    else if (sdJob || updateJob) answer(job.id, false, quoted("a transfer is under way already"));
+    else if (!Sd::mounted()) answer(job.id, false, quoted(Sd::stick().on ? "the SD card is lent to the USB port" : "no SD card in the device"));
+    else if (conBusy || Xfer::active()) answer(job.id, false, quoted("the device is busy (console, playback or file transfer)"));
+    else {
+      Serial.println("[C2]   Datei fuer die SD-Karte angefragt");
+      sdJob = job.id;
     }
   } else if (job.type == "set") {
     // The settings of the web interface, from afar. Whether the server may
@@ -1149,27 +1263,34 @@ static void execute(const MainJob &job) {
       answer(job.id, gone, quoted(gone ? "deleted" : "configuration not found"));
     }
   } else if (job.type == "console") {
-    // Never without a tap on the display, whatever the settings say.
+    // Never without a tap on the display - unless somebody at the device has
+    // granted unattended access for a while (unattendedSet).
     int port = args["port"] | 1, minutes = constrain((int)(args["minutes"] | 15), 1, (int)CON_MAX_MIN);
-    const char *no = nullptr;
-    Lock l;
-    if (con.state != CON_NONE) no = "a remote console is already open or asked for";
-    else if (port < 1 || port > MAX_PORTS || !Bridge::enabled(port - 1)) no = "Port unbekannt";
-    else if (!Display::usable()) no = "the device has no display on which somebody could agree";
-    else if ((int32_t)(conRefuseUntil - millis()) > 0) no = "just refused at the device";
-    if (no) {
-      String r = String("{\"id\":") + job.id + ",\"ok\":false,\"out\":" + quoted(no) + "}";
-      jobResults.push_back(r);
-      return;
+    bool unattended = unattLeft > 0;
+    {
+      const char *no = nullptr;
+      Lock l;
+      if (con.state != CON_NONE) no = "a remote console is already open or asked for";
+      else if (port < 1 || port > MAX_PORTS || !Bridge::enabled(port - 1)) no = "Port unbekannt";
+      else if (!unattended && !Display::usable()) no = "the device has no display on which somebody could agree";
+      else if (!unattended && (int32_t)(conRefuseUntil - millis()) > 0) no = "just refused at the device";
+      if (no) {
+        String r = String("{\"id\":") + job.id + ",\"ok\":false,\"out\":" + quoted(no) + "}";
+        jobResults.push_back(r);
+        return;
+      }
+      con.state = CON_ASK;
+      conBusy = true;
+      con.id = job.id;
+      con.port = port - 1;
+      con.minutes = minutes;
+      con.askedMs = millis();
     }
-    con.state = CON_ASK;
-    conBusy = true;
-    con.id = job.id;
-    con.port = port - 1;
-    con.minutes = minutes;
-    con.askedMs = millis();
     Display::wake();
-    Serial.printf("[C2]   Fernkonsole angefragt: Port %d, %d min - wartet auf Zustimmung am Display\n", port, minutes);
+    if (unattended) {
+      Serial.printf("[C2]   Fernkonsole angefragt: Port %d, %d min - unbeaufsichtigter Zugriff ist erlaubt (noch %lu s)\n", port, minutes, (unsigned long)unattLeft);
+      consoleAnswer(true);
+    } else Serial.printf("[C2]   Fernkonsole angefragt: Port %d, %d min - wartet auf Zustimmung am Display\n", port, minutes);
   } else answer(job.id, false, quoted("unknown command"));
 }
 
@@ -1204,6 +1325,55 @@ void consoleAnswer(bool allow) {
   }
   Serial.printf("[C2]   Fernkonsole %s\n", allow ? "am Display erlaubt" : "am Display abgelehnt");
   if (allow) Net::onMessage(String(TR("Control center: remote console on ", "Leitstelle: Fernkonsole auf ", "Central: console remoto em ")) + Store::portName(con.port) + TR(" allowed for ", " für ", " permitido por ") + con.minutes + TR(" min", " min erlaubt", " min"));
+}
+
+void unattendedSet(uint32_t seconds) {
+  unattLeft = seconds > UNATTENDED_MAX_S ? UNATTENDED_MAX_S : seconds;
+  unattTickMs = millis();
+  unattSavedS = settings.c2UnattS = unattLeft;
+  Store::save();
+  Serial.printf("[C2]   unbeaufsichtigter Zugriff: %s (%lu s)\n", unattLeft ? "erlaubt" : "aus", (unsigned long)unattLeft);
+}
+
+uint32_t unattendedLeft() { return unattLeft; }
+
+// Counts the unattended access down in the device's own running time and
+// writes down what is left every ten minutes: a restart costs at most that.
+static void unattendedTick() {
+  if (!unattLeft) return;
+  uint32_t gone = (millis() - unattTickMs) / 1000;
+  if (!gone) return;
+  unattTickMs += gone * 1000;
+  unattLeft = gone >= unattLeft ? 0 : unattLeft - gone;
+  if (!unattLeft || unattSavedS - unattLeft >= 600) {
+    unattSavedS = settings.c2UnattS = unattLeft;
+    Store::save();
+    if (!unattLeft) Serial.println("[C2]   unbeaufsichtigter Zugriff abgelaufen");
+  }
+}
+
+// The names and sizes of the stored configurations, at most as many as fit
+// comfortably into every status report.
+static void inventoryTick() {
+  if (inventoryAt && millis() - inventoryAt < 60000) return;
+  inventoryAt = millis() | 1;
+  JsonDocument src, dst;
+  deserializeJson(src, Configs::listJson());
+  JsonArray out = dst.to<JsonArray>();
+  size_t room = 1200;
+  for (JsonObject c : src["configs"].as<JsonArray>()) {
+    const char *n = c["name"] | "";
+    if (strlen(n) + 24 > room) break;
+    room -= strlen(n) + 24;
+    JsonObject o = out.add<JsonObject>();
+    o["n"] = n;
+    o["s"] = c["size"] | 0;
+  }
+  String s, files = sdJob ? String() : Sd::rootJson(700);   // not while a file is being written
+  serializeJson(dst, s);
+  Lock l;
+  inventory = s;
+  if (files.length()) sdFiles = files;
 }
 
 void consoleEnd() {
@@ -1283,6 +1453,8 @@ void loop() {
     playJob = 0;
   }
   if (conBusy) conPump();
+  unattendedTick();
+  inventoryTick();
   MainJob job;
   {
     Lock l;
@@ -1317,6 +1489,10 @@ String line() {
   if (i.state == ACTIVE && conBusy) {
     Console c = console();
     if (c.state == 2) return String(TR("Remote console port ", "Fernkonsole Port ", "Console remoto porta ")) + (c.port + 1);
+  }
+  if (i.state == ACTIVE && unattLeft) {   // somebody has to be able to see that the door is open
+    uint32_t h = (unattLeft + 3599) / 3600;
+    return String(TR("unattended, ", "unbeaufsichtigt, ", "sem supervisao, ")) + h + " h";
   }
   return stateName(i.state);
 }

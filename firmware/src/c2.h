@@ -54,4 +54,11 @@ namespace C2 {
   Console console();
   void consoleAnswer(bool allow);           // main loop: the tap on the display
   void consoleEnd();                        // main loop: close it from here
+
+  // Unattended access: for this long a remote console opens without the tap.
+  // Granted at the device only, counted in the device's own running time (it
+  // has no clock a server could not move), kept across restarts.
+  static const uint32_t UNATTENDED_MAX_S = 7UL * 24 * 3600;
+  void unattendedSet(uint32_t seconds);     // 0 ends it
+  uint32_t unattendedLeft();                // seconds, 0 = a tap is needed
 }

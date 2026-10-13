@@ -48,6 +48,7 @@ struct Settings {
   uint8_t  httpsCert = 0;        // 0 = own HTTPS certificate (device CA if none), 1 = 802.1X client certificate
   bool     bleEnabled = true;    // Bluetooth LE console, switched on the touch display
   bool     adminUi = false;      // the web interface shows the administrator's tabs (Ports, Network, Setup)
+  uint32_t c2UnattS = 0;         // seconds for which the control center still gets a remote console without a tap here (0 = never)
   bool     c2Control = false;    // the command-and-control server may change things (play a configuration, reboot)
 };
 

@@ -280,3 +280,7 @@ docs/                     Screenshots der Weboberfläche
 ```
 
 Drittsoftware: xterm.js und xterm-addon-fit (MIT, `web/vendor/LICENSE-xterm.txt`), mlkem-native (Apache-2.0 oder ISC oder MIT, `lib/mlkem_native/LICENSE`), LovyanGFX (BSD-2-Clause/MIT), NimBLE-Arduino (Apache-2.0), arduinoWebSockets (LGPL-2.1), ArduinoJson (MIT), EspSoftwareSerial (LGPL-2.1), mbedTLS (Apache-2.0, im ESP32-SDK enthalten). `src/legacy_ciphers.cpp` enthält DES-Code aus LibTomCrypt (Public Domain) und RC2-Code aus PyCryptodome (BSD-2-Clause).
+
+## Unbeaufsichtigter Zugriff der Leitstelle
+
+Im Tab Netz unter „Leitstelle“ lässt sich für 1 Stunde bis 7 Tage erlauben, dass die Leitstelle eine Fernkonsole öffnet, ohne dass jemand am Display zustimmt (`POST /api/c2/unattended {"hours":N}`, `0` beendet es; `GET /api/c2` nennt den Rest als `unattS`). Die Frist zählt nur, während das Gerät läuft, übersteht einen Neustart (auf zehn Minuten genau) und endet von selbst. Vom Server aus lässt sie sich nicht setzen. Die Seite Info des Displays zeigt in der Zeile „Leitstelle“, dass sie läuft.

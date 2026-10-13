@@ -190,7 +190,15 @@
   "SD card": "SD-Karte",
   "Use the SD card as a USB stick": "SD-Karte als USB-Stick benutzen",
   "The SD card belongs to the USB port now: the switch, firewall or computer it is plugged into sees a USB stick. Eject it there, then restart this device to get the card back.": "Die SD-Karte gehört jetzt dem USB-Port: Der Switch, die Firewall oder der Rechner, an dem er steckt, sieht einen USB-Stick. Dort auswerfen, dann dieses Gerät neu starten, um die Karte zurückzubekommen.",
-  "As a USB stick the card can be read by a switch or firewall (firmware images, configurations) and filled from a computer. The USB port moves about half a megabyte per second.": "Als USB-Stick lässt sich die Karte von einem Switch oder einer Firewall lesen (Firmware-Images, Konfigurationen) und von einem Rechner aus füllen. Der USB-Port schafft etwa ein halbes Megabyte je Sekunde."
+  "As a USB stick the card can be read by a switch or firewall (firmware images, configurations) and filled from a computer. The USB port moves about half a megabyte per second.": "Als USB-Stick lässt sich die Karte von einem Switch oder einer Firewall lesen (Firmware-Images, Konfigurationen) und von einem Rechner aus füllen. Der USB-Port schafft etwa ein halbes Megabyte je Sekunde.",
+  "Unattended access": "Unbeaufsichtigter Zugriff",
+  "Off – every remote console needs a tap on the display": "Aus – jede Fernkonsole braucht einen Tipp am Display",
+  "1 hour": "1 Stunde",
+  "8 hours": "8 Stunden",
+  "24 hours": "24 Stunden",
+  "3 days": "3 Tage",
+  "7 days": "7 Tage",
+  "While it runs, the control center opens a remote console without anybody at the device agreeing. It ends by itself.": "Solange er läuft, öffnet die Leitstelle eine Fernkonsole, ohne dass jemand am Gerät zustimmt. Er endet von selbst."
  },
  "script": {
   "Not connected": "Nicht verbunden",
@@ -381,6 +389,11 @@
   "connected": "verbunden",
   "waiting for the USB port": "wartet auf den USB-Port",
   "inserted": "eingelegt",
-  "none": "keine"
+  "none": "keine",
+  "Unattended access is on: {0} h {1} min left. A remote console opens without a tap on the display.": "Unbeaufsichtigter Zugriff ist an: noch {0} h {1} min. Eine Fernkonsole öffnet sich ohne Tipp am Display.",
+  "While it runs, the control center opens a remote console without anybody at the device agreeing. It ends by itself.": "Solange er läuft, öffnet die Leitstelle eine Fernkonsole, ohne dass jemand am Gerät zustimmt. Er endet von selbst.",
+  "For this time the control center can operate the serial ports without anybody at the device agreeing. Allow?": "So lange kann die Leitstelle die seriellen Ports bedienen, ohne dass jemand am Gerät zustimmt. Erlauben?",
+  "Unattended access granted": "Unbeaufsichtigter Zugriff erlaubt",
+  "Unattended access ended": "Unbeaufsichtigter Zugriff beendet"
  }
 }

@@ -128,6 +128,32 @@ func TestImageShelf(t *testing.T) {
 		t.Fatalf("old ticket: %d", code)
 	}
 
+	// to a device's SD card: only as a command it has fetched, and byte for byte
+	c := e.enrolled()
+	cmdURL := "/admin/v1/devices/" + c.ID() + "/commands"
+	for _, args := range []any{nil, map[string]string{"img": "nope"}, map[string]string{"img": "0123456789abcdef"}} {
+		if code := e.admin("POST", cmdURL, map[string]any{"type": "sd_put", "args": args}, nil); code != 400 {
+			t.Fatalf("sd_put with %v: %d", args, code)
+		}
+	}
+	var cmd struct{ ID uint64 }
+	if code := e.admin("POST", cmdURL, map[string]any{"type": "sd_put", "args": map[string]string{"img": info.ID}}, &cmd); code != 201 {
+		t.Fatalf("sd_put: %d", code)
+	}
+	if _, _, err := c.Image(cmd.ID); err == nil {
+		t.Fatal("image before the command was fetched")
+	}
+	if r, err := c.Poll(nil, nil); err != nil || len(r.Cmds) != 1 || r.Cmds[0].Type != "sd_put" {
+		t.Fatalf("poll: %+v %v", r, err)
+	}
+	if name, got, err := c.Image(cmd.ID); err != nil || name != "cat9k.bin" || !bytes.Equal(got, data) {
+		t.Fatalf("delivery: %v %q %d bytes", err, name, len(got))
+	}
+	var devs []deviceView
+	if e.admin("GET", "/admin/v1/devices", nil, &devs); devs[0].Update == nil || devs[0].Update.Sent != len(data) {
+		t.Fatalf("progress: %+v", devs[0].Update)
+	}
+
 	// the shelf survives a restart, and deleting empties it
 	sh := newImageShelf(filepath.Join(e.dir, "images"), 0, 0)
 	if got := sh.get(info.ID); got == nil || got.Name != "cat9k.bin" || got.Folder != "Catalyst" {

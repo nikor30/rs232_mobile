@@ -34,6 +34,9 @@ import (
 const (
 	imgMaxKept   = 200
 	imgTicketFor = 2 * time.Minute // how long a download may take to start
+	// What goes to a device's SD card travels in pieces of 4 kB through the
+	// device's own channel: slow, and the device counts the offset in 31 bits.
+	imgMaxToDevice = 1<<31 - 1
 )
 
 // ImageInfo describes one kept file.
@@ -309,6 +312,60 @@ func (sh *imageShelf) redeem(k string, now time.Time) (string, bool) {
 		return "", false
 	}
 	return t.id, true
+}
+
+// ---------------------------------------------------------------- device side
+
+type imgReply struct {
+	N    string `json:"n,omitempty"`    // head: the name to store it under
+	Size int64  `json:"size,omitempty"` // head
+	SHA  string `json:"sha,omitempty"`  // head: SHA-256, hex
+	D    []byte `json:"d"`              // a piece of the file
+}
+
+// imgDevice answers a device that is carrying out an "sd_put" command: first
+// with name, size and hash, then with the file from the offset it names.
+func (sv *Server) imgDevice(dev string, cmdID uint64, off int64, head bool) (*imgReply, error) {
+	d, err := sv.st.Device(dev)
+	if err != nil {
+		return nil, err
+	}
+	var cmd *store.Command
+	for _, c := range d.Commands {
+		if c.ID == cmdID {
+			cmd = c
+		}
+	}
+	if cmd == nil || cmd.Type != "sd_put" || cmd.State != store.CmdSent {
+		return nil, errors.New("no transfer under way")
+	}
+	var a struct {
+		Img string `json:"img"`
+	}
+	json.Unmarshal(cmd.Args, &a)
+	i := sv.img.get(a.Img)
+	if i == nil {
+		return nil, errors.New("the image is gone")
+	}
+	if head {
+		return &imgReply{N: i.Name, Size: i.Size, SHA: i.SHA256, D: []byte{}}, nil
+	}
+	if off < 0 || off > i.Size {
+		return nil, errors.New("offset outside the image")
+	}
+	f, err := os.Open(sv.img.path(i.ID))
+	if err != nil {
+		return nil, errors.New("the image is gone")
+	}
+	defer f.Close()
+	buf := make([]byte, min(int64(fwChunk), i.Size-off))
+	if _, err := f.ReadAt(buf, off); err != nil && err != io.EOF {
+		return nil, errors.New("the image cannot be read")
+	}
+	sv.fw.mu.Lock()
+	sv.fw.prog[dev] = &fwProgress{Cmd: cmdID, Sent: int(off) + len(buf), Size: int(i.Size), At: sv.now()}
+	sv.fw.mu.Unlock()
+	return &imgReply{D: buf}, nil
 }
 
 // ---------------------------------------------------------------- admin API

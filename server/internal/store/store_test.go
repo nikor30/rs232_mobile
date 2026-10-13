@@ -523,6 +523,10 @@ func TestPostgresMigratesFromTheFirstSchema(t *testing.T) {
 	p := s.b.(*pg)
 	for _, q := range []string{
 		// what the later schemas added, taken away again
+		`DROP TABLE groups`,
+		`ALTER TABLE devices DROP COLUMN country, DROP COLUMN groups`,
+		`ALTER TABLE users DROP COLUMN role`,
+		`ALTER TABLE server DROP COLUMN next_group`,
 		`DROP TABLE templates`,
 		`ALTER TABLE devices DROP COLUMN region, DROP COLUMN site`,
 		`ALTER TABLE commands DROP COLUMN by_user`,

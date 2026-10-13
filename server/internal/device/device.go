@@ -271,6 +271,42 @@ func (c *Client) sessionHandshake() error {
 // does: manifest and signature first, then the image piece by piece. It checks
 // size and hash against the manifest. The signature is returned unchecked -
 // only a real device carries the code and the key for that.
+// Image fetches the file behind an "sd_put" command, as a device does to
+// write it to its SD card.
+func (c *Client) Image(cmdID uint64) (name string, data []byte, err error) {
+	type msg struct {
+		T    string `json:"t"`
+		ID   uint64 `json:"id"`
+		Off  int64  `json:"off"`
+		Head bool   `json:"head,omitempty"`
+	}
+	var r struct {
+		N    string `json:"n"`
+		Size int    `json:"size"`
+		SHA  string `json:"sha"`
+		D    []byte `json:"d"`
+	}
+	if err = c.exchangeInto(msg{T: "img", ID: cmdID, Head: true}, &r); err != nil {
+		return
+	}
+	name, size, sha := r.N, r.Size, r.SHA
+	for len(data) < size {
+		r.D = nil
+		if err = c.exchangeInto(msg{T: "img", ID: cmdID, Off: int64(len(data))}, &r); err != nil {
+			return
+		}
+		if len(r.D) == 0 {
+			break
+		}
+		data = append(data, r.D...)
+	}
+	sum := sha256.Sum256(data)
+	if len(data) != size || hex.EncodeToString(sum[:]) != sha {
+		err = errors.New("the file is not the one the server named")
+	}
+	return
+}
+
 func (c *Client) Firmware(cmdID uint64) (manifest string, sig, image []byte, err error) {
 	type msg struct {
 		T    string `json:"t"`

@@ -1350,6 +1350,10 @@
       $('#c2Forget').hidden = c.state === 'off' || c.state === 'failed';
       if (document.activeElement !== $('#c2Control')) $('#c2Control').checked = !!c.control;
       $('#c2Enroll').disabled = c.state === 'failed' || c.state === 'enrolling';
+      const un = c.unattS || 0;
+      if (document.activeElement !== $('#c2Unatt') && !un) $('#c2Unatt').value = '0';
+      $('#c2UnattState').textContent = un ? tr('Unattended access is on: {0} h {1} min left. A remote console opens without a tap on the display.', [Math.floor(un / 3600), Math.floor(un % 3600 / 60)])
+        : tr('While it runs, the control center opens a remote console without anybody at the device agreeing. It ends by itself.');
       const rc = c.console || { state: 'none' };
       $('#c2ConRow').hidden = rc.state === 'none';
       $('#c2ConEnd').hidden = rc.state !== 'open';
@@ -1369,6 +1373,15 @@
       toast(tr('Enrolling …'));
       loadC2();
     } catch (e) { toast(tr('Device not reachable')); }
+  });
+  $('#c2Unatt').addEventListener('change', async (e) => {
+    const hours = Number(e.target.value);
+    if (hours && !confirm(tr('For this time the control center can operate the serial ports without anybody at the device agreeing. Allow?'))) { e.target.value = '0'; return; }
+    try {
+      await fetch('/api/c2/unattended', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hours }) });
+      toast(hours ? tr('Unattended access granted') : tr('Unattended access ended'));
+    } catch (err) { toast(tr('Device not reachable')); }
+    loadC2();
   });
   $('#c2Control').addEventListener('change', async (e) => {
     const allow = e.target.checked;

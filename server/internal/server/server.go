@@ -101,6 +101,18 @@ var commandArgs = map[string]func(args json.RawMessage) error{
 		}
 		return nil
 	},
+	// An image from the library (images.go), written to the device's SD card.
+	"sd_put": func(args json.RawMessage) error {
+		var a struct {
+			Img string `json:"img"`
+		}
+		dec := json.NewDecoder(bytes.NewReader(args))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&a); err != nil || !imgIDPattern.MatchString(a.Img) {
+			return errors.New(`sd_put needs {"img": "<id of an image>"}`)
+		}
+		return nil
+	},
 	// Remote console on a serial port. Somebody at the device has to agree on
 	// its touch display, each time; minutes is the most they are asked for.
 	"console": func(args json.RawMessage) error {
@@ -244,7 +256,14 @@ func (sv *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /auth/setup/confirm", sv.setupConfirm)
 	mux.HandleFunc("GET /auth/entra/login", sv.entraLogin)
 	mux.HandleFunc("GET /auth/entra/callback", sv.entraCallback)
+	mux.HandleFunc("GET /admin/v1/me", sv.signed(sv.me))
 	mux.HandleFunc("GET /admin/v1/users", sv.admin(sv.listUsers))
+	mux.HandleFunc("POST /admin/v1/users/{name}/role", sv.admin(sv.roleUser))
+	mux.HandleFunc("GET /admin/v1/groups", sv.signed(sv.listGroups))
+	mux.HandleFunc("POST /admin/v1/groups", sv.admin(sv.putGroup))
+	mux.HandleFunc("PUT /admin/v1/groups/{id}", sv.admin(sv.putGroup))
+	mux.HandleFunc("DELETE /admin/v1/groups/{id}", sv.admin(sv.deleteGroup))
+	mux.HandleFunc("POST /admin/v1/devices/{id}/groups", sv.admin(sv.groupDevice))
 	mux.HandleFunc("POST /admin/v1/users", sv.admin(sv.addUser))
 	mux.HandleFunc("POST /admin/v1/users/{name}/reset", sv.admin(sv.resetUser))
 	mux.HandleFunc("POST /admin/v1/users/{name}/disable", sv.admin(sv.disableUser))
@@ -255,31 +274,31 @@ func (sv *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /admin/v1/server/rotate-key", sv.admin(sv.rotateKey))
 	mux.HandleFunc("POST /admin/v1/server/rotate-key/end", sv.admin(sv.endKeyChange))
 	mux.HandleFunc("POST /admin/v1/enroll-tokens", sv.admin(sv.newToken))
-	mux.HandleFunc("GET /admin/v1/firmware", sv.admin(sv.listFirmware))
+	mux.HandleFunc("GET /admin/v1/firmware", sv.signed(sv.listFirmware))
 	mux.HandleFunc("POST /admin/v1/firmware", sv.adminMax(sv.addFirmware, fwMaxPkg))
 	mux.HandleFunc("DELETE /admin/v1/firmware/{id}", sv.admin(sv.deleteFirmware))
 	mux.HandleFunc("POST /admin/v1/firmware/{id}/folder", sv.admin(sv.fileFirmware))
-	mux.HandleFunc("GET /admin/v1/images", sv.admin(sv.listImages))
+	mux.HandleFunc("GET /admin/v1/images", sv.signed(sv.listImages))
 	mux.HandleFunc("POST /admin/v1/images", sv.adminMax(sv.addImage, sv.img.max))
 	mux.HandleFunc("PUT /admin/v1/images/{id}", sv.admin(sv.editImage))
 	mux.HandleFunc("DELETE /admin/v1/images/{id}", sv.admin(sv.deleteImage))
-	mux.HandleFunc("POST /admin/v1/images/{id}/link", sv.admin(sv.linkImage))
+	mux.HandleFunc("POST /admin/v1/images/{id}/link", sv.signed(sv.linkImage))
 	mux.HandleFunc("GET /admin/v1/images/file/{ticket}", sv.sendImage)
-	mux.HandleFunc("GET /admin/v1/templates", sv.admin(sv.listTemplates))
+	mux.HandleFunc("GET /admin/v1/templates", sv.signed(sv.listTemplates))
 	mux.HandleFunc("POST /admin/v1/templates", sv.admin(sv.putTemplate))
 	mux.HandleFunc("PUT /admin/v1/templates/{id}", sv.admin(sv.putTemplate))
 	mux.HandleFunc("DELETE /admin/v1/templates/{id}", sv.admin(sv.deleteTemplate))
-	mux.HandleFunc("POST /admin/v1/templates/{id}/send", sv.admin(sv.sendTemplate))
+	mux.HandleFunc("POST /admin/v1/templates/{id}/send", sv.signed(sv.sendTemplate))
 	mux.HandleFunc("POST /admin/v1/devices/{id}/place", sv.admin(sv.place))
-	mux.HandleFunc("GET /admin/v1/devices", sv.admin(sv.listDevices))
+	mux.HandleFunc("GET /admin/v1/devices", sv.signed(sv.listDevices))
 	mux.HandleFunc("POST /admin/v1/devices/{id}/approve", sv.admin(sv.approve))
 	mux.HandleFunc("POST /admin/v1/devices/{id}/revoke", sv.admin(sv.revoke))
-	mux.HandleFunc("POST /admin/v1/devices/{id}/commands", sv.admin(sv.enqueue))
-	mux.HandleFunc("GET /admin/v1/devices/{id}/commands", sv.admin(sv.listCommands))
-	mux.HandleFunc("GET /admin/v1/devices/{id}/console", sv.admin(sv.conStatus))
-	mux.HandleFunc("GET /admin/v1/devices/{id}/console/{sess}/output", sv.admin(sv.conOutput))
-	mux.HandleFunc("POST /admin/v1/devices/{id}/console/{sess}/input", sv.admin(sv.conInput))
-	mux.HandleFunc("POST /admin/v1/devices/{id}/console/{sess}/close", sv.admin(sv.conClose))
+	mux.HandleFunc("POST /admin/v1/devices/{id}/commands", sv.onDevice(store.RightUse, sv.enqueue))
+	mux.HandleFunc("GET /admin/v1/devices/{id}/commands", sv.onDevice(store.RightUse, sv.listCommands))
+	mux.HandleFunc("GET /admin/v1/devices/{id}/console", sv.onDevice(store.RightUse, sv.conStatus))
+	mux.HandleFunc("GET /admin/v1/devices/{id}/console/{sess}/output", sv.onDevice(store.RightUse, sv.conOutput))
+	mux.HandleFunc("POST /admin/v1/devices/{id}/console/{sess}/input", sv.onDevice(store.RightUse, sv.conInput))
+	mux.HandleFunc("POST /admin/v1/devices/{id}/console/{sess}/close", sv.onDevice(store.RightUse, sv.conClose))
 	return mux
 }
 
@@ -497,13 +516,19 @@ func (sv *Server) msg(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		reply = r
-	case !e.enroll && m.T == "fw":
+	case !e.enroll && (m.T == "fw" || m.T == "img"):
 		if d, err := sv.st.Device(e.deviceID); err != nil || d.State != store.StateActive {
 			sv.drop(sid)
 			http.Error(w, "", http.StatusForbidden)
 			return
 		}
-		r, err := sv.fwDevice(e.deviceID, m.ID, m.Off, m.Head)
+		var r any
+		var err error
+		if m.T == "fw" {
+			r, err = sv.fwDevice(e.deviceID, m.ID, m.Off, m.Head)
+		} else {
+			r, err = sv.imgDevice(e.deviceID, m.ID, m.Off, m.Head)
+		}
 		if err != nil {
 			http.Error(w, "", http.StatusBadRequest)
 			return
@@ -753,7 +778,10 @@ type deviceView struct {
 	OldKey      bool            `json:"old_key,omitempty"` // has not confirmed the server's new key yet
 	Update      *fwProgress     `json:"update,omitempty"`  // how far a firmware update has got
 	Region      string          `json:"region,omitempty"`
+	Country     string          `json:"country,omitempty"`
 	Site        string          `json:"site,omitempty"`
+	Groups      []uint64        `json:"groups,omitempty"`
+	Right       string          `json:"right"`             // what the asking account may do with it: "use" or "manage"
 	Online      bool            `json:"online"`            // has reported in within the last few polls
 	Console     *conUse         `json:"console,omitempty"` // a remote console is open: on which port, and whose it is
 }
@@ -765,13 +793,18 @@ type conUse struct {
 	Since time.Time `json:"since"`
 }
 
-func (sv *Server) listDevices(w http.ResponseWriter, _ *http.Request) {
+func (sv *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 	out := []deviceView{}
+	p := who(r)
 	for _, d := range sv.st.Devices() {
+		right := sv.st.Right(p.Name, p.Role, d.ID)
+		if right == "" {
+			continue
+		}
 		fp := proto.Fingerprint(d.Pub)
 		v := deviceView{ID: d.ID, Fingerprint: hex.EncodeToString(fp[:]), Name: d.Name, State: d.State,
 			Info: d.Info, Enrolled: d.Enrolled, LastSeen: d.LastSeen, Status: d.Status, OldKey: d.OldKey && d.State != store.StateRevoked,
-			Region: d.Region, Site: d.Site}
+			Region: d.Region, Country: d.Country, Site: d.Site, Groups: d.Groups, Right: right}
 		v.Online = d.State == store.StateActive && d.LastSeen != nil && sv.now().Sub(*d.LastSeen) < time.Duration(3*sv.cfg.PollS+15)*time.Second
 		sv.mu.Lock()
 		if c := sv.conGet(d.ID); c != nil && c.ended == nil {
@@ -847,6 +880,12 @@ func (sv *Server) enqueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	note(r).detail = in.Type
+	// Looking and the remote console are for everyone who may use the device;
+	// what changes it needs the right to manage it.
+	if p := who(r); !slices.Contains(useCommands, in.Type) && sv.st.Right(p.Name, p.Role, r.PathValue("id")) != store.RightManage {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "your account may not do this"})
+		return
+	}
 	check := commandArgs[in.Type]
 	if check == nil || !slices.Contains(sv.cfg.Commands, in.Type) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown command type"})
@@ -871,6 +910,22 @@ func (sv *Server) enqueue(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		note(r).detail = "update " + p.info.FW + " " + p.info.Lang
+	}
+	if in.Type == "sd_put" {
+		var a struct {
+			Img string `json:"img"`
+		}
+		json.Unmarshal(in.Args, &a)
+		i := sv.img.get(a.Img)
+		if i == nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown image"})
+			return
+		}
+		if i.Size > imgMaxToDevice {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "the image is too large to send to a device (2 GB at most)"})
+			return
+		}
+		note(r).detail = "sd_put " + i.Name
 	}
 	c, err := sv.st.EnqueueBy(r.PathValue("id"), in.Type, in.Args, who(r).Name)
 	if err != nil {

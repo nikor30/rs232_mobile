@@ -27,6 +27,7 @@ type changes struct {
 	devices map[string]*devChange
 	users   map[string]bool
 	tpls    map[uint64]bool
+	groups  map[uint64]bool
 	audit   []*AuditEntry // appended
 }
 
@@ -37,7 +38,7 @@ type devChange struct {
 }
 
 func (ch *changes) empty() bool {
-	return !ch.meta && len(ch.tokens) == 0 && len(ch.devices) == 0 && len(ch.users) == 0 && len(ch.tpls) == 0 && len(ch.audit) == 0
+	return !ch.meta && len(ch.tokens) == 0 && len(ch.devices) == 0 && len(ch.users) == 0 && len(ch.tpls) == 0 && len(ch.groups) == 0 && len(ch.audit) == 0
 }
 
 func (ch *changes) token(id string) {
@@ -88,6 +89,9 @@ func everything(d *data) changes {
 	}
 	for id := range d.Templates {
 		ch.tpl(id)
+	}
+	for id := range d.Groups {
+		ch.group(id)
 	}
 	for id, dev := range d.Devices {
 		ch.device(id)

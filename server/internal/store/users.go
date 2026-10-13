@@ -22,6 +22,7 @@ type User struct {
 	Name     string `json:"name"` // lower case
 	Kind     string `json:"kind"`
 	Disabled bool   `json:"disabled,omitempty"`
+	Role     string `json:"role,omitempty"` // RoleAdmin or RoleMember (groups.go)
 
 	// local accounts
 	PassSalt []byte `json:"pass_salt,omitempty"`
@@ -129,6 +130,7 @@ func (s *Store) DeleteUser(name string) error {
 	}
 	delete(s.d.Users, name)
 	s.ch.user(name)
+	s.forgetMember(name)
 	return s.save()
 }
 

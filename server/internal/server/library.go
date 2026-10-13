@@ -21,16 +21,17 @@ func clean(s string) string { return strings.TrimSpace(s) }
 // place says where a device belongs: region and site, free text.
 func (sv *Server) place(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Region string `json:"region"`
-		Site   string `json:"site"`
+		Region  string `json:"region"`
+		Country string `json:"country"`
+		Site    string `json:"site"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad JSON"})
 		return
 	}
-	in.Region, in.Site = clean(in.Region), clean(in.Site)
-	note(r).detail = strings.Trim(in.Region+" / "+in.Site, " /")
-	if err := sv.st.Place(r.PathValue("id"), in.Region, in.Site); err != nil {
+	in.Region, in.Country, in.Site = clean(in.Region), clean(in.Country), clean(in.Site)
+	note(r).detail = strings.Trim(in.Region+" / "+in.Country+" / "+in.Site, " /")
+	if err := sv.st.Place(r.PathValue("id"), in.Region, in.Country, in.Site); err != nil {
 		fail(w, err)
 		return
 	}
@@ -113,6 +114,10 @@ func (sv *Server) sendTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 	n := note(r)
 	n.target, n.detail = in.Device, t.Name
+	if p := who(r); sv.st.Right(p.Name, p.Role, in.Device) != store.RightManage {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "your account may not do this"})
+		return
+	}
 	args, _ := json.Marshal(map[string]string{"name": t.Name, "text": t.Text})
 	c, err := sv.st.EnqueueBy(in.Device, "config_put", args, who(r).Name)
 	if err != nil {

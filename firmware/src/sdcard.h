@@ -26,6 +26,15 @@ namespace Sd {
   void loop();                        // flushes at most every FLUSH_MS
   void end();                         // close the recordings and release the card (before power-off)
 
+  // ---- a file from the control center ----
+  // Written to the card's top folder, where a switch that gets the card as a
+  // USB stick looks first. It arrives as "<name>.part" and gets its name only
+  // when all of it is there.
+  const char *putBegin(const char *name, uint32_t size);   // nullptr = go ahead, otherwise why not
+  bool putWrite(const uint8_t *data, size_t len);
+  bool putEnd(bool keep);             // keep = false throws the part away
+  String rootJson(size_t room);       // the files of the top folder as [{"n":..,"s":..}], as many as fit
+
   // ---- USB memory stick ----
   // Hands the card to whatever the USB port is plugged into (a switch, a
   // firewall, a computer) as a mass-storage device. From then on the card

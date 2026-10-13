@@ -112,6 +112,17 @@ var migrations = [][]string{{
 		updated timestamptz NOT NULL,
 		by_user text NOT NULL DEFAULT ''
 	)`,
+}, {
+	// country, groups and who is a member of them
+	`ALTER TABLE devices ADD COLUMN country text NOT NULL DEFAULT '', ADD COLUMN groups text NOT NULL DEFAULT ''`,
+	`ALTER TABLE users ADD COLUMN role text NOT NULL DEFAULT ''`,
+	`ALTER TABLE server ADD COLUMN next_group bigint NOT NULL DEFAULT 0`,
+	`CREATE TABLE groups (
+		id      bigint PRIMARY KEY,
+		name    text NOT NULL,
+		note    text NOT NULL DEFAULT '',
+		members text NOT NULL DEFAULT '{}'
+	)`,
 }}
 
 const (
@@ -290,6 +301,14 @@ func (p *pg) close() error {
 // txt makes a string storable: PostgreSQL takes neither a zero byte nor
 // anything that is not UTF-8, and names and reasons come from devices and
 // from whoever types into the login form.
+func groupList(g []uint64) string {
+	if len(g) == 0 {
+		return ""
+	}
+	b, _ := json.Marshal(g)
+	return string(b)
+}
+
 func txt(s string) string {
 	return strings.ReplaceAll(strings.ToValidUTF8(s, "�"), "\x00", "")
 }
@@ -328,10 +347,10 @@ func (p *pg) load() (*data, error) {
 		return nil, err
 	}
 	defer tx.Rollback()
-	d := &data{Tokens: map[string]*Token{}, Devices: map[string]*Device{}, Users: map[string]*User{}, Templates: map[uint64]*Template{}}
+	d := &data{Tokens: map[string]*Token{}, Devices: map[string]*Device{}, Users: map[string]*User{}, Templates: map[uint64]*Template{}, Groups: map[uint64]*Group{}}
 
 	var oldUntil sql.NullTime
-	err = tx.QueryRowContext(ctx, `SELECT server_key, next_cmd, old_key, old_until, next_tpl FROM server`).Scan(&d.ServerKey, &d.NextCmd, &d.OldKey, &oldUntil, &d.NextTpl)
+	err = tx.QueryRowContext(ctx, `SELECT server_key, next_cmd, old_key, old_until, next_tpl, next_group FROM server`).Scan(&d.ServerKey, &d.NextCmd, &d.OldKey, &oldUntil, &d.NextTpl, &d.NextGroup)
 	if errors.Is(err, sql.ErrNoRows) {
 		return d, nil // a new database
 	} else if err != nil {
@@ -379,13 +398,29 @@ func (p *pg) load() (*data, error) {
 		return nil, err
 	}
 
-	err = each(`SELECT id, pub, name, info, state, sas, sas_attempts, enrolled, last_seen, status, old_key, region, site FROM devices`, func(r *sql.Rows) error {
+	err = each(`SELECT id, name, note, members FROM groups`, func(r *sql.Rows) error {
+		g := &Group{Members: map[string]string{}}
+		var members string
+		if err := r.Scan(&g.ID, &g.Name, &g.Note, &members); err != nil {
+			return err
+		}
+		json.Unmarshal([]byte(members), &g.Members)
+		d.Groups[g.ID] = g
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	err = each(`SELECT id, pub, name, info, state, sas, sas_attempts, enrolled, last_seen, status, old_key, region, site, country, groups FROM devices`, func(r *sql.Rows) error {
 		v := &Device{}
 		var info, status []byte
 		var seen sql.NullTime
-		if err := r.Scan(&v.ID, &v.Pub, &v.Name, &info, &v.State, &v.SAS, &v.SASAttempts, &v.Enrolled, &seen, &status, &v.OldKey, &v.Region, &v.Site); err != nil {
+		var groups string
+		if err := r.Scan(&v.ID, &v.Pub, &v.Name, &info, &v.State, &v.SAS, &v.SASAttempts, &v.Enrolled, &seen, &status, &v.OldKey, &v.Region, &v.Site, &v.Country, &groups); err != nil {
 			return err
 		}
+		json.Unmarshal([]byte(groups), &v.Groups)
 		v.Info, v.Status, v.Enrolled, v.LastSeen = raw(info), raw(status), v.Enrolled.UTC(), tp(seen)
 		d.Devices[v.ID] = v
 		return nil
@@ -430,11 +465,11 @@ func (p *pg) load() (*data, error) {
 	}
 
 	err = each(`SELECT name, kind, disabled, pass_salt, pass_hash, pass_iter, totp, totp_ok, totp_step,
-	                   setup_hash, setup_expires, entra_name, entra_oid, created, last_login FROM users`, func(r *sql.Rows) error {
+	                   setup_hash, setup_expires, entra_name, entra_oid, created, last_login, role FROM users`, func(r *sql.Rows) error {
 		u := &User{}
 		var setup, login sql.NullTime
 		if err := r.Scan(&u.Name, &u.Kind, &u.Disabled, &u.PassSalt, &u.PassHash, &u.PassIter, &u.TOTP, &u.TOTPOk, &u.TOTPStep,
-			&u.SetupHash, &setup, &u.EntraName, &u.EntraOID, &u.Created, &login); err != nil {
+			&u.SetupHash, &setup, &u.EntraName, &u.EntraOID, &u.Created, &login, &u.Role); err != nil {
 			return err
 		}
 		u.SetupExpires, u.Created, u.LastLogin = tp(setup), u.Created.UTC(), tp(login)
@@ -494,10 +529,10 @@ func (p *pg) save(d *data, ch *changes) error {
 	w := &writer{ctx: ctx, tx: tx}
 
 	if ch.meta {
-		w.exec(`INSERT INTO server (server_key, next_cmd, old_key, old_until, next_tpl) VALUES ($1, $2, $3, $4, $5)
+		w.exec(`INSERT INTO server (server_key, next_cmd, old_key, old_until, next_tpl, next_group) VALUES ($1, $2, $3, $4, $5, $6)
 		        ON CONFLICT (only_row) DO UPDATE SET server_key = excluded.server_key, next_cmd = excluded.next_cmd,
-		          old_key = excluded.old_key, old_until = excluded.old_until, next_tpl = excluded.next_tpl`,
-			d.ServerKey, int64(d.NextCmd), d.OldKey, d.OldUntil, int64(d.NextTpl))
+		          old_key = excluded.old_key, old_until = excluded.old_until, next_tpl = excluded.next_tpl, next_group = excluded.next_group`,
+			d.ServerKey, int64(d.NextCmd), d.OldKey, d.OldUntil, int64(d.NextTpl), int64(d.NextGroup))
 	}
 	for id := range ch.tpls {
 		t := d.Templates[id]
@@ -509,6 +544,17 @@ func (p *pg) save(d *data, ch *changes) error {
 		        ON CONFLICT (id) DO UPDATE SET name = excluded.name, folder = excluded.folder, body = excluded.body,
 		          updated = excluded.updated, by_user = excluded.by_user`,
 			int64(t.ID), txt(t.Name), txt(t.Folder), txt(t.Text), t.Updated, txt(t.By))
+	}
+	for id := range ch.groups {
+		g := d.Groups[id]
+		if g == nil {
+			w.exec(`DELETE FROM groups WHERE id = $1`, int64(id))
+			continue
+		}
+		members, _ := json.Marshal(g.Members)
+		w.exec(`INSERT INTO groups (id, name, note, members) VALUES ($1, $2, $3, $4)
+		        ON CONFLICT (id) DO UPDATE SET name = excluded.name, note = excluded.note, members = excluded.members`,
+			int64(g.ID), txt(g.Name), txt(g.Note), txt(string(members)))
 	}
 	for id := range ch.tokens {
 		t := d.Tokens[id]
@@ -528,13 +574,14 @@ func (p *pg) save(d *data, ch *changes) error {
 		}
 		// The row first, also when only a command changed: on an import, and
 		// after a save that failed, it may not be there yet.
-		w.exec(`INSERT INTO devices (id, pub, name, info, state, sas, sas_attempts, enrolled, last_seen, status, old_key, region, site)
-		        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		w.exec(`INSERT INTO devices (id, pub, name, info, state, sas, sas_attempts, enrolled, last_seen, status, old_key, region, site, country, groups)
+		        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		        ON CONFLICT (id) DO UPDATE SET pub = excluded.pub, name = excluded.name, info = excluded.info,
 		          state = excluded.state, sas = excluded.sas, sas_attempts = excluded.sas_attempts,
 		          enrolled = excluded.enrolled, last_seen = excluded.last_seen, status = excluded.status,
-		          old_key = excluded.old_key, region = excluded.region, site = excluded.site`,
-			v.ID, v.Pub, txt(v.Name), js(v.Info), v.State, v.SAS, v.SASAttempts, v.Enrolled, v.LastSeen, js(v.Status), v.OldKey, txt(v.Region), txt(v.Site))
+		          old_key = excluded.old_key, region = excluded.region, site = excluded.site,
+		          country = excluded.country, groups = excluded.groups`,
+			v.ID, v.Pub, txt(v.Name), js(v.Info), v.State, v.SAS, v.SASAttempts, v.Enrolled, v.LastSeen, js(v.Status), v.OldKey, txt(v.Region), txt(v.Site), txt(v.Country), groupList(v.Groups))
 		if len(dc.cmds) > 0 {
 			for _, c := range v.Commands {
 				if !dc.cmds[c.ID] {
@@ -574,15 +621,15 @@ func (p *pg) save(d *data, ch *changes) error {
 			continue
 		}
 		w.exec(`INSERT INTO users (name, kind, disabled, pass_salt, pass_hash, pass_iter, totp, totp_ok, totp_step,
-		                           setup_hash, setup_expires, entra_name, entra_oid, created, last_login)
-		        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+		                           setup_hash, setup_expires, entra_name, entra_oid, created, last_login, role)
+		        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		        ON CONFLICT (name) DO UPDATE SET kind = excluded.kind, disabled = excluded.disabled,
 		          pass_salt = excluded.pass_salt, pass_hash = excluded.pass_hash, pass_iter = excluded.pass_iter,
 		          totp = excluded.totp, totp_ok = excluded.totp_ok, totp_step = excluded.totp_step,
 		          setup_hash = excluded.setup_hash, setup_expires = excluded.setup_expires,
-		          entra_name = excluded.entra_name, entra_oid = excluded.entra_oid, last_login = excluded.last_login`,
+		          entra_name = excluded.entra_name, entra_oid = excluded.entra_oid, last_login = excluded.last_login, role = excluded.role`,
 			u.Name, u.Kind, u.Disabled, u.PassSalt, u.PassHash, u.PassIter, u.TOTP, u.TOTPOk, u.TOTPStep,
-			u.SetupHash, u.SetupExpires, txt(u.EntraName), txt(u.EntraOID), u.Created, u.LastLogin)
+			u.SetupHash, u.SetupExpires, txt(u.EntraName), txt(u.EntraOID), u.Created, u.LastLogin, u.Role)
 	}
 	for _, e := range ch.audit {
 		w.exec(`INSERT INTO audit (time, who, ip, action, target, detail, ok) VALUES ($1, $2, $3, $4, $5, $6, $7)`,

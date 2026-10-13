@@ -37,6 +37,13 @@ var simSettings = map[string]any{
 		{"enabled": false, "name": "", "rx": 18, "tx": 21, "hw": true, "serial": map[string]any{"baud": 9600, "bits": 8, "parity": "N", "stop": 1, "swap": false}},
 	},
 }
+
+// simFW is the firmware version the simulated device reports.
+var simFW = "1.8.0"
+
+// simSD is what has been written to the simulated SD card: name and size.
+var simSD = map[string]int{}
+
 var simConfigs = map[string]string{
 	"Demo":   "show version\n@pause 1\nshow clock\n",
 	"Uplink": "configure terminal\ninterface GigabitEthernet0/1\n description Uplink\n no shutdown\nend\n",
@@ -94,6 +101,7 @@ func main() {
 		n := fs.Int("n", 0, "stop after this many polls (0 = never)")
 		interval := fs.Duration("interval", 0, "time between polls (0 = what the server asks for)")
 		control := fs.Bool("control", false, "allow commands that change something (play, reboot), as the switch at a real device does")
+		unattended := fs.Bool("unattended", false, "report that unattended access is granted (with -console the simulator agrees to every console anyway)")
 		console := fs.Bool("console", false, "say yes to every request for the remote console, as a tap on a real device's display does")
 		fs.Parse(flag.Args()[1:])
 		start := time.Now()
@@ -101,7 +109,20 @@ func main() {
 		var conID uint64 // remote console agreed to, opened once the server has the answer
 		var conMinutes int
 		for i := 0; ; i++ {
-			status := map[string]any{"uptime_s": int(time.Since(start).Seconds()), "polls": i}
+			// what a real device says of itself with every poll (fillStatus in the firmware)
+			cfgs := []map[string]any{}
+			for _, n := range slices.Sorted(maps.Keys(simConfigs)) {
+				cfgs = append(cfgs, map[string]any{"n": n, "s": len(simConfigs[n])})
+			}
+			files := []map[string]any{}
+			for _, n := range slices.Sorted(maps.Keys(simSD)) {
+				files = append(files, map[string]any{"n": n, "s": simSD[n]})
+			}
+			status := map[string]any{"uptime_s": int(time.Since(start).Seconds()), "polls": i, "fw": simFW, "lang": "en", "ctl": *control,
+				"cfgs": cfgs, "sd": map[string]any{"on": true, "mb": 30000, "used": 12, "files": files}, "rssi": -58, "bat_pct": 87, "bat_mv": 3980}
+			if *unattended {
+				status["unatt"] = 3600
+			}
 			pinned, next := c.State.ServerPub, c.State.NextPub
 			r, err := c.Poll(status, results)
 			// a key change of the server: what the device has to remember
@@ -191,6 +212,15 @@ func main() {
 						default:
 							delete(simConfigs, a.Name)
 							res.Out = "deleted"
+						}
+					case "sd_put":
+						if !*control {
+							res.OK, res.Out = false, denied
+						} else if name, data, err := c.Image(cmd.ID); err != nil {
+							res.OK, res.Out = false, "download failed: "+err.Error()
+						} else {
+							simSD[name] = len(data)
+							res.Out = fmt.Sprintf("stored %s (%d bytes)", name, len(data))
 						}
 					case "update":
 						if !*control {

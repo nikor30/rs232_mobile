@@ -288,6 +288,17 @@
       <label class="check"><input id="c2Control" type="checkbox"> The control center may change settings, read and write configurations, play them and restart the device</label>
       <p class="hint">Unticked, the server can only read: state, settings (without passwords) and the list of configurations. The box can be ticked only here, never from the server.</p>
       <p class="hint">The <b>Remote console</b> – the administrator operates a serial port through the server – does not depend on this box: every session has to be allowed on the device's touch display, runs for the requested time at most and can be ended there and here at any moment.</p>
+      <label>Unattended access
+        <select id="c2Unatt">
+          <option value="0">Off – every remote console needs a tap on the display</option>
+          <option value="1">1 hour</option>
+          <option value="8">8 hours</option>
+          <option value="24">24 hours</option>
+          <option value="72">3 days</option>
+          <option value="168">7 days</option>
+        </select>
+      </label>
+      <p class="hint" id="c2UnattState">While it runs, the control center opens a remote console without anybody at the device agreeing. It ends by itself.</p>
       <div class="row">
         <button id="c2Enroll" class="btn" type="button">Enroll</button>
         <button id="c2Forget" class="btn danger" type="button" hidden>Sign off</button>

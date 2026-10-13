@@ -641,6 +641,7 @@ static void handleC2Get() {
   d["taskStackFree"] = i.taskStackFree;
   d["sta"] = staConnected();
   d["control"] = settings.c2Control;
+  d["unattS"] = C2::unattendedLeft();
   C2::Console rc = C2::console();
   static const char *const CON[] = {"none", "asked", "open"};
   d["console"]["state"] = CON[rc.state];
@@ -875,6 +876,16 @@ static void setupHttp() {
     if (deserializeJson(d, http.arg("plain")) || !d["allow"].is<bool>()) return sendJson(400, TR("{\"ok\":false,\"error\":\"invalid JSON\"}", "{\"ok\":false,\"error\":\"JSON ungültig\"}", "{\"ok\":false,\"error\":\"JSON inválido\"}"));
     settings.c2Control = d["allow"];
     Store::save();
+    sendJson(200, "{\"ok\":true}");
+  });
+  // Unattended access: for so many hours a remote console needs no tap on the
+  // display. Like the box above it can be granted only here.
+  http.on("/api/c2/unattended", HTTP_POST, []() {
+    if (!guard()) return;
+    JsonDocument d;
+    if (deserializeJson(d, http.arg("plain")) || !d["hours"].is<int>() || d["hours"].as<int>() < 0 || d["hours"].as<int>() > 168)
+      return sendJson(400, TR("{\"ok\":false,\"error\":\"invalid JSON\"}", "{\"ok\":false,\"error\":\"JSON ungültig\"}", "{\"ok\":false,\"error\":\"JSON inválido\"}"));
+    C2::unattendedSet(d["hours"].as<uint32_t>() * 3600UL);
     sendJson(200, "{\"ok\":true}");
   });
   // The administrator's tabs of the web interface: out of sight until somebody asks for them.

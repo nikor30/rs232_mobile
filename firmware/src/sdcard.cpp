@@ -195,6 +195,64 @@ void logStop(uint8_t port) {
   refreshSizes();
 }
 
+// ---- a file from the control center
+static File putFile;
+static String putName;
+
+const char *putBegin(const char *name, uint32_t size) {
+  if (!ok) return "no SD card in the device";
+  if (putFile) return "a file is being written already";
+  size_t n = strlen(name);
+  if (!n || n > 96 || name[0] == '.' || strpbrk(name, "/\\:*?\"<>|")) return "the name cannot be used on the card";
+  refreshSizes();
+  if ((uint64_t)size / (1024 * 1024) + 1 >= cachedTotalMb - cachedUsedMb) return "not enough room on the SD card";
+  BusGuard guard;
+  putName = String("/") + name;
+  SD.remove(putName + ".part");
+  putFile = SD.open(putName + ".part", FILE_WRITE);
+  return putFile ? nullptr : "the file could not be created on the card";
+}
+
+bool putWrite(const uint8_t *data, size_t len) {
+  if (!putFile) return false;
+  BusGuard guard;
+  return putFile.write(data, len) == len;
+}
+
+bool putEnd(bool keep) {
+  if (!putFile) return false;
+  BusGuard guard;
+  putFile.close();
+  bool done = false;
+  if (keep) {
+    SD.remove(putName);                  // a newer one of the same name takes its place
+    done = SD.rename(putName + ".part", putName);
+  }
+  if (!done) SD.remove(putName + ".part");
+  putName = "";
+  cachedUsedMb = SD.usedBytes() / (1024ULL * 1024ULL);
+  return done;
+}
+
+String rootJson(size_t room) {
+  String out = "[";
+  if (ok && !putFile) {
+    BusGuard guard;
+    File dir = SD.open("/");
+    for (File f = dir ? dir.openNextFile() : File(); f; f = dir.openNextFile()) {
+      String n = f.name();
+      if (!f.isDirectory() && n.length() && n[0] != '.' && n.indexOf('"') < 0 && n.indexOf('\\') < 0) {
+        String one = String(out.length() > 1 ? "," : "") + "{\"n\":\"" + n + "\",\"s\":" + String((uint32_t)f.size()) + "}";
+        if (out.length() + one.length() + 1 > room) { f.close(); break; }
+        out += one;
+      }
+      f.close();
+    }
+    if (dir) dir.close();
+  }
+  return out + "]";
+}
+
 bool logging(uint8_t port) { return port < MAX_PORTS && logs[port].f; }
 String logName(uint8_t port) { return port < MAX_PORTS ? logs[port].name : String(); }
 uint32_t logBytes(uint8_t port) { return port < MAX_PORTS ? logs[port].bytes : 0; }
