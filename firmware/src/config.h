@@ -2,11 +2,98 @@
 // ============================================================================
 //  RS232 Web Console - hardware + default configuration
 //
-//  Board: Waveshare ESP32-S3-Touch-LCD-2
+//  Boards: Waveshare ESP32-S3-Touch-LCD-2 (default)
+//          VIEWE UEDX80480050E-WB-A, 5" 800x480 (-DBOARD_VIEWE_5INCH)
 // ============================================================================
 
 #define FW_NAME     "RS232 Web Console"
 #define FW_VERSION  "1.8.0"
+#if defined(BOARD_VIEWE_5INCH)
+#define FW_BOARD_ID "viewe-s3-5inch"      // what a signed firmware package has to name (tools/fw_sign.py)
+
+// ------------------------------------- VIEWE UEDX80480050E-WB-A (5", 800x480)
+// ESP32-S3 N16R8, ST7262 panel on 16 parallel RGB lines, GT911 touch, SD slot
+// on its own SPI lines, USB-C through a CH340 on UART0. No battery connector,
+// no accelerometer. The panel takes about twenty GPIOs: IO17 and IO18 are what
+// is left for a serial port. IO19/IO20 (the chip's USB pins) carry the touch
+// bus, so the SD card cannot be lent to the USB port on this board.
+// Pins and timing: ESP32_Display_Panel, BOARD_VIEWE_UEDX80480050E_WB_A.h.
+#define BOARD_NAME      "VIEWE 5\" ESP32-S3 800x480"
+#define LCD_RGB_PANEL    1  // parallel RGB with a frame buffer in PSRAM (lcd_ui.cpp)
+#define LCD_W          800
+#define LCD_H          480
+// Timing from the panel's datasheet (UE050WV-RB40-A116, "Parallel 24-bit RGB
+// Input Timing Table": clock 23..27 MHz, line 808..896 clocks, frame 488..504
+// lines), typical values: 59 pictures a second at 24 MHz, which divides the
+// 240 MHz source evenly. The vendor's examples run 19 MHz with longer blanking
+// (46 Hz). Below about 16 MHz the panel flickers, at 12 MHz it shows its own
+// test pattern (red, green, blue, white) instead of the picture.
+// Debug console "pclk N" tries another clock without flashing.
+#define LCD_RGB_HZ  24000000
+#define LCD_RGB_HPW      4
+#define LCD_RGB_HBP      8
+#define LCD_RGB_HFP      8
+#define LCD_RGB_VPW      4
+#define LCD_RGB_VBP      8
+#define LCD_RGB_VFP      8
+// Bits per pixel in the frame buffer. 16 would be RGB565, but then the picture
+// needs 40 of the roughly 50 MB a second the PSRAM delivers, all the time:
+// measured, it lost step twice in 20 s at rest and nine times in 5 s while
+// pages changed. With 8 (RGB332, 256 colours; the panel's 16 lines get the
+// bits repeated) it needs half, and lcd_ui.cpp picks colours that exist there.
+#define LCD_RGB_BITS     8
+// Bounce buffers (rgb_bounce.h): three of twelve lines, 3 x 9.6 kB of internal
+// RAM. A late interrupt has two buffers' time (0.8 ms) before it shows.
+#define LCD_RGB_BOUNCE_LINES 12
+#define LCD_RGB_BOUNCE_BUFS   3
+#define LCD_RGB_PCLK_NEG 1        // data valid on the falling clock edge
+#define LCD_RGB_SYNC_IDLE_HIGH 1   // HSYNC/VSYNC pulse low
+#define PIN_LCD_HSYNC   39
+#define PIN_LCD_VSYNC   41
+#define PIN_LCD_DE      40
+#define PIN_LCD_PCLK    42
+// B0..B4, G0..G5, R0..R4
+#define PINS_LCD_DATA  {8, 3, 46, 9, 1, 5, 6, 7, 15, 16, 4, 45, 48, 47, 21, 14}
+#define PIN_LCD_BL       2  // backlight, active high
+#define PIN_SD_CS       10  // SD slot, a bus of its own
+#define PIN_SD_MOSI     11
+#define PIN_SD_SCLK     12
+#define PIN_SD_MISO     13
+#define LCD_ROT_DEFAULT  0  // landscape, as the panel is built
+#define PIN_KEY          0  // BOOT button (usable after start-up)
+#define PIN_I2C_SDA     19  // touch (GT911)
+#define PIN_I2C_SCL     20
+#define TOUCH_GT911      1
+#define HAS_IMU          0
+#define IMU_ROT_X_POS    0  // unused without the sensor
+#define IMU_ROT_Y_POS    1
+#define HAS_USB_STICK    0
+// Terminal: 8x16 characters, 99 columns on the 800 pixels
+#define TERM_MAX_COLS   99
+#define TERM_MAX_ROWS   24        // 22 fit under the title bar; internal RAM is short on this board
+#define TERM_CW          8
+#define TERM_CH         16
+#define TERM_FONT       fonts::AsciiFont8x16
+
+// Port 1 on the two free GPIOs. IO43/IO44 are the debug console at the USB
+// port and are not offered.
+#define PORT_DEFAULT_PINS {{18, 17}, {18, 17}, {18, 17}, {18, 17}}
+#define PINS_RX  {17, 18}
+#define PINS_TX  {17, 18}
+#define PINS_ADC {-1}             // nothing to measure: the free pins are ADC2, which does not work with WiFi
+#define PIN_NAMES ""
+#define PIN_PREFIX "IO"
+
+#define BAT_PIN_DEFAULT  -1       // USB powered
+#define BAT_TYPE_DEFAULT  0
+#define BAT_DIV_DEFAULT  30
+#ifndef FIXED_AP_PASS
+#define FIXED_AP_PASS  "rs232mockup"
+#endif
+#define CPU_MHZ          240
+#define TX_POWER_DEFAULT 34       // WIFI_POWER_8_5dBm: plenty for a few metres
+
+#else
 #define FW_BOARD_ID "waveshare-s3-lcd2"   // what a signed firmware package has to name (tools/fw_sign.py)
 
 // --------------------------------------- Waveshare ESP32-S3-Touch-LCD-2 (2", 240x320)
@@ -34,6 +121,17 @@
 #define IMU_ROT_DEFAULT  3
 #define IMU_ROT_X_POS    0
 #define IMU_ROT_Y_POS    1
+#define LCD_W          240
+#define LCD_H          320
+#define LCD_ROT_DEFAULT  IMU_ROT_DEFAULT
+#define HAS_IMU          1
+#define HAS_USB_STICK    1  // the SD card can be lent to the USB port as a memory stick
+// Terminal: 6x8 characters
+#define TERM_MAX_COLS   53
+#define TERM_MAX_ROWS   30
+#define TERM_CW          6
+#define TERM_CH          8
+#define TERM_FONT       fonts::Font0
 #define PIN_KEY          0  // BOOT button (usable after start-up)
 #define PIN_I2C_SDA     48  // touch (CST816D, 0x15) + accelerometer (QMI8658)
 #define PIN_I2C_SCL     47
@@ -64,6 +162,8 @@
 #endif
 #define CPU_MHZ          240
 #define TX_POWER_DEFAULT 34       // WIFI_POWER_8_5dBm: plenty for a few metres
+
+#endif
 
 // ---- Battery measurement ----------------------------------------------------
 #define BAT_CAL          1.00f   // fine tune: real_voltage / displayed_voltage

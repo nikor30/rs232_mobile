@@ -3,8 +3,10 @@
 #include "lang.h"
 
 // Colour touch front end on the Waveshare ESP32-S3-Touch-LCD-2 (ST7789T3
-// 240x320, CST816D touch, QMI8658 accelerometer). It implements the Display
-// interface from display.h.
+// 240x320, CST816D touch, QMI8658 accelerometer) and on the VIEWE 5" panel
+// (800x480 parallel RGB, GT911 touch; BOARD_VIEWE_5INCH). It implements the
+// Display interface from display.h. The pages lay themselves out from the
+// width and height they find, so both panels run the same code.
 //
 //   swipe / arrows   change the screen: Status, Terminal, Skripte, WLAN, Web-UI, Bluetooth, ...
 //                    While the finger drags sideways, the name of the page it leads
@@ -48,12 +50,117 @@
 
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
+#ifdef LCD_RGB_PANEL
+#include <NimBLEDevice.h>
+#include <lgfx/v1/platforms/esp32s3/Panel_RGB.hpp>
+#include <lgfx/v1/platforms/esp32s3/Bus_RGB.hpp>
+#include "rgb_bounce.h"
+#include "soc/usb_serial_jtag_reg.h"
+#endif
 #if ARDUINO_USB_CDC_ON_BOOT
 #include "hal/usb_serial_jtag_ll.h"
 #endif
 
 namespace Display {
 
+#ifdef LCD_RGB_PANEL
+// A pixel clock to try instead of LCD_RGB_HZ ("pclk N" at the debug console).
+// Kept in RTC memory: it survives the restart that applies it, not a power cut.
+static RTC_NOINIT_ATTR uint32_t rgbHzTry, rgbHzTryMagic;
+static const uint32_t RGB_HZ_MAGIC = 0x50434C4B;
+static volatile bool blPlain = false;     // debug console "bl 1": backlight pin simply high, no PWM
+static uint32_t rgbHz() {
+  return rgbHzTryMagic == RGB_HZ_MAGIC && rgbHzTry >= 6000000 && rgbHzTry <= 30000000 ? rgbHzTry : LCD_RGB_HZ;
+}
+
+// Parallel RGB panel: the picture is a frame buffer in PSRAM that the LCD_CAM
+// unit clocks out all the time, by way of bounce buffers (rgb_bounce.h). Pins
+// and timing are the vendor's (config.h).
+class Panel : public lgfx::LGFX_Device {
+  PanelRgb panel;
+  lgfx::Light_PWM light;
+  lgfx::Touch_GT911 touch;
+
+public:
+  BusRgbBounce bus;
+
+
+public:
+  Panel() {
+    {
+      auto cfg = panel.config();
+      cfg.memory_width = cfg.panel_width = LCD_W;
+      cfg.memory_height = cfg.panel_height = LCD_H;
+      cfg.offset_x = 0;
+      cfg.offset_y = 0;
+      panel.config(cfg);
+    }
+    {
+      auto cfg = panel.config_detail();
+      cfg.use_psram = 1;
+      panel.config_detail(cfg);
+    }
+    {
+      static const int8_t D[16] = PINS_LCD_DATA;
+      auto cfg = bus.config();
+      cfg.panel = &panel;
+      cfg.pin_d0 = D[0];   cfg.pin_d1 = D[1];   cfg.pin_d2 = D[2];   cfg.pin_d3 = D[3];
+      cfg.pin_d4 = D[4];   cfg.pin_d5 = D[5];   cfg.pin_d6 = D[6];   cfg.pin_d7 = D[7];
+      cfg.pin_d8 = D[8];   cfg.pin_d9 = D[9];   cfg.pin_d10 = D[10]; cfg.pin_d11 = D[11];
+      cfg.pin_d12 = D[12]; cfg.pin_d13 = D[13]; cfg.pin_d14 = D[14]; cfg.pin_d15 = D[15];
+      cfg.pin_henable = PIN_LCD_DE;
+      cfg.pin_vsync = PIN_LCD_VSYNC;
+      cfg.pin_hsync = PIN_LCD_HSYNC;
+      cfg.pin_pclk = PIN_LCD_PCLK;
+      cfg.freq_write = rgbHz();
+      // LovyanGFX: "polarity" is the level of the line while idle, and the clock
+      // edge is chosen by pclk_idle_high (pclk_active_neg is not used by it).
+      // The vendor's values (sync lines idle high, data valid on the falling
+      // edge) therefore read 1 / 1 / 1 here.
+      cfg.hsync_polarity = LCD_RGB_SYNC_IDLE_HIGH;
+      cfg.hsync_front_porch = LCD_RGB_HFP;
+      cfg.hsync_pulse_width = LCD_RGB_HPW;
+      cfg.hsync_back_porch = LCD_RGB_HBP;
+      cfg.vsync_polarity = LCD_RGB_SYNC_IDLE_HIGH;
+      cfg.vsync_front_porch = LCD_RGB_VFP;
+      cfg.vsync_pulse_width = LCD_RGB_VPW;
+      cfg.vsync_back_porch = LCD_RGB_VBP;
+      cfg.pclk_active_neg = LCD_RGB_PCLK_NEG;
+      cfg.de_idle_high = 0;
+      cfg.pclk_idle_high = LCD_RGB_PCLK_NEG;
+      bus.config(cfg);
+      panel.setBus(&bus);
+    }
+    {
+      auto cfg = light.config();
+      cfg.pin_bl = PIN_LCD_BL;
+      cfg.invert = false;
+      cfg.freq = 44100;
+      cfg.pwm_channel = 7;
+      light.config(cfg);
+      panel.setLight(&light);
+    }
+    {
+      auto cfg = touch.config();
+      cfg.i2c_port = 0;
+      cfg.i2c_addr = 0x5D;               // the driver tries 0x14 as well
+      cfg.pin_sda = PIN_I2C_SDA;
+      cfg.pin_scl = PIN_I2C_SCL;
+      cfg.pin_int = -1;                  // not wired at the factory
+      cfg.pin_rst = -1;
+      cfg.freq = 400000;
+      cfg.x_min = 0;
+      cfg.x_max = LCD_W - 1;
+      cfg.y_min = 0;
+      cfg.y_max = LCD_H - 1;
+      cfg.bus_shared = false;
+      touch.config(cfg);
+      panel.setTouch(&touch);
+    }
+    setPanel(&panel);
+  }
+};
+#else
 // Pins and panel options follow LovyanGFX's own configuration for this board
 // (lgfx_user/LGFX_ESP32_S3_Touch_LCD_2.h): panel inverted, no reset line, no
 // touch interrupt line. Different on purpose: SPI2 instead of SPI3, because
@@ -124,6 +231,8 @@ public:
   }
 };
 
+#endif
+
 static Panel lcd;
 static LGFX_Sprite canvas(&lcd);
 static LovyanGFX *g = &lcd;              // the off-screen canvas, or the panel itself if there is no RAM for one
@@ -134,10 +243,23 @@ static uint8_t canvasBits = 0;           // 16 = PSRAM, 8 = internal RAM, 0 = no
 // (C_TINT) for what leads somewhere, and green, amber and red only for state.
 // A pressed button takes the tint: on a small panel the answer to a touch has
 // to be seen past the finger.
+#if defined(LCD_RGB_BITS) && LCD_RGB_BITS == 8
+// The same roles in RGB332: red and green have eight steps (0, 36, 73, 109,
+// 146, 182, 219, 255), blue four (0, 85, 170, 255). Neutral grey does not
+// exist there; the surfaces lean to blue, which sits better with the tint
+// than the olive the nearest "true" greys would turn into.
+#define LCD_CANVAS_BITS 8
+static const uint32_t C_BG = 0x000000, C_PANEL = 0x242455, C_LINE = 0x6D6DAA, C_TEXT = 0xFFFFFF,
+                      C_DIM = 0x9292AA, C_ACCENT = 0x6DDBFF, C_GREEN = 0x24DB55, C_AMBER = 0xFF9200,
+                      C_RED = 0xFF4955, C_BLUE = 0x0092FF, C_BTN = 0x494955, C_BTN_DOWN = 0x0092FF,
+                      C_TINT = 0x0092FF, C_TERM = 0x92DBAA;
+#else
+#define LCD_CANVAS_BITS 16
 static const uint32_t C_BG = 0x000000, C_PANEL = 0x2C2C2E, C_LINE = 0x48484A, C_TEXT = 0xF5F5F7,
                       C_DIM = 0x98989D, C_ACCENT = 0x64D2FF, C_GREEN = 0x30D158, C_AMBER = 0xFF9F0A,
                       C_RED = 0xFF453A, C_BLUE = 0x0A84FF, C_BTN = 0x3A3A3C, C_BTN_DOWN = 0x0A84FF,
                       C_TINT = 0x0A84FF, C_TERM = 0x9AE6B4;
+#endif
 
 // The order is the order of use: is the port ready, how does one get onto the
 // device, then the tools. "System" is for whoever looks after the device and
@@ -152,7 +274,9 @@ static const int MAX_CFG = 16, MAX_NETS = 12;
 // floor, with big thumbs and sometimes gloves: buttons are 7 mm high, the arrows
 // in the title bar have 10 mm each.
 static const int HEAD_H = 40, NAV_H = 12, BTN_H = 56, BTN_GAP = 4, HEAD_HIT = 78;
-static const int TERM_MAX_COLS = 53, TERM_MAX_ROWS = 30, TERM_CW = 6, TERM_CH = 8;
+// The terminal grid (TERM_MAX_COLS x TERM_MAX_ROWS characters of TERM_CW x TERM_CH
+// pixels in TERM_FONT) is the board's: config.h.
+static const int LCD_MAX_SIDE = LCD_W > LCD_H ? LCD_W : LCD_H;
 
 // ============================================================ shared between the tasks
 
@@ -228,6 +352,7 @@ static volatile uint32_t msgVersion = 0;
 static volatile bool reqWake = false, reqOff = false, reqNext = false, reqBrightness = false, reqShot = false;
 static volatile int16_t reqTapX = -1, reqTapY = -1, reqShotFrom = 0, reqShotTo = 999;
 static volatile int8_t reqScreen = -1, reqRot = -1;
+static volatile int reqBench = 0;        // debug console: draw this many pictures in a row and time them
 static volatile int16_t reqSplash = 0;   // seconds for which the start-up picture is to be shown again
 static volatile int16_t reqDrag[4];                // simulated finger: from x,y to x,y
 static volatile bool reqDragGo = false, reqDragHold = false, reqLift = false;   // hold: the finger stays down at the end
@@ -732,13 +857,26 @@ static void runCommand(uint8_t id, uint8_t arg, uint8_t port) {
 //   stick        the SD card as a USB memory stick (this console ends; back: restart),  stickui N  only its dialog for N s
 static void printStatus() {
   uint32_t now = millis();
-  Serial.printf("[DIAG] up %lu s, Heap %u kB (min %u kB), Reset-Grund %d\n", (unsigned long)(now / 1000),
-                (unsigned)(ESP.getFreeHeap() / 1024), (unsigned)(ESP.getMinFreeHeap() / 1024), (int)esp_reset_reason());
+  Serial.printf("[DIAG] up %lu s, Heap %u kB (min %u kB, groesster Block %u kB), Reset-Grund %d\n", (unsigned long)(now / 1000),
+                (unsigned)(ESP.getFreeHeap() / 1024), (unsigned)(ESP.getMinFreeHeap() / 1024), (unsigned)(ESP.getMaxAllocHeap() / 1024), (int)esp_reset_reason());
   Serial.printf("[DIAG] Hauptschleife: laengste Pause %lu ms | UI-Task: laengste Pause %lu ms, letzter Lauf vor %lu ms\n",
                 (unsigned long)statLoopGapMax, (unsigned long)statUiGapMax, (unsigned long)(now - uiBeat));
   Serial.printf("[DIAG] Anzeige: %s, Licht %u, Seite %u, Port %u, Drehung %u, Puffer %u Bit | Bilder %lu, gesendet %lu (%lu Streifen), Zeichnen max %lu ms\n",
                 uiOn ? "an" : "aus", (unsigned)litAt, uiScreen, uiPort + 1, uiRot, canvasBits, (unsigned long)statFrames,
                 (unsigned long)statPushes, (unsigned long)statBands, (unsigned long)statDrawMsMax);
+#ifdef LCD_RGB_PANEL
+  {
+    static uint32_t lastFrames = 0, lastResync = 0, lastAt = 0;
+    uint32_t f = lcd.bus.statFrames, r = lcd.bus.statResync, n = lcd.bus.statCopies, sum = lcd.bus.statCopyUsSum;
+    lcd.bus.statCopies = 0;
+    lcd.bus.statCopyUsSum = 0;
+    Serial.printf("[DIAG] RGB: Pixeltakt %.2f MHz, seit der letzten Abfrage (%lu ms) %lu Bilder, %lu mal neu angesetzt | Kopie %lu us im Mittel, max %lu us, von Hand %lu, uebersprungen %lu\n",
+                  lcd.bus.pclkHz / 1e6, (unsigned long)(now - lastAt), (unsigned long)(f - lastFrames), (unsigned long)(r - lastResync),
+                  (unsigned long)(n ? sum / n : 0), (unsigned long)lcd.bus.statCopyUsMax, (unsigned long)lcd.bus.statByHand, (unsigned long)lcd.bus.statSkipped);
+    lastFrames = f; lastResync = r; lastAt = now;
+    lcd.bus.statCopyUsMax = 0;
+  }
+#endif
   Serial.printf("[DIAG] Touch: %lu Beruehrungen, letzte %d,%d, Abfrage max %lu ms | Lage %s x=%d y=%d z=%d\n",
                 (unsigned long)statTouches, lastTouchX, lastTouchY, (unsigned long)statTouchMsMax,
                 imuFound ? "ok" : "fehlt", imuX, imuY, imuZ);
@@ -775,6 +913,33 @@ static void console() {
     else if (sscanf(line, "tap %d %d", &a, &b) == 2) { reqTapX = a; reqTapY = b; }
     else if (sscanf(line, "screen %d", &a) == 1) reqScreen = a;
     else if (sscanf(line, "splash %d", &a) == 1) reqSplash = constrain(a, 1, 60);
+    else if (sscanf(line, "bench %d", &a) == 1) reqBench = constrain(a, 1, 1000);
+#ifdef LCD_RGB_PANEL
+    else if (sscanf(line, "bl %d", &a) == 1) {       // 1 = backlight pin high without PWM, 0 = PWM again
+      blPlain = a != 0;
+      if (blPlain) {
+        ledcDetachPin(PIN_LCD_BL);
+        pinMode(PIN_LCD_BL, OUTPUT);
+        digitalWrite(PIN_LCD_BL, HIGH);
+      } else {
+        ledcAttachPin(PIN_LCD_BL, 7);
+        reqBrightness = true;
+      }
+      Serial.printf("[LCD]  Licht: %s\n", blPlain ? "Pin fest an, ohne PWM" : "PWM");
+    }
+    else if (sscanf(line, "radio %d", &a) == 1) {    // 0 = WiFi and Bluetooth off until the next restart (test)
+      if (!a) { NimBLEDevice::deinit(true); WiFi.mode(WIFI_OFF); }
+      Serial.printf("[LCD]  Funk: %s\n", a ? "unveraendert (Neustart schaltet ihn wieder ein)" : "aus");
+    }
+    else if (sscanf(line, "pclk %d", &a) == 1) {     // pixel clock in MHz, 0 = back to LCD_RGB_HZ; restarts
+      rgbHzTry = (uint32_t)a * 1000000UL;
+      rgbHzTryMagic = a ? RGB_HZ_MAGIC : 0;
+      Serial.printf("[LCD]  Pixeltakt %d MHz, Neustart\n", a);
+      Serial.flush();
+      delay(100);
+      ESP.restart();
+    }
+#endif
     else if (!strcmp(line, "rot auto")) reqRot = 4;
     else if (sscanf(line, "rot %d", &a) == 1) reqRot = a & 3;
     else if (!strcmp(line, "cfgtest")) {             // a small configuration to try the Skripte page with
@@ -921,8 +1086,53 @@ static void scrollReset();
 
 // ---- canvas, rotation, sending only what changed
 static const int BAND_H = 16;
-static uint32_t bandHash[320 / BAND_H + 1];
+static uint32_t bandHash[LCD_MAX_SIDE / BAND_H + 1];
 static bool forceFull = true;
+
+#ifdef LCD_RGB_PANEL
+// The RGB panel has no memory of its own to send a picture to: it is fed from
+// a frame buffer all the time. Comparing bands and copying the changed ones
+// (flush() below) costs more than drawing there, all of it over the one PSRAM
+// bus the picture stream lives on. So with the picture upright there are three
+// frame buffers instead: one on show, one finished and waiting for the bus to
+// change over between two pictures, one the canvas draws into. No comparing,
+// no copying, and no waiting for the change-over (measured: 19.5 pictures a
+// second with two buffers and the wait).
+static const int SWAP_BUFS = 3;
+static uint8_t *swapBuf[SWAP_BUFS] = {nullptr, nullptr, nullptr};
+static uint8_t swapDraw = 1, swapLast = 0;   // the canvas draws into swapDraw; swapLast is the newest finished picture
+static bool swapMode = false;
+
+static int swapIndex(const uint8_t *p) {
+  for (int i = 0; i < SWAP_BUFS; i++)
+    if (swapBuf[i] == p) return i;
+  return 0;
+}
+
+static bool swapBegin() {
+  swapBuf[0] = lcd.bus.frame();            // the panel's own buffer, on show right now
+  for (int i = 1; i < SWAP_BUFS; i++) {
+    if (!swapBuf[i]) swapBuf[i] = (uint8_t *)heap_caps_aligned_alloc(64, lcd.bus.frameLen() + BusRgbBounce::FRAME_SLACK, MALLOC_CAP_SPIRAM);
+    if (!swapBuf[i]) return false;
+  }
+  swapLast = 0;
+  swapDraw = 1;
+  // The depth has to be set here: setBuffer()'s own bpp argument reaches the
+  // colour conversion but not the sprite's pixel size, which stays at 16 bit -
+  // it then writes twice the buffer's length.
+  canvas.setColorDepth(LCD_CANVAS_BITS);
+  canvas.setBuffer(swapBuf[swapDraw], LCD_W, LCD_H, LCD_CANVAS_BITS);
+  return true;
+}
+
+static void swapEnd() {                    // back to the panel's own buffer for the band-wise path
+  if (!swapMode) return;
+  swapMode = false;
+  for (int i = 0; i < 100 && !lcd.bus.shown(); i++) vTaskDelay(1);
+  lcd.bus.show(swapBuf[0]);
+  for (int i = 0; i < 100 && !lcd.bus.shown(); i++) vTaskDelay(1);
+}
+#endif
 
 static void setRotation(uint8_t r) {
   rot = r & 3;
@@ -931,11 +1141,22 @@ static void setRotation(uint8_t r) {
   lcd.setRotation(rot);
   W = lcd.width();
   H = lcd.height();
+#ifdef LCD_RGB_PANEL
+  swapEnd();
+#endif
   canvas.deleteSprite();
+#ifdef LCD_RGB_PANEL
+  if (rot == 0 && swapBegin()) {
+    swapMode = true;
+    g = &canvas;
+    canvasBits = LCD_CANVAS_BITS;
+  } else
+#endif
+  {
   canvas.setPsram(true);
-  canvas.setColorDepth(16);
+  canvas.setColorDepth(LCD_CANVAS_BITS);   // the panel's own depth: sending is a plain copy then
   g = &canvas;
-  canvasBits = 16;
+  canvasBits = LCD_CANVAS_BITS;
   if (!canvas.createSprite(W, H)) {
     canvas.setPsram(false);
     canvas.setColorDepth(8);
@@ -945,6 +1166,7 @@ static void setRotation(uint8_t r) {
       canvasBits = 0;
       lcd.fillScreen(C_BG);
     }
+  }
   }
   busUnlock();
   int top = HEAD_H + 2, bottom = H - NAV_H - BTN_H - 4;
@@ -962,10 +1184,28 @@ static void setRotation(uint8_t r) {
 // difference. A status screen then costs a few hundred pixels per update, not 76800.
 static void flush() {
   if (g != &canvas) return;              // direct mode has drawn on the panel already
+#ifdef LCD_RGB_PANEL
+  if (swapMode) {
+    uint8_t *drawn = swapBuf[swapDraw];
+    lcd.bus.carry(drawn, lcd.bus.frameLen());
+    // A picture still waiting for its turn (drawing was quicker than the panel)
+    // goes first: its buffer must not be drawn into while the bus may take it.
+    for (int i = 0; i < 100 && !lcd.bus.shown(); i++) vTaskDelay(1);
+    int onShow = swapIndex(lcd.bus.frame());
+    lcd.bus.show(drawn);
+    swapLast = swapDraw;
+    // Next comes the buffer that is neither on show (until the change-over,
+    // and for the copy under way a moment longer) nor the one just handed in.
+    swapDraw = 3 - onShow - swapLast;
+    canvas.setBuffer(swapBuf[swapDraw], LCD_W, LCD_H, LCD_CANVAS_BITS);
+    statPushes = statPushes + 1;
+    return;
+  }
+#endif
   const uint8_t *buf = (const uint8_t *)canvas.getBuffer();
   size_t stride = canvas.bufferLength() / H;
   int bands = (H + BAND_H - 1) / BAND_H;
-  bool changed[320 / BAND_H + 1];
+  static bool changed[LCD_MAX_SIDE / BAND_H + 1];
   bool any = false;
   for (int b = 0; b < bands; b++) {
     int rows = min(BAND_H, H - b * BAND_H);
@@ -987,6 +1227,10 @@ static void flush() {
     int y = first * BAND_H, h = min((b + 1) * BAND_H, H) - y;
     lcd.setClipRect(0, y, W, h);
     canvas.pushSprite(0, 0);
+#ifdef LCD_RGB_PANEL
+    if (!(rot & 1)) lcd.bus.written(rot == 0 ? y : H - y - h, h);
+    else lcd.bus.written(0, LCD_H);      // turned by 90 degrees a band is a column: all of it
+#endif
     statBands = statBands + (b - first + 1);
   }
   lcd.clearClipRect();
@@ -1002,6 +1246,9 @@ static uint8_t rotCandidate = 0xFF, rotVotes = 0;
 static bool rotForced = false;           // debug console: keep the rotation it asked for
 
 static bool imuBegin() {
+#if !HAS_IMU
+  return false;                          // nothing to look for on this board's touch bus
+#endif
   for (uint8_t a : {0x6B, 0x6A}) {
     auto who = lgfx::i2c::readRegister8(0, a, 0x00);
     if (who.has_value() && who.value() == 0x05) { imuAddr = a; break; }
@@ -1821,7 +2068,7 @@ static void screenTerm() {
     uiTermRows = rows;
     uiGeometry = uiGeometry + 1;         // the main loop rebuilds the grid for the new size
   }
-  g->setFont(&fonts::Font0);
+  g->setFont(&TERM_FONT);
   g->setTextDatum(lgfx::top_left);
   g->setTextColor(C_TERM);
   for (int r = 0; r < termRowsUi; r++)
@@ -1934,7 +2181,7 @@ static void screenInfo() {
   row(TR("Center", "Leitstelle", "Central"), S.c2);
   row(TR("Battery", "Akku", "Bateria"), batteryLine());
   row("SD", sdLine());
-  row(TR("Position", "Lage", "Posicao"), imu);
+  if (HAS_IMU) row(TR("Position", "Lage", "Posicao"), imu);
   row("Board", BOARD_NAME);
   contentEnd();
 }
@@ -2297,13 +2544,19 @@ static void drawConsoleDialog() {
   button(x + 2 * BTN_GAP + bw, by, bw, BTN_H, ask ? TR("Allow", "Erlauben", "Permitir") : TR("End", "Beenden", "Encerrar"), ask ? B_CON_ALLOW : B_CON_END, ask ? C_GREEN : C_RED);
 }
 
+static uint32_t drawOnlyUs = 0, fillOnlyUs = 0;   // the last picture: time to draw it (without sending), and of that the clearing
 static void draw(uint32_t now) {
+  uint32_t drawT0 = micros();
   if (!S.portOn[selPort]) nextPort();
   btnCount = 0;
   marquee = false;
   contentH = 0;                          // a page without scrolling content leaves it at that
   if (g == &lcd) busLock();
+#ifdef LCD_RGB_PANEL
+  if (!(swapMode && C_BG == 0 && lcd.bus.clear(swapBuf[swapDraw])))
+#endif
   g->fillScreen(C_BG);
+  fillOnlyUs = micros() - drawT0;
   if (splashUntil) {                     // just switched on: who this is, before anything else
     drawSplash();
     if (g == &lcd) busUnlock();
@@ -2336,6 +2589,7 @@ static void draw(uint32_t now) {
   else if (overlay()) drawConsoleDialog();
   else if ((int32_t)(msgUntil - now) > 0) drawMessage();
   if (g == &lcd) busUnlock();
+  drawOnlyUs = micros() - drawT0;
   flush();
   statFrames = statFrames + 1;
 }
@@ -2364,27 +2618,54 @@ static void rawWrite(const char *data, size_t len) {
 // so the receiver knows which rows arrived intact.
 static void screenshot() {
   if (g != &canvas) { Serial.println("[SHOT] kein Zeichenpuffer"); return; }
-  static uint16_t px[320];
-  static char out[320 * 8 + 32];
+#ifdef LCD_RGB_PANEL
+  // the picture on show is in the other buffer; the canvas looks at it for the read-out
+  if (swapMode) canvas.setBuffer(swapBuf[swapLast], LCD_W, LCD_H, LCD_CANVAS_BITS);
+#endif
+#ifdef LCD_RGB_PANEL
+  // 8 kB for the widest row: from PSRAM on this board, the internal RAM is needed for TLS
+  static uint16_t *px = (uint16_t *)heap_caps_malloc(LCD_MAX_SIDE * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+  static const size_t OUT_SIZE = LCD_MAX_SIDE * 8 + 32;
+  static char *out = (char *)heap_caps_malloc(OUT_SIZE, MALLOC_CAP_SPIRAM);
+  if (!px || !out) { Serial.println("[SHOT] kein Speicher"); return; }
+#else
+  static uint16_t px[LCD_MAX_SIDE];
+  static char out[LCD_MAX_SIDE * 8 + 32];
+  static const size_t OUT_SIZE = sizeof(out);
+#endif
   Serial.printf("[SHOT] %d %d\n", W, H);
   Serial.flush();
   vTaskDelay(pdMS_TO_TICKS(20));
   for (int y = max(0, (int)reqShotFrom); y < H && y <= reqShotTo; y++) {
     canvas.readRect(0, y, W, 1, px);
-    size_t o = snprintf(out, sizeof(out), "%03d:", y);
+    size_t o = snprintf(out, OUT_SIZE, "%03d:", y);
     uint32_t sum = 0;
     for (int x = 0; x < W;) {
       int n = 1;
       while (x + n < W && px[x + n] == px[x]) n++;
-      o += snprintf(out + o, sizeof(out) - o, "%04X*%X,", px[x], n);
+      o += snprintf(out + o, OUT_SIZE - o, "%04X*%X,", px[x], n);
       sum = sum * 31 + px[x] * 7 + n;
       x += n;
     }
-    o += snprintf(out + o, sizeof(out) - o, "#%04X\n", (unsigned)(sum & 0xFFFF));
+    o += snprintf(out + o, OUT_SIZE - o, "#%04X\n", (unsigned)(sum & 0xFFFF));
     rawWrite(out, o);
   }
   rawWrite("[SHOT] end\n", 11);
+#ifdef LCD_RGB_PANEL
+  if (swapMode) canvas.setBuffer(swapBuf[swapDraw], LCD_W, LCD_H, LCD_CANVAS_BITS);
+#endif
 }
+
+static int benchLeft = 0, benchTotal = 0;
+static uint32_t benchStart = 0, benchDrawUs = 0, benchFillUs = 0;
+
+// Shortest time between two pictures. The SPI panel takes 40 ms for a full one
+// anyway; the RGB panel shows a new one every 17 ms.
+#ifdef LCD_RGB_PANEL
+static const uint32_t DRAW_MIN_MS = 16;
+#else
+static const uint32_t DRAW_MIN_MS = 40;
+#endif
 
 static void uiTask(void *) {
   uint32_t lastDraw = 0, lastTick = 0xFFFFFFFF, seenTerm = 0, seenMsg = 0, lastStallWarn = 0;
@@ -2477,6 +2758,9 @@ static void uiTask(void *) {
       const int32_t DIM_MS = 15000;
       uint16_t lit = 24 + (uint16_t)S.brightness * 231 / 255;
       if (S.saver && !msgShown && (int32_t)(now - lastActivity) > DIM_MS) lit = max(10, lit / 4);
+#ifdef LCD_RGB_PANEL
+      if (blPlain) lit = litAt;
+#endif
       if (lit != litAt) { litAt = lit; lcd.setBrightness(lit); }
     }
 
@@ -2493,11 +2777,29 @@ static void uiTask(void *) {
       uint32_t tick = marquee ? now / 100 : screen == S_INFO || screen == S_SYSTEM ? now / 1000 : screen == S_TERM ? now / 500 : 0;
       if (tick != lastTick) { lastTick = tick; changed = true; }
       if (changed) dirty = true;
-      if (dirty && now - lastDraw >= 40) {
+      if (reqBench > 0 && !benchLeft) {    // debug console "bench N": N pictures of this page, one after the other
+        benchLeft = benchTotal = reqBench;
+        reqBench = 0;
+        benchStart = micros();
+        benchDrawUs = 0;
+        benchFillUs = 0;
+      }
+      if (benchLeft) dirty = true;
+      if (dirty && (benchLeft || now - lastDraw >= DRAW_MIN_MS)) {
         dirty = false;
         lastDraw = now;
         uint32_t t0 = millis();
+        drawOnlyUs = 0;
         draw(now);
+        if (benchLeft) {
+          benchDrawUs += drawOnlyUs;
+          benchFillUs += fillOnlyUs;
+          if (!--benchLeft) {
+            uint32_t us = micros() - benchStart;
+            Serial.printf("[BENCH] Seite %u: %u Bilder in %lu ms = %.1f Bilder/s, Zeichnen allein %.1f ms je Bild, davon Loeschen %.1f ms\n", screen, (unsigned)benchTotal,
+                          (unsigned long)(us / 1000), benchTotal * 1e6 / us, benchDrawUs / 1000.0 / benchTotal, benchFillUs / 1000.0 / benchTotal);
+          }
+        }
         uint32_t took = millis() - t0;
         if (took > statDrawMsMax) statDrawMsMax = took;
         if (took > recentDrawMs) recentDrawMs = took;
@@ -2505,7 +2807,7 @@ static void uiTask(void *) {
     }
     if (reqShot) { reqShot = false; screenshot(); }
     // a dark screen only waits for a touch or a movement: on battery it looks less often
-    vTaskDelay(pdMS_TO_TICKS(on ? (scrollAnim != A_NONE || touchDown ? 8 : 20) : S.saver ? 120 : 50));
+    vTaskDelay(pdMS_TO_TICKS(benchLeft ? 1 : on ? (scrollAnim != A_NONE || touchDown ? 8 : 20) : S.saver ? 120 : 50));
   }
 }
 
@@ -2526,13 +2828,23 @@ bool begin() {
   // before the first display traffic; main.cpp's later Sd::begin() is then a no-op.
   pinMode(PIN_SD_CS, OUTPUT);
   digitalWrite(PIN_SD_CS, HIGH);
+#ifdef LCD_RGB_PANEL
+  // The touch bus runs over the chip's USB pins (IO19/IO20): take them away
+  // from the USB serial/JTAG unit, which holds them after every reset.
+  CLEAR_PERI_REG_MASK(USB_SERIAL_JTAG_CONF0_REG, USB_SERIAL_JTAG_USB_PAD_ENABLE);
+#else
   pinMode(PIN_LCD_CS, OUTPUT);
   digitalWrite(PIN_LCD_CS, HIGH);
+#endif
   Sd::begin();
   if (!lcd.init()) return false;
   imuFound = imuBegin();
+#if HAS_IMU
   Serial.printf("[LCD]  Lagesensor QMI8658: %s\n", imuFound ? "ok" : "nicht gefunden");
-  setRotation(settings.displayFlip ? IMU_ROT_DEFAULT ^ 2 : IMU_ROT_DEFAULT);
+#else
+  Serial.printf("[LCD]  Panel %dx%d, Pixeltakt %.1f MHz\n", (int)lcd.width(), (int)lcd.height(), rgbHz() / 1e6);
+#endif
+  setRotation(settings.displayFlip ? LCD_ROT_DEFAULT ^ 2 : LCD_ROT_DEFAULT);
   Serial.printf("[LCD]  Zeichenpuffer: %s\n", canvasBits == 0 ? "keiner (direkt)" : canvasBits == 16 ? "16 Bit" : "8 Bit");
   buildSnapshot();
   S = shared;

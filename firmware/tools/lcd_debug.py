@@ -191,7 +191,7 @@ def main(argv):
             time.sleep(2.5)
             s = open_port()
             sys.stdout.write(read_until(s, lambda b: False, 4).decode("utf8", "replace"))
-        elif c in ("screen", "rot"):
+        elif c in ("screen", "rot", "pclk", "bl", "radio", "bench"):      # pclk N: pixel clock in MHz on RGB panels, restarts the board
             s.write(f"{c} {argv[i + 1]}\n".encode()); i += 1
             time.sleep(0.5)
         elif c == "bat":

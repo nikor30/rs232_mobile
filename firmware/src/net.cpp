@@ -481,7 +481,8 @@ String deviceSettings() {
   a = d["pinsTx"].to<JsonArray>();
   for (int8_t v : TXP) a.add(v);
   a = d["pinsAdc"].to<JsonArray>();
-  for (int8_t v : ADCP) a.add(v);
+  for (int8_t v : ADCP)
+    if (v >= 0) a.add(v);          // {-1}: a board with nothing to measure
   d["pinNames"] = PIN_NAMES;
   d["pinPrefix"] = PIN_PREFIX;
   d["hwPorts"] = HW_PORTS;

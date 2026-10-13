@@ -1,4 +1,5 @@
 #include "sdcard.h"
+#include "config.h"
 #include "lang.h"
 
 #include <errno.h>
@@ -439,6 +440,9 @@ static bool stickOnStartStop(uint8_t power, bool start, bool eject) {
 }
 
 const char *stickStart() {
+#if !HAS_USB_STICK
+  return TR("not on this board", "nicht an diesem Board", "nao nesta placa");   // its USB pins carry the touch bus
+#endif
   if (lent) return nullptr;
   if (!ok) return TR("no SD card", "keine SD-Karte", "sem cartão SD");
   for (uint8_t p = 0; p < MAX_PORTS; p++) logStop(p);
@@ -475,6 +479,9 @@ const char *stickStart() {
 // restart, only a power cut clears it. Without this the port stays dead after
 // stick mode - no debug console, no flashing over the cable.
 void usbRestore() {
+#if !HAS_USB_STICK
+  return;                                  // the USB pins are not a USB port here (lcd_ui.cpp)
+#endif
   USB_SERIAL_JTAG.conf0.phy_sel = 0;       // the internal transceiver ...
   USB_SERIAL_JTAG.conf0.usb_pad_enable = 1;
   RTCCNTL.usb_conf.sw_hw_usb_phy_sel = 0;  // ... wired to the serial/JTAG unit, as after power-on
