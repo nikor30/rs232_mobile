@@ -9,6 +9,9 @@ window.I18N = (() => {
   'use strict';
   const DICT = {
     de: {
+      "No password is set here. You get a setup code next; with it the person chooses the password and connects an authenticator app.": "Hier wird kein Passwort gesetzt. Als Nächstes kommt ein Einrichtungscode; damit wählt die Person das Passwort selbst und verbindet eine Authenticator-App.",
+      "Is this your own account? “Set it up now” signs you out and opens that form with name and code filled in.": "Ist das dein eigenes Konto? „Jetzt einrichten“ meldet dich ab und öffnet das Formular mit Name und Code ausgefüllt.",
+      "Set it up now": "Jetzt einrichten",
       "{n} packages for other hardware are not shown. This device is “{hw}”.": "{n} Pakete für andere Hardware werden nicht gezeigt. Dieses Gerät ist „{hw}“.",
       "fits this device": "passt zu diesem Gerät",
       "installed": "installiert",
@@ -646,6 +649,9 @@ window.I18N = (() => {
       "not allowed at the device (Menu -> Network -> Control center)": "am Gerät nicht freigegeben (Menü -> Netz -> Leitstelle)",
     },
     pt: {
+      "No password is set here. You get a setup code next; with it the person chooses the password and connects an authenticator app.": "Aqui não se define senha. Em seguida você recebe um código de configuração; com ele a pessoa escolhe a senha e conecta um app autenticador.",
+      "Is this your own account? “Set it up now” signs you out and opens that form with name and code filled in.": "É a sua própria conta? “Configurar agora” encerra a sua sessão e abre o formulário com nome e código preenchidos.",
+      "Set it up now": "Configurar agora",
       "{n} packages for other hardware are not shown. This device is “{hw}”.": "{n} pacotes para outro hardware não são mostrados. Este dispositivo é “{hw}”.",
       "fits this device": "serve para este dispositivo",
       "installed": "instalado",

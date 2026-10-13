@@ -37,6 +37,70 @@ docker compose -f docker-compose.cloud.yml up -d --build
 
 **Stand:** auf dem Raspberry Pi mit `C2_CADDY_TLS=internal` getestet (`test/cloud.sh`, und mit dem Waveshare-Board im lokalen Netz), nicht mit einem echten Zertifikat und nicht im Internet. Sicherung, Überwachung und Wechsel des Serverschlüssels stehen weiter unten; der Lauf mit echtem Zertifikat fehlt noch — die Warnung oben gilt weiter.
 
+### Hinter einem vorhandenen Webserver
+
+Gehören die Ports 80 und 443 des Rechners schon einem anderen Webserver (nginx, Apache, Plesk), bleibt Caddy weg: Der vorhandene Server hält das Zertifikat und reicht den Namen weiter, die Leitstelle hört nur auf dem Rechner selbst.
+
+```bash
+# .env: C2_DOMAIN wie sonst, C2_CADDY_TLS=internal (ungenutzt, aber verlangt), C2_LOCAL_PORT falls 8080 belegt ist
+docker compose -f docker-compose.cloud.yml -f docker-compose.behind-proxy.yml up -d --build
+curl -s http://127.0.0.1:8080/healthz
+```
+
+Was der Webserver davor einhalten muss — sonst bekommen die Geräte keine Sitzung:
+
+- **nicht komprimieren und nicht umpacken**: Die Firmware versteht nur Antworten mit `Content-Length`;
+- die Adresse des Anfragenden als **letzten** Eintrag in `X-Forwarded-For` mitgeben (nginx und Apache tun das), sonst teilen sich alle Geräte und Anmeldungen eine Anfragerate;
+- große Uploads durchlassen (Images der Bibliothek, bis `C2_IMAGE_MAX_MB`) und nicht zwischenspeichern;
+- den Port 8080 nicht nach außen öffnen.
+
+nginx:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name leitstelle.example.org;
+    ssl_certificate     /etc/letsencrypt/live/leitstelle.example.org/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/leitstelle.example.org/privkey.pem;
+
+    gzip off;
+    client_max_body_size 2100m;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_request_buffering off;
+        proxy_buffering off;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+}
+```
+
+Apache (`a2enmod proxy proxy_http ssl headers`):
+
+```apache
+<VirtualHost *:443>
+    ServerName leitstelle.example.org
+    SSLEngine on
+    SSLCertificateFile    /etc/letsencrypt/live/leitstelle.example.org/fullchain.pem
+    SSLCertificateKeyFile /etc/letsencrypt/live/leitstelle.example.org/privkey.pem
+
+    ProxyPreserveHost On
+    ProxyPass        / http://127.0.0.1:8080/ timeout=300
+    ProxyPassReverse / http://127.0.0.1:8080/
+    SetEnv no-gzip 1
+    LimitRequestBody 0
+    Header always set Strict-Transport-Security "max-age=31536000"
+</VirtualHost>
+```
+
+**Stand:** Die Compose-Datei ist geprüft (`docker compose config`), der Betrieb hinter nginx oder Apache noch nicht.
+
 ### Sicherung und Wiederherstellung
 
 Zum Aufbau gehört der Dienst `backup` (`backup.sh`): Er schreibt alle 24 Stunden eine Sicherung der ganzen Datenbank (`pg_dump`, ein Schnappschuss, der Server läuft dabei weiter) ins Volume `backups` und behält die neuesten 14 (`C2_BACKUP_EVERY_H`, `C2_BACKUP_KEEP` in `.env`). Scheitert eine, versucht er es nach fünf Minuten wieder; gibt es zwei Abstände lang keine, meldet `docker compose ps` den Dienst als `unhealthy`.

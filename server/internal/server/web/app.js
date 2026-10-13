@@ -168,6 +168,7 @@
     document.body.classList.remove('admin', 'can-manage', 'one');
     document.title = APP;
     $('#entraLogin').hidden = !methods.entra;
+    if (methods.entra) $('#entraLogin').href = '/auth/entra/login';   // no address while it is off: browsers fetch links ahead
     $('#tokenBox').hidden = !methods.token;
     $('#loginLang').append($('#lang'));              // the language can be chosen before signing in, too
     $('#login').hidden = false;
@@ -1569,9 +1570,21 @@
     $('#userEntraRow').hidden = true;
     $('#userDlg').showModal();
   });
-  $('#userKind').addEventListener('change', () => { $('#userEntraRow').hidden = $('#userKind').value !== 'entra'; });
+  $('#userKind').addEventListener('change', () => { $('#userEntraRow').hidden = $('#userKind').value !== 'entra'; $('#userPassHint').hidden = $('#userKind').value === 'entra'; });
   $('#userCancel').addEventListener('click', () => $('#userDlg').close());
   $('#codeClose').addEventListener('click', () => { $('#codeText').textContent = ''; $('#codeDlg').close(); });
+  // The administrator's own account: straight to the form that sets the password.
+  $('#codeUse').addEventListener('click', async () => {
+    const name = $('#codeFor').textContent, code = $('#codeText').textContent;
+    $('#codeText').textContent = '';
+    $('#codeDlg').close();
+    if (!token) try { await auth('logout', {}); } catch (e) { /* signed out here in any case */ }
+    showLogin();
+    $('#setupBox').open = true;
+    $('#setupName').value = name;
+    $('#setupCode').value = code;
+    $('#setupPass').focus();
+  });
   $('#userForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     try {

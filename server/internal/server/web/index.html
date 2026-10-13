@@ -30,7 +30,7 @@
     <p id="loginErr" class="err" hidden></p>
     <div class="row left wrap">
       <button class="btn primary" type="submit">Sign in</button>
-      <a id="entraLogin" class="btn" href="/auth/entra/login" hidden>Sign in with Microsoft</a>
+      <a id="entraLogin" class="btn" hidden>Sign in with Microsoft</a>
     </div>
   </form>
 
@@ -602,6 +602,7 @@
     <label id="userEntraRow" hidden>Microsoft sign-in name (name@company.com) or object ID
       <input id="userEntra" autocomplete="off" autocapitalize="none">
     </label>
+    <p id="userPassHint" class="dim">No password is set here. You get a setup code next; with it the person chooses the password and connects an authenticator app.</p>
     <p id="userErr" class="err" hidden></p>
     <div class="row end wrap">
       <button id="userCancel" class="btn" type="button">Cancel</button>
@@ -615,7 +616,9 @@
   <p>Pass this code on by a safe route; it is valid for one day and is shown only now.</p>
   <p><code id="codeText" class="big"></code></p>
   <p class="dim">On the sign-in page, under “Set up an account”, the person uses it to choose a password and connect an authenticator app.</p>
-  <div class="row end">
+  <p class="dim">Is this your own account? “Set it up now” signs you out and opens that form with name and code filled in.</p>
+  <div class="row end wrap">
+    <button id="codeUse" class="btn">Set it up now</button>
     <button id="codeClose" class="btn primary">Close</button>
   </div>
 </dialog>

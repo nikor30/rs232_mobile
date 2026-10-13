@@ -1,0 +1,15 @@
+# For a machine whose ports 80 and 443 already belong to another web server
+# (nginx, Apache, Plesk): that one keeps the certificate and hands the name on
+# to this server, which listens on the machine itself only. Caddy stays out.
+#
+#   docker compose -f docker-compose.cloud.yml -f docker-compose.behind-proxy.yml up -d --build
+#
+# In .env: C2_DOMAIN as usual, C2_CADDY_TLS=internal (not used, but asked for),
+# C2_LOCAL_PORT if 8080 is taken. What the web server in front has to do:
+# README.md, "Hinter einem vorhandenen Webserver".
+services:
+  caddy:
+    profiles: ["caddy"]          # not started
+  c2server:
+    ports:
+      - "127.0.0.1:${C2_LOCAL_PORT:-8080}:8080"

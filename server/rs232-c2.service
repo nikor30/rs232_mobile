@@ -1,0 +1,30 @@
+[Unit]
+Description=RS232 Control Center (command-and-control server for the RS232 consoles)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=rs232c2
+Group=rs232c2
+EnvironmentFile=/etc/rs232-c2.env
+ExecStart=/opt/rs232-c2/c2server
+Restart=on-failure
+RestartSec=5
+MemoryMax=300M
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+ReadWritePaths=/var/lib/rs232-c2
+
+[Install]
+WantedBy=multi-user.target

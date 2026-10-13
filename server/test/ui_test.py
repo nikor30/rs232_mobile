@@ -714,12 +714,12 @@ with sync_playwright() as p:
         page.click("#userForm button[type=submit]")
         expect(page.locator("#codeDlg")).to_be_visible()
         setup2 = page.locator("#codeText").inner_text()
-        page.click("#codeClose")
-        expect(page.locator("#users tbody tr", has_text="bert").locator("select")).to_have_value("member")
-        page.click("#logout")
-        page.click("#setupBox summary")
-        page.fill("#setupName", "bert")
-        page.fill("#setupCode", setup2)
+        expect(page.locator("#userPassHint")).to_contain_text("No password is set here")
+        # "Set it up now": signed out, and the form is open with name and code in it
+        page.click("#codeUse")
+        expect(page.locator("#login")).to_be_visible()
+        expect(page.locator("#setupForm")).to_be_visible()
+        assert page.input_value("#setupName") == "bert" and page.input_value("#setupCode") == setup2
         page.fill("#setupPass", "noch ein langes Passwort")
         page.fill("#setupPass2", "noch ein langes Passwort")
         page.click("#setupForm button")
