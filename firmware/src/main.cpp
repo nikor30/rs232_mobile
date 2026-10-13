@@ -25,6 +25,8 @@
 #include "ble.h"
 #include "player.h"
 #include "c2.h"
+#include <mbedtls/platform.h>
+#include <esp_heap_caps.h>
 
 // Certificate parsing (PKCS#12, key check) runs in the loop task and needs more
 // than the 8 kB Arduino default.
@@ -130,7 +132,20 @@ static void onSerial(uint8_t port, const uint8_t *data, size_t len) {
 }
 
 // ------------------------------------------------------------------ setup / loop
+// The TLS library takes its memory from the internal heap, 33 kB for the two
+// record buffers of every connection alone - and that heap has about 60 kB
+// free, in pieces. So the control center's connection, the HTTPS page and the
+// WLAN's own EAP handshake fought over it, and EAP-TLS (which also holds the
+// client certificate and its key) never got started: the supplicant answered
+// every method the RADIUS server offered with "no". Everything large goes to
+// the external RAM instead; the small pieces the arithmetic works on stay
+// internal, where they are fast.
+static void *tlsCalloc(size_t n, size_t size) {
+  return heap_caps_calloc_prefer(n, size, 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+}
+
 void setup() {
+  mbedtls_platform_set_calloc_free(tlsCalloc, free);     // before anything opens a TLS connection
   setCpuFrequencyMhz(CPU_MHZ);
   Sd::usbRestore();
   Serial.begin(115200);

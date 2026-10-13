@@ -1,0 +1,16 @@
+# A RADIUS server to try 802.1X against (README.md). Not for anything real:
+# one user, one certificate, and a log that tells everything but the passwords.
+#
+#   ./setup.sh && docker compose up -d && ./test.sh
+services:
+  radius:
+    image: freeradius/freeradius-server:latest
+    command: ["-X"]                      # say everything: this is where "why was it refused" is answered
+    ports:
+      - "1812:1812/udp"
+      - "1813:1813/udp"
+    volumes:
+      - ./data/certs:/etc/raddb/certs:ro           # only our own authority - the image's test certificates are public
+      - ./data/clients.conf:/etc/raddb/clients.conf:ro
+      - ./data/authorize:/etc/raddb/mods-config/files/authorize:ro
+    restart: unless-stopped

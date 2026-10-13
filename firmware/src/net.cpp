@@ -24,6 +24,8 @@
 #include <esp_wifi.h>
 #include <esp_wpa2.h>
 #include <esp_netif.h>
+#include <mbedtls/x509_crt.h>
+#include <mbedtls/pk.h>
 #include <lwip/sockets.h>   // non-blocking send() for the raw TCP path
 
 namespace Net {
@@ -1237,6 +1239,34 @@ static void applyStaDns() {
   dns.ip.u_addr.ip4.addr = (uint32_t)ip;
   bool ok = nif && esp_netif_set_dns_info(nif, ESP_NETIF_DNS_MAIN, &dns) == ESP_OK;
   Serial.printf("[WLAN] DNS-Server %s%s\n", settings.staDns.c_str(), ok ? " (von Hand gesetzt)" : " - setzen gescheitert");
+}
+
+// What the supplicant does with the client certificate and its key before
+// EAP-TLS, done here where the result can be read: it says nothing itself, it
+// just refuses every method the RADIUS server offers.
+String eapDiag() {
+  String crt, key, ca, unused;
+  Certs::copy(Certs::CLIENT, crt, key);
+  Certs::copy(Certs::CA, ca, unused);
+  char buf[420];
+  mbedtls_x509_crt c;
+  mbedtls_pk_context k;
+  mbedtls_x509_crt_init(&c);
+  mbedtls_pk_init(&k);
+  int rc = crt.length() ? mbedtls_x509_crt_parse(&c, (const uint8_t *)crt.c_str(), crt.length() + 1) : 1;
+  int rk = key.length() ? mbedtls_pk_parse_key(&k, (const uint8_t *)key.c_str(), key.length() + 1, nullptr, 0) : 1;
+  int pair = (rc == 0 && rk == 0) ? mbedtls_pk_check_pair(&c.pk, &k) : 1;
+  int certs = 0;
+  for (mbedtls_x509_crt *p = &c; rc >= 0 && p && p->raw.p; p = p->next) certs++;
+  String first = key.substring(0, key.indexOf('\n'));
+  snprintf(buf, sizeof(buf), "Zertifikat %u B, parse %s0x%x, %d im Puffer | Schluessel %u B \"%s\", parse %s0x%x, %s %u Bit | Paar %s0x%x | CA %u B | Heap frei %u B, groesster Block %u B (intern %u B)",
+           (unsigned)crt.length(), rc < 0 ? "-" : "", (unsigned)abs(rc), certs, (unsigned)key.length(), first.c_str(), rk < 0 ? "-" : "", (unsigned)abs(rk),
+           rk == 0 ? mbedtls_pk_get_name(&k) : "?", rk == 0 ? (unsigned)mbedtls_pk_get_bitlen(&k) : 0, pair < 0 ? "-" : "", (unsigned)abs(pair),
+           (unsigned)ca.length(), (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap(),
+           (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+  mbedtls_x509_crt_free(&c);
+  mbedtls_pk_free(&k);
+  return buf;
 }
 
 // WLAN client: WPA2/WPA3-PSK or 802.1X (EAP-TLS with certificate, PEAP or TTLS).

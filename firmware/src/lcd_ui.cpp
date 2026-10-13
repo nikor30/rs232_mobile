@@ -39,6 +39,7 @@
 #include "player.h"
 #include "c2.h"
 #include <WiFi.h>
+#include <esp_wifi.h>
 #include <ArduinoJson.h>
 #include "esp_freertos_hooks.h"
 #include "esp_sleep.h"
@@ -375,17 +376,46 @@ struct NetEntry { char ssid[33]; int8_t rssi; bool locked; };
 static NetEntry nets[MAX_NETS];
 static uint8_t netCount = 0, scanState = 0;
 
+// A station that keeps trying to join (wrong password, 802.1X refused, network
+// gone) leaves the radio no room for a scan: every attempt fails and the list
+// stays empty - just when somebody wants to pick another network. So the
+// attempts are stopped for the scan and taken up again when it is done.
+static bool scanPaused = false;          // we stopped the station's attempts
+static uint32_t scanTryUntil = 0;        // the scan has not started yet: try until then
+
 static void startScan() {
   if (scanState == 1) return;
   if (Ble::state() != Ble::OFF) WiFi.setSleep(true);       // station + Bluetooth without modem sleep aborts
   if (WiFi.getMode() == WIFI_AP) WiFi.mode(WIFI_AP_STA);   // scanning needs the station interface
+  if (settings.staSsid.length() && WiFi.status() != WL_CONNECTED) {
+    WiFi.setAutoReconnect(false);
+    esp_wifi_disconnect();
+    scanPaused = true;
+  }
   WiFi.scanDelete();
-  if (WiFi.scanNetworks(true) == WIFI_SCAN_FAILED) { scanState = 2; netCount = 0; return; }
+  netCount = 0;
   scanState = 1;
+  scanTryUntil = millis() + 4000;
+  if (WiFi.scanNetworks(true) != WIFI_SCAN_FAILED) scanTryUntil = 0;
+}
+
+static void scanResume() {
+  if (!scanPaused) return;
+  scanPaused = false;
+  WiFi.setAutoReconnect(true);
+  esp_wifi_connect();
 }
 
 static void pollScan() {
   if (scanState != 1) return;
+  if (scanTryUntil) {                    // the radio was still busy with the last attempt to join
+    static uint32_t triedAt = 0;
+    if (millis() - triedAt < 250) return;
+    triedAt = millis();
+    if (WiFi.scanNetworks(true) != WIFI_SCAN_FAILED) scanTryUntil = 0;
+    else if ((int32_t)(millis() - scanTryUntil) > 0) { scanTryUntil = 0; scanState = 2; scanResume(); }
+    return;
+  }
   int n = WiFi.scanComplete();
   if (n == WIFI_SCAN_RUNNING) return;
   netCount = 0;
@@ -402,6 +432,7 @@ static void pollScan() {
   }
   WiFi.scanDelete();
   scanState = 2;
+  scanResume();
 }
 
 struct Snapshot;
@@ -751,6 +782,7 @@ static void console() {
       Serial.printf("[DIAG] Konfiguration \"Demo\": %s\n", err ? err : "gespeichert");
     }
     else if (!strcmp(line, "bat")) Serial.printf("[DIAG] Akku: %s\n", Power::diag().c_str());
+    else if (!strcmp(line, "eap")) Serial.printf("[DIAG] EAP: %s\n", Net::eapDiag().c_str());
     else if (!strcmp(line, "c2")) {
       C2::Info c = C2::info();
       Serial.printf("[DIAG] Leitstelle: %s%s%s | Server %s | ID %s | %lu Abfragen, letzte vor %ld s | Handshake %lu ms (davon Rechnen %lu ms) | Stack frei %lu B (ML-KEM) / %lu B (Netz), Heap %u kB (min %u kB, groesster Block %u kB)%s%s\n",

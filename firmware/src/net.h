@@ -18,6 +18,7 @@ namespace Net {
   bool staConnected();
   String apIp();
   String staIp();
+  String eapDiag();                          // debug console: would the WLAN supplicant accept certificate and key?
 
   // What the web UI shows, as JSON - also handed to the command-and-control server.
   String deviceStatus();        // ports, counters, network, battery
