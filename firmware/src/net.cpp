@@ -198,6 +198,7 @@ static bool otaOk = false;
 static uint8_t activeChannel = 6;
 static String otaErr;
 static uint8_t staReason = 0;                      // last WiFi disconnect reason
+static volatile uint32_t staDownAt = 0;            // millis() of the last disconnect, 0 = connected
 static bool staIpChanged = true;                   // HTTPS certificate covers the current address?
 static uint8_t *tlsBuf = nullptr;                  // certificate upload
 static size_t tlsLen = 0;
@@ -1379,10 +1380,12 @@ void begin() {
       Serial.printf("[WLAN] LAN-IP %s\n", WiFi.localIP().toString().c_str());
       applyStaDns();
       staReason = 0;
+      staDownAt = 0;
       staIpChanged = true;
       dirty = true;
     } else if (e == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
       staReason = info.wifi_sta_disconnected.reason;
+      staDownAt = millis() | 1;
       Serial.printf("[WLAN] getrennt: %s\n", reasonText(staReason).c_str());
       dirty = true;
     }
@@ -1411,8 +1414,23 @@ void begin() {
   }
 }
 
+// The core reconnects only after some reasons. "Network not found" is not one
+// of them: when the access point switched the SSID off for a moment, the
+// client stopped trying and stayed away until a restart (seen on the VIEWE
+// board on 14 October 2026). So: if the driver has said nothing for 15 s and
+// the client is still not connected, try again - forever, every 15 s.
+static void staWatch() {
+  uint32_t down = staDownAt;
+  if (!down || !settings.staSsid.length() || WiFi.status() == WL_CONNECTED) return;
+  if (millis() - down < 15000 || WiFi.scanComplete() == WIFI_SCAN_RUNNING) return;
+  Serial.println("[WLAN] noch nicht verbunden - neuer Versuch");
+  staDownAt = millis() | 1;
+  esp_wifi_connect();
+}
+
 void loop() {
   Certs::loop();
+  staWatch();
   // HTTPS with a certificate of the device itself: keep it valid for the current addresses
   if (settings.httpsEnabled && staIpChanged && !Certs::busy()) {
     staIpChanged = false;

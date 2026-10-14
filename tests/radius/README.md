@@ -12,6 +12,21 @@ cat data/README.txt        # was wo einzutragen ist, mit Secret und Passwörtern
 
 `data/` steht nicht im Repository. `./setup.sh --force` fängt neu an (neue Zertifizierungsstelle — das Gerät braucht dann die neuen Dateien). Liegt das Netz der Access Points nicht in `192.168.10.0/24`: `RADIUS_LAN=10.0.0.0/8 ./setup.sh --force`.
 
+## Wo er läuft (seit 14. Oktober 2026)
+
+Nicht mehr auf dem Laptop, sondern auf dem Container `dot1x` im Proxmox des Besitzers, **`192.168.10.6`** (Ubuntu 24.04), und zwar **ohne Docker**: FreeRADIUS 3.2 aus dem Ubuntu-Paket als systemd-Dienst `freeradius`, startet mit dem Container. Dort liegt dieser Ordner samt `data/` unter `/root/rs232-radius/` — Zertifizierungsstelle, Shared Secret, Benutzer und Geräte-Zertifikate gibt es nur noch dort (die Kopie auf dem Laptop ist gelöscht). Weitere Geräte-Zertifikate: `ssh root@192.168.10.6 /root/rs232-radius/add-device.sh NAME`, die Dateien mit `scp` holen.
+
+Was am Paket geändert ist (die Originale liegen daneben als `*.orig`):
+
+- `mods-available/eap`: Server-Zertifikat und Schlüssel `certs/rs232/server.pem`, Zertifizierungsstelle `certs/rs232/ca.pem`, `ca_path` aus — **wichtig**: Ubuntu stellt ab Werk `ca_file` auf alle öffentlichen Zertifizierungsstellen des Systems; dann gälte bei EAP-TLS jedes Zertifikat einer öffentlichen CA.
+- `clients.conf`: aus `data/clients.conf` (Netz der Access Points und localhost).
+- `mods-config/files/authorize`: der Benutzer `rs232` vorn.
+- `radiusd.conf`: `auth = yes` — jede Anmeldung steht in `/var/log/freeradius/radius.log` („Login OK“/„Login incorrect“ mit der MAC des Geräts).
+
+Prüfen: `ssh root@192.168.10.6 /root/rs232-radius/test-native.sh` (fünf Fälle mit `eapol_test`). Der Container hat 2 GB und braucht davon rund 90 MB.
+
+Der Docker-Weg weiter oben (`setup.sh`, `docker compose`) bleibt für einen anderen Rechner; auf dem Laptop ist er abgeschaltet.
+
 ## Access Point
 
 Eine neue SSID mit **WPA2-Enterprise (802.1X, AES)** anlegen und als RADIUS-Server diesen Rechner eintragen: Adresse, Port **1812** (Accounting 1813), das Shared Secret aus `data/README.txt`.

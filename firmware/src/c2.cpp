@@ -42,8 +42,7 @@ namespace C2 {
 // So the task itself stays small, and everything that touches ML-KEM runs in a
 // short-lived task with a big stack (big()) while no connection is open.
 static const uint32_t TASK_STACK = 12 * 1024;
-static const uint32_t KEM_STACK = 28 * 1024;
-static uint32_t kemStackFree = KEM_STACK;
+static uint32_t kemStackFree = 22 * 1024;
 static const char *NVS = "c2";
 static const uint32_t RETRY_MIN_MS = 15000, RETRY_MAX_MS = 300000;
 static const uint32_t REFUSED_RETRY_MS = 600000;
@@ -116,33 +115,25 @@ struct BigJob {
 };
 static uint32_t bigUsed = 0;             // stack the last computation in big() took
 
-// Runs fn on a stack large enough for ML-KEM and waits for it. False = no
-// memory for that stack right now.
+// Runs fn on a stack large enough for ML-KEM and waits for it.
 //
-// The stack is ours, not FreeRTOS's: a task that deletes itself is only cleaned
-// up when the idle task next runs, and the TLS connection that follows needs
-// those 28 kB back at once. So the helper parks itself when it is done and the
-// caller removes it and frees the stack.
+// The helper task parks itself when it is done and the caller removes it: a
+// task that deletes itself is only cleaned up when the idle task next runs, and
+// the next call needs the stack block again.
 static void connClose();
 
-// The handshake itself has been measured at under 20 kB of stack; it asks for
-// 24 kB (KEM_SMALL), because a block of 28 kB is not always to be had in one
-// piece once the device has run for a while - then it would never get a
-// session. Self-test (at the start) and the signature check keep the full size.
-static const uint32_t KEM_SMALL = 24 * 1024, KEM_TIGHT = 22 * 1024;
-static bool big(const std::function<void()> &fn, uint32_t size = KEM_STACK, uint32_t floorSize = KEM_TIGHT) {
+// Key exchange, self-test and signature check need a lot of stack (measured:
+// 19.3, 19.6 and 13.1 kB), more than any task here has. They run in a short
+// task of their own on this one block, reserved at start-up. Taking it from the
+// heap each time failed sooner or later: inside an 802.1X network the largest
+// free piece shrank to 21 kB on the VIEWE board, and the device never got a
+// session again. Reserved, it costs the same at the peak and cannot be missing.
+static const uint32_t BIG_STACK = 22 * 1024;
+static StackType_t bigStack[BIG_STACK / sizeof(StackType_t)] __attribute__((aligned(16)));
+static StaticTask_t bigTcb;
+
+static bool big(const std::function<void()> &fn) {
   connClose();                           // never together with a TLS connection
-  StaticTask_t *tcb = (StaticTask_t *)heap_caps_malloc(sizeof(StaticTask_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-  StackType_t *stack = (StackType_t *)heap_caps_malloc(size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-  // No block of that size in one piece - seen on both boards inside an 802.1X
-  // network, where the largest was 22 to 28 kB: the device then never got a
-  // session again, and refused every update. The computations themselves need
-  // less (measured: key exchange 19.3 kB, self-test 19.6 kB), so a smaller
-  // stack does, down to a floor that still leaves 2 kB.
-  while (!stack && size > floorSize) {
-    size -= 2048;
-    stack = (StackType_t *)heap_caps_malloc(size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-  }
   BigJob job = {&fn, xTaskGetCurrentTaskHandle(), 0};
   auto entry = [](void *p) {
     BigJob *j = (BigJob *)p;
@@ -152,15 +143,13 @@ static bool big(const std::function<void()> &fn, uint32_t size = KEM_STACK, uint
     xTaskNotifyGive(j->caller);
     for (;;) vTaskSuspend(nullptr);
   };
-  TaskHandle_t h = stack && tcb ? xTaskCreateStaticPinnedToCore(entry, "c2kem", size, &job, 1, stack, tcb, 0) : nullptr;
+  TaskHandle_t h = xTaskCreateStaticPinnedToCore(entry, "c2kem", BIG_STACK, &job, 1, bigStack, &bigTcb, 0);
   if (h) {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     while (eTaskGetState(h) != eSuspended) vTaskDelay(1);
     vTaskDelete(h);
+    bigUsed = BIG_STACK - job.free;      // what this computation took: in the log after self-test and signature check
   }
-  free(stack);
-  free(tcb);
-  if (h) bigUsed = size - job.free;      // what this computation took: lcd_debug.py c2, and the log after a signature check
   return h != nullptr;
 }
 
@@ -209,7 +198,7 @@ static void publishId() {
   uint8_t pub[C2Proto::PUB_SIZE], fp[32];
   char id[33] = "";
   bool ok = false;
-  if (haveKey) big([&] { ok = C2Proto::publicKey(priv, pub); }, KEM_SMALL);
+  if (haveKey) big([&] { ok = C2Proto::publicKey(priv, pub); });
   if (ok) {
     C2Proto::fingerprint(pub, fp);
     for (size_t i = 0; i < C2Proto::ID_SIZE; i++) snprintf(id + 2 * i, 3, "%02x", fp[i]);
@@ -451,7 +440,7 @@ static Ex handshake(C2Proto::Kind kind, const C2Proto::Token *tok) {
   uint32_t t0 = millis(), crypto = 0;
   C2Proto::Result r = C2Proto::ERR_CRYPTO;
   if (req && resp)
-    big([&] { r = hs.begin(kind, priv, serverPub, tok ? tok->id : nullptr, tok ? tok->secret : nullptr, req, n); }, KEM_SMALL);
+    big([&] { r = hs.begin(kind, priv, serverPub, tok ? tok->id : nullptr, tok ? tok->secret : nullptr, req, n); });
   if (r != C2Proto::OK)
     Serial.printf("[C2]   Handshake nicht begonnen: Heap %u B, groesster Block %u B\n", (unsigned)ESP.getFreeHeap(),
                   (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
@@ -463,7 +452,7 @@ static Ex handshake(C2Proto::Kind kind, const C2Proto::Token *tok) {
     if (ex == EX_OK) {
       uint32_t t1 = millis();
       r = C2Proto::ERR_CRYPTO;
-      big([&] { r = hs.finish(resp, got, session); }, KEM_SMALL);
+      big([&] { r = hs.finish(resp, got, session); });
       crypto += millis() - t1;
       if (r == C2Proto::OK) haveSession = true;
       else {
@@ -947,8 +936,7 @@ static void doUpdate(uint32_t id) {
   JsonDocument reply;
   if (!updAsk(id, -1, reply)) return refuse("the package could not be fetched");
   // Everything kept across the signature check lives in the external RAM: the
-  // check needs 28 kB of internal heap in one piece (big()), and blocks left
-  // behind from the time the TLS connection stood would cut it up.
+  // internal heap is the scarce one.
   const char *m64 = reply["m"] | "", *sig64 = reply["sig"] | "";
   size_t manifestLen = strlen(m64), sigLen = 0;
   uint8_t *work = ext(C2Update::MAX_MANIFEST + C2Update::SIG_SIZE + 4096);
@@ -1107,8 +1095,7 @@ static void doSdPut(uint32_t id) {
       // The link is down, or the server is, or it has forgotten the session:
       // wait and ask again, for half an hour. Nothing is lost - the file is
       // closed and continued at the place the card says it has. Closing it
-      // also matters for the handshake: an open file and the connection cut
-      // up the heap, and the key exchange needs 28 kB in one piece.
+      // also matters for the heap: an open file and the connection cut it up.
       Sd::putPause();
       reply.clear();
       connClose();
