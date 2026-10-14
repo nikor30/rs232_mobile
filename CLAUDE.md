@@ -4,7 +4,7 @@ Projektgedächtnis für Claude-Sitzungen. Die ausführliche Fassung ist `HANDOVE
 
 ## Was das ist
 
-Mobiler serieller Konsolenserver auf dem Waveshare ESP32-S3-Touch-LCD-2 (2″-Touch-LCD): WLAN-Hotspot, `http://192.168.4.1`, xterm.js-Terminal auf Switch/Router/Firewall. Bis zu vier Ports, Raw-TCP/Telnet, XMODEM/YMODEM, 802.1X, HTTPS. Firmware-Stand **v1.8.0** (7. Oktober 2026).
+Mobiler serieller Konsolenserver auf dem Waveshare ESP32-S3-Touch-LCD-2 (2″-Touch-LCD): WLAN-Hotspot, `http://192.168.4.1`, xterm.js-Terminal auf Switch/Router/Firewall. Bis zu vier Ports, Raw-TCP/Telnet, XMODEM/YMODEM, 802.1X, HTTPS. Firmware-Stand **v1.8.1** (14. Oktober 2026; 1.8.0 vom 7. Oktober).
 
 ## Sprachen (seit 12. Oktober 2026)
 

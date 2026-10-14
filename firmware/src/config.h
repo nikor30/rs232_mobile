@@ -7,7 +7,7 @@
 // ============================================================================
 
 #define FW_NAME     "RS232 Web Console"
-#define FW_VERSION  "1.8.0"
+#define FW_VERSION  "1.8.1"
 #if defined(BOARD_VIEWE_5INCH)
 #define FW_BOARD_ID "viewe-s3-5inch"      // what a signed firmware package has to name (tools/fw_sign.py)
 
