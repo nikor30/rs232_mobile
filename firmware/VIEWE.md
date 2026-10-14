@@ -98,7 +98,11 @@ Vom Besitzer am Panel gesehen: mit 8 Bit und 20 MHz steht das Bild ruhig. Die 24
 - Das Bild unter Last: Leitstelle (TLS), Firmware-Update, Dateiübertragung, viele Browser.
 - Serieller Port an IO17/IO18, SD-Karte (keine eingelegt), Weboberfläche im Browser, Leitstelle, Firmware-Update mit der neuen Kennung.
 
+**Nachtrag 13. Oktober 2026, abends:** Das Board hängt mit EAP-TLS am Testnetz `rs232-dot1x` (Zertifikat `rs232-viewe`). Über die Leitstelle im Internet geprüft: Firmware-Update (95 s, Paket `viewe-s3-5inch`; ein Waveshare-Paket lehnt der Server ab) und Fernkonsole (angefragt, am Display erlaubt, Zeichen bis zum Port, am Display beendet). Internes RAM in diesem Netz: 33–38 kB frei, größter Block 22–27 kB, Tiefststand 7 kB — der Schlüsseltausch kommt deshalb mit einem kleineren Stack aus (`big()` in `c2.cpp`).
+
 ## Offen
+
+- Beim Dialog der Fernkonsole bleibt die Statusseite dahinter leer (kein „Bereit“/„In Benutzung“ über dem Dialog) — am 2″-Panel steht der Text dort.
 
 
 - Schrift und Tasten haben dieselbe Größe in Pixeln wie am 2″-Panel; die Pixeldichte ist fast gleich (7,4 statt 7,8 Pixel je Millimeter), die Seiten wirken auf 5″ deshalb leer. Eine eigene Aufteilung für das große Panel (zwei Spalten, größere Schrift) steht aus.

@@ -10,6 +10,7 @@ that is to accept updates is built and flashed.
     fw_sign.py keygen              make the key (once) and write src/update_key.h
     fw_sign.py pubkey              write src/update_key.h again from the key
     fw_sign.py sign [de|en|pt]     sign the build of that language -> dist/*.rsfw
+    fw_sign.py sign --board viewe de      the same for the other board (default: waveshare)
     fw_sign.py sign --image F --lang de
     fw_sign.py show FILE.rsfw      what a package says, and whether its signature holds
 
@@ -38,6 +39,7 @@ CONTEXT = "rs232-console firmware"       # the same string is in src/c2_update.c
 ALGORITHM = "ML-DSA-65"
 PUB_SIZE, SIG_SIZE = 1952, 3309
 ENVS = {"en": "waveshare-s3-lcd2", "de": "waveshare-s3-lcd2-de", "pt": "waveshare-s3-lcd2-pt"}
+BOARDS = {"waveshare": "waveshare-s3-lcd2", "viewe": "viewe-s3-5inch"}     # PlatformIO environment without the language
 MAGIC = b"RSFW1\n"
 
 
@@ -127,13 +129,17 @@ def verify(manifest, sig):
 
 def sign(args):
     need_key()
-    image_path, lang = None, None
+    image_path, lang, board = None, None, "waveshare"
     while args:
         a = args.pop(0)
         if a == "--image":
             image_path = args.pop(0)
         elif a == "--lang":
             lang = args.pop(0)
+        elif a == "--board":
+            board = args.pop(0)
+            if board not in BOARDS:
+                die("board: " + " or ".join(BOARDS))
         elif a in ENVS and lang is None:
             lang = a
         else:
@@ -141,10 +147,11 @@ def sign(args):
     lang = lang or "en"
     if lang not in ENVS:
         die("language: en, de or pt")
+    env = BOARDS[board] + ("" if lang == "en" else "-" + lang)
     if image_path is None:
-        image_path = os.path.join(ROOT, ".pio", "build", ENVS[lang], "firmware.bin")
+        image_path = os.path.join(ROOT, ".pio", "build", env, "firmware.bin")
     if not os.path.exists(image_path):
-        die("no image at %s - build it first: pio run -e %s" % (image_path, ENVS[lang]))
+        die("no image at %s - build it first: pio run -e %s" % (image_path, env))
     image = open(image_path, "rb").read()
     pub = public_key()
     if pub[:64] not in image:
@@ -153,8 +160,14 @@ def sign(args):
     marker = ("UI_LANG=%s;" % lang).encode()
     if b"UI_LANG=" in image and marker not in image:
         die("this image is not the %s build" % lang)
+    # Which hardware the image is for is read from the image itself: config.h
+    # names more than one board, and a package must never claim another one.
+    m = re.search(rb"FW_BOARD=([a-z0-9-]+);", image)
+    if not m:
+        die("this image does not say which board it is for (built before the FW_BOARD marker) - build it again")
+    board_id = m.group(1).decode()
     seq = int(time.time())
-    manifest = json.dumps({"product": "rs232-console", "board": define("FW_BOARD_ID"), "fw": define("FW_VERSION"),
+    manifest = json.dumps({"product": "rs232-console", "board": board_id, "fw": define("FW_VERSION"),
                            "lang": lang, "seq": seq, "size": len(image),
                            "sha256": hashlib.sha256(image).hexdigest()}, separators=(",", ":")).encode()
     with tempfile.TemporaryDirectory() as d:
@@ -166,7 +179,7 @@ def sign(args):
         die("the signature just made does not verify")
     out_dir = os.path.join(ROOT, "dist")
     os.makedirs(out_dir, exist_ok=True)
-    out = os.path.join(out_dir, "rs232-console-%s-%s-%d.rsfw" % (define("FW_VERSION"), lang, seq))
+    out = os.path.join(out_dir, "rs232-console-%s-%s-%s-%d.rsfw" % (define("FW_VERSION"), board_id, lang, seq))
     with open(out, "wb") as f:
         f.write(MAGIC + manifest + b"\n" + base64.b64encode(sig) + b"\n" + image)
     print(manifest.decode())

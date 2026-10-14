@@ -112,7 +112,9 @@ static const uint32_t CON_LOST_MS = 30000;   // without the server for this long
 struct BigJob {
   const std::function<void()> *fn;
   TaskHandle_t caller;
+  uint32_t free;                         // lowest free stack, set when the computation is done
 };
+static uint32_t bigUsed = 0;             // stack the last computation in big() took
 
 // Runs fn on a stack large enough for ML-KEM and waits for it. False = no
 // memory for that stack right now.
@@ -127,16 +129,26 @@ static void connClose();
 // 24 kB (KEM_SMALL), because a block of 28 kB is not always to be had in one
 // piece once the device has run for a while - then it would never get a
 // session. Self-test (at the start) and the signature check keep the full size.
-static const uint32_t KEM_SMALL = 24 * 1024;
-static bool big(const std::function<void()> &fn, uint32_t size = KEM_STACK) {
+static const uint32_t KEM_SMALL = 24 * 1024, KEM_TIGHT = 22 * 1024;
+static bool big(const std::function<void()> &fn, uint32_t size = KEM_STACK, uint32_t floorSize = KEM_TIGHT) {
   connClose();                           // never together with a TLS connection
-  StackType_t *stack = (StackType_t *)heap_caps_malloc(size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   StaticTask_t *tcb = (StaticTask_t *)heap_caps_malloc(sizeof(StaticTask_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-  BigJob job = {&fn, xTaskGetCurrentTaskHandle()};
+  StackType_t *stack = (StackType_t *)heap_caps_malloc(size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  // No block of that size in one piece - seen on both boards inside an 802.1X
+  // network, where the largest was 22 to 28 kB: the device then never got a
+  // session again, and refused every update. The computations themselves need
+  // less (measured: key exchange 19.3 kB, self-test 19.6 kB), so a smaller
+  // stack does, down to a floor that still leaves 2 kB.
+  while (!stack && size > floorSize) {
+    size -= 2048;
+    stack = (StackType_t *)heap_caps_malloc(size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  }
+  BigJob job = {&fn, xTaskGetCurrentTaskHandle(), 0};
   auto entry = [](void *p) {
     BigJob *j = (BigJob *)p;
     (*j->fn)();
-    kemStackFree = min(kemStackFree, (uint32_t)uxTaskGetStackHighWaterMark(nullptr));
+    j->free = uxTaskGetStackHighWaterMark(nullptr);
+    kemStackFree = min(kemStackFree, j->free);
     xTaskNotifyGive(j->caller);
     for (;;) vTaskSuspend(nullptr);
   };
@@ -148,6 +160,7 @@ static bool big(const std::function<void()> &fn, uint32_t size = KEM_STACK) {
   }
   free(stack);
   free(tcb);
+  if (h) bigUsed = size - job.free;      // what this computation took: lcd_debug.py c2, and the log after a signature check
   return h != nullptr;
 }
 
@@ -960,6 +973,7 @@ static void doUpdate(uint32_t id) {
     Serial.printf("[C2]   Firmware-Update: Signatur wird geprueft (Heap %u B, groesster Block %u B, Puffer %s)\n", (unsigned)ESP.getFreeHeap(),
                   (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT), esp_ptr_external_ram(work) ? "extern" : "intern");
     big([&] { verdict = C2Update::check(manifest, manifestLen, sig, sigLen, UPDATE_KEY, FW_BOARD_ID, installed, room, m); });
+    Serial.printf("[C2]   Signaturpruefung: %lu B Stack benutzt\n", (unsigned long)bigUsed);
     err = verdict;
   }
   if (err) {
@@ -1126,6 +1140,7 @@ static void doSdPut(uint32_t id) {
 static void task(void *) {
   const char *failed = TR("not enough memory", "zu wenig Speicher", "memoria insuficiente");
   big([&] { failed = C2Proto::selfTest(); });
+  Serial.printf("[C2]   Selbsttest: %lu B Stack benutzt\n", (unsigned long)bigUsed);
   if (failed) {
     state = FAILED;
     char buf[64];
@@ -1139,6 +1154,8 @@ static void task(void *) {
   publish();
   // tools/fw_sign.py looks for this marker in an image, to not sign one language as another
   Serial.printf("[C2]   %s\n", "UI_LANG=" LANG_CODE ";");
+  // the same for the board: the package is signed for the hardware this image was built for
+  Serial.printf("[C2]   %s\n", "FW_BOARD=" FW_BOARD_ID ";");
   Serial.printf("[C2]   Selbsttest ok, %s%s%s\n", stateName(state), serverUrl.empty() ? "" : " bei ", serverUrl.c_str());
   nextPollAt = millis() + 8000;          // give the WLAN client time to join
   bool wifiWas = false;

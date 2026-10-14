@@ -1278,7 +1278,17 @@ static void startSta() {
     WiFi.begin(settings.staSsid.c_str(), settings.staPass.c_str());
     return;
   }
-  static String caPem, crtPem, keyPem, ident;
+  // The supplicant keeps pointers to these for as long as the client runs.
+  // Not in Strings: those come from the internal heap, 5 kB of it for good,
+  // and that heap is what the board has least of (c2.cpp, big()).
+  static char *caPem = nullptr, *crtPem = nullptr, *keyPem = nullptr;
+  static String ident;
+  auto keep = [](char *&at, const String &pem) {
+    free(at);
+    at = (char *)heap_caps_malloc_prefer(pem.length() + 1, 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (at) memcpy(at, pem.c_str(), pem.length() + 1);
+    return at ? (int)pem.length() + 1 : 0;
+  };
   esp_wifi_sta_wpa2_ent_clear_ca_cert();
   esp_wifi_sta_wpa2_ent_clear_cert_key();
   esp_wifi_sta_wpa2_ent_clear_identity();
@@ -1287,8 +1297,10 @@ static void startSta() {
   esp_wifi_sta_wpa2_ent_set_disable_time_check(true);     // the board has no clock
   String unused;
   if (settings.staCaCheck && Certs::hasCert(Certs::CA)) {
-    Certs::copy(Certs::CA, caPem, unused);
-    esp_wifi_sta_wpa2_ent_set_ca_cert((const uint8_t *)caPem.c_str(), caPem.length() + 1);
+    String pem;
+    Certs::copy(Certs::CA, pem, unused);
+    int n = keep(caPem, pem);
+    if (n) esp_wifi_sta_wpa2_ent_set_ca_cert((const uint8_t *)caPem, n);
   } else {
     Serial.println("[WLAN] 802.1X ohne Prüfung des RADIUS-Zertifikats (kein CA-Zertifikat)");
   }
@@ -1298,9 +1310,14 @@ static void startSta() {
       Serial.println("[WLAN] EAP-TLS: Client-Zertifikat fehlt - keine Anmeldung");
       return;
     }
-    Certs::copy(Certs::CLIENT, crtPem, keyPem);
-    esp_wifi_sta_wpa2_ent_set_cert_key((const uint8_t *)crtPem.c_str(), crtPem.length() + 1,
-                                       (const uint8_t *)keyPem.c_str(), keyPem.length() + 1, nullptr, 0);
+    String crt, key;
+    Certs::copy(Certs::CLIENT, crt, key);
+    int nc = keep(crtPem, crt), nk = keep(keyPem, key);
+    if (!nc || !nk) {
+      Serial.println("[WLAN] EAP-TLS: kein Speicher fuer Zertifikat und Schluessel");
+      return;
+    }
+    esp_wifi_sta_wpa2_ent_set_cert_key((const uint8_t *)crtPem, nc, (const uint8_t *)keyPem, nk, nullptr, 0);
     if (ident.isEmpty()) ident = Certs::subjectCN(Certs::CLIENT);
     if (ident.length() > 64) ident = ident.substring(0, 64);      // the supplicant rejects longer ones
   } else {
