@@ -12,14 +12,14 @@ Run by ui.sh in stages, because a simulated device has to act in between:
   phone     the same pages on a phone: nothing wider than the screen, one thing at a time
   revoke    lock the device out
 """
-import base64, hashlib, hmac, struct, sys, time
+import base64, hashlib, hmac, os, struct, sys, time
 from playwright.sync_api import sync_playwright, expect
 
 stage, base, admin = sys.argv[1], sys.argv[2], sys.argv[3]
 arg = sys.argv[4] if len(sys.argv) > 4 else ""
 
 with sync_playwright() as p:
-    browser = p.chromium.launch()
+    browser = getattr(p, os.environ.get("UI_BROWSER", "chromium")).launch()   # webkit: the engine of Safari
     PHONE = {"width": 390, "height": 844}
     if stage == "phone":
         ctx = browser.new_context(ignore_https_errors=True, locale="de-DE", viewport=PHONE, device_scale_factor=2, is_mobile=True, has_touch=True)
@@ -32,7 +32,16 @@ with sync_playwright() as p:
 
     def shot(**kw):                                  # a picture of the page at rest, not of a transition
         page.wait_for_timeout(450)
-        page.screenshot(**kw)
+        snap(page, **kw)
+
+    def snap(target, **kw):
+        # In WebKit a screenshot puts a <style> of Playwright's own into the page, which the
+        # page's policy refuses - that refusal is the test's, not the page's
+        n = len(errors)
+        target.screenshot(**kw)
+        if browser.browser_type.name == "webkit":
+            page.wait_for_timeout(100)
+            errors[n:] = [e for e in errors[n:] if not e.startswith("Refused to apply a stylesheet")]
 
     def go(view, tab=None):                          # the places in the navigation, and the tabs within one
         page.click("#nav a[data-view=%s]" % view)
@@ -102,7 +111,7 @@ with sync_playwright() as p:
         # the QR code must be a real picture: read it back and compare
         size = page.evaluate("document.querySelector('#qr').width")
         assert size > 100, size
-        page.locator("#qr").screenshot(path="/out/qr.png")
+        snap(page.locator("#qr"), path="/out/qr.png")
         shot(path="/out/ui-invite.png")
         # registration without an invitation: closed, opened for a time, closed again
         expect(page.locator("#openNote")).to_be_hidden()
@@ -135,6 +144,7 @@ with sync_playwright() as p:
         expect(row).to_contain_text("unattended 24 h")
         go("fleet")
         page.click("#invite")
+        expect(page.locator("#tokenText")).not_to_have_value("")
         before = page.input_value("#tokenText")
         page.select_option("#inviteProf", label="Kunde A")
         expect(page.locator("#tokenText")).not_to_have_value(before)

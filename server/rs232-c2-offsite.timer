@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily off-site copy of the RS232 control center
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+# a laptop that was off at midnight makes up for it when it comes back
+Persistent=true
+
+[Install]
+WantedBy=timers.target

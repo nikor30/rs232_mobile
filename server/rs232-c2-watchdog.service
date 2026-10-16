@@ -1,0 +1,10 @@
+[Unit]
+Description=Watchdog for the RS232 control center (/healthz, certificate, ntfy)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/rs232-c2-watchdog
+# a failed check is reported by the script itself, not a failure of the unit
+SuccessExitStatus=1

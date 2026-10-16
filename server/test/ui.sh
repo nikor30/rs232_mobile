@@ -3,6 +3,7 @@
 # real container, with a simulated device on the other side.
 #
 #   ./test/ui.sh [DIR]      screenshots go to DIR (default: a temporary one)
+#   UI_BROWSER=webkit ./test/ui.sh   the same in WebKit, the engine of Safari
 # Needs docker; pulls mcr.microsoft.com/playwright/python on first use (3 GB).
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -27,7 +28,7 @@ for i in $(seq 1 30); do curl -sk https://127.0.0.1:8443/healthz 2>/dev/null | g
 curl -sk https://127.0.0.1:8443/healthz | grep -q ok || fail "server did not come up"
 
 browser() { # STAGE [ARG]
-  docker run --rm --network "$NET" -v "$PWD/test":/test:ro -v "$OUT":/out $PW \
+  docker run --rm --network "$NET" -e UI_BROWSER="${UI_BROWSER:-chromium}" -v "$PWD/test":/test:ro -v "$OUT":/out $PW \
     python /test/ui_test.py "$1" https://c2server:8443 "$C2_ADMIN_TOKEN" "${2:-}"
 }
 devsim() { docker run --rm --network "$NET" -v ${COMPOSE_PROJECT_NAME}_dev:/data --entrypoint /devsim rs232-c2 -state /data/device.json -tls-skip-verify "$@"; }

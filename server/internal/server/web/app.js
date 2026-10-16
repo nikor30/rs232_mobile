@@ -1527,11 +1527,13 @@
     } catch (err) { toast(err.message, 6000); }
   });
 
-  async function newInvite() {
+  let inviteSeq = 0;
+  async function newInvite() {             // null also when a later one was asked for meanwhile
     let inv;
+    const seq = ++inviteSeq;
     const profile = Number($('#inviteProf').value || 0);
     try { inv = await api('POST', '/enroll-tokens', { ttl_s: 600, profile }); } catch (err) { toast(err.message); return null; }
-    return inv;
+    return seq === inviteSeq ? inv : null;
   }
   $('#inviteProf').addEventListener('change', async () => {
     const inv = await newInvite();

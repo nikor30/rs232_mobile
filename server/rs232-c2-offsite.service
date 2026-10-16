@@ -1,0 +1,9 @@
+[Unit]
+Description=Off-site copy of the RS232 control center (pulled over SSH)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/rs232-c2-offsite-backup run
+Nice=10

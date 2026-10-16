@@ -173,7 +173,26 @@ Die Admin-Weboberfläche gibt es in Englisch, Deutsch und Portugiesisch (brasili
 - **Fällt die Datenbank aus,** läuft der Server weiter: Geräte bekommen Antworten aus dem Speicher, Änderungen werden mit Fehler 500 abgewiesen — bleiben aber im Speicher und werden geschrieben, sobald die Datenbank wieder da ist. Die Sperre gegen einen zweiten Serverprozess nimmt der Server danach neu; hat inzwischen ein anderer Prozess die Datenbank übernommen, beendet er sich.
 - **Nicht eingebaut ist das Benachrichtigen:** Niemand bekommt von selbst eine Nachricht. Dafür braucht es einen Wächter außerhalb dieses Rechners, der `/healthz` abfragt — er merkt dann auch, wenn der ganze Rechner weg ist.
 
-**Stand:** Go-Tests und `test/cloud.sh` (Datenbank im Betrieb gestoppt und wieder gestartet). Nicht geprüft: ein echter Wächter von außen, eine Datenbank, die hängt statt zu fehlen, ein Ausfall über Stunden.
+**Stand:** Go-Tests und `test/cloud.sh` (Datenbank im Betrieb gestoppt und wieder gestartet). Nicht geprüft: eine Datenbank, die hängt statt zu fehlen, ein Ausfall über Stunden.
+
+### Wächter von außen und Kopie woanders (ohne Docker)
+
+Für einen Server mit der JSON-Datei — so läuft `control.nikoscloud.de` — gibt es zwei Skripte, die auf einem **anderen** Rechner laufen; am Server selbst wird nichts eingerichtet.
+
+- **`watchdog.sh`** (Timer `rs232-c2-watchdog.timer`, alle zwei Minuten): fragt `/healthz` und sieht nach, wie lange das Zertifikat noch gilt (Warnung unter 14 Tagen). Nach zwei gescheiterten Abfragen in Folge kommt eine Push-Nachricht über **ntfy** (App „ntfy“, Thema abonnieren, kein Konto), alle 12 Stunden wieder, solange es so bleibt, und eine, wenn es wieder geht. Einstellungen in `/etc/rs232-c2-watchdog.env` (`C2_URL`, `C2_NTFY`). Das Thema ist das einzige Geheimnis: Wer es kennt, liest mit und kann Nachrichten schicken — einen nicht zu ratenden Namen nehmen. `watchdog.sh test` schickt eine Probe.
+- **`offsite-backup.sh`** (Timer `rs232-c2-offsite.timer`, täglich, holt Verpasstes nach): holt das Datenverzeichnis über SSH (`sudo tar`, also nur lesend), prüft, dass `state.json` darin lesbar ist, und legt es komprimiert und **verschlüsselt** ab (CMS mit AES-256-GCM an ein Zertifikat; behalten werden 14). Zum Kopieren genügt das Zertifikat, zum Zurückspielen braucht es den privaten Schlüssel (`offsite-backup.sh keygen` legt beide an) — **eine Kopie des Schlüssels gehört woandershin**, sonst ist mit dem Rechner auch die Sicherung weg. Die Images (`images/*.bin`) werden unverschlüsselt gespiegelt und dort nie gelöscht. Scheitert eine Kopie, kommt eine Nachricht über dasselbe ntfy-Thema (`C2_NTFY` in `/etc/rs232-c2-offsite.env`).
+
+```bash
+install -m 755 offsite-backup.sh /usr/local/bin/rs232-c2-offsite-backup
+install -m 755 watchdog.sh /usr/local/bin/rs232-c2-watchdog
+install -m 644 rs232-c2-offsite.* rs232-c2-watchdog.* /etc/systemd/system/
+systemctl daemon-reload && systemctl enable --now rs232-c2-offsite.timer rs232-c2-watchdog.timer
+rs232-c2-offsite-backup keygen; rs232-c2-offsite-backup run; rs232-c2-offsite-backup list
+```
+
+Zurückspielen: `rs232-c2-offsite-backup restore <Datei> <leeres Verzeichnis>`, dann am Server `systemctl stop rs232-c2`, das Verzeichnis an die Stelle von `/var/lib/rs232-c2` (Besitzer `rs232c2`), `systemctl start rs232-c2`. Die Geräte merken nichts, solange der Serverschlüssel derselbe ist; was seit der Kopie geschah (neue Geräte, Sperren), fehlt.
+
+**Stand (16. Oktober 2026):** Kopie vom Laptop aus gegen `control.nikoscloud.de` (2,2 MB verschlüsselt, 25 MB Images, 17 s), entschlüsselt, Firmware und Images Byte für Byte gleich, ein Server aus der Kopie startet mit demselben Fingerabdruck des Serverschlüssels; auch über den Timer. Wächter: Ausfall (404), keine zweite Nachricht, Zertifikat zu kurz, Erholung — beide Nachrichten kamen bei ntfy an. Nicht geprüft: ein echter Ausfall des Servers, ein Zurückspielen am Server selbst.
 
 ## Ein simuliertes Gerät anmelden
 
@@ -267,13 +286,14 @@ Auf der Anmeldeseite erscheint dann „Mit Microsoft anmelden“. Den zweiten Fa
 | `C2_POLL_S` | `30` | Abstand, in dem Geräte sich melden sollen |
 | `C2_IMAGE_MAX_MB`, `C2_IMAGE_TOTAL_MB` | `2048`, `20480` | andere Images in der Bibliothek: größte Datei und alle zusammen, in Megabyte. Sie liegen unter `C2_DATA_DIR/images` |
 
-Wer das Datenverzeichnis (mit PostgreSQL: die Datenbank und ihre Sicherungen) verliert, verliert den Serverschlüssel — alle Geräte müssten neu angemeldet werden. Für den Betrieb mit der Datei gibt es keine eingebaute Sicherung: `state.json` bei gestopptem Server kopieren.
+Wer das Datenverzeichnis (mit PostgreSQL: die Datenbank und ihre Sicherungen) verliert, verliert den Serverschlüssel — alle Geräte müssten neu angemeldet werden. Für den Betrieb mit der Datei gibt es keine eingebaute Sicherung: `state.json` wird nur durch Umbenennen ersetzt, eine Kopie ist also immer ganz — `offsite-backup.sh` (oben) holt sie samt Firmware und Images auf einen anderen Rechner.
 
 ## Tests
 
 ```bash
 ./test/e2e.sh                       # alles: Unit-Tests, Image, Ende-zu-Ende im Container
 ./test/ui.sh [VERZEICHNIS]          # die Weboberfläche in einem Browser ohne Bildschirm, breit und als Handy; Bilder ins Verzeichnis (Playwright-Image, 3 GB)
+UI_BROWSER=webkit ./test/ui.sh      # dasselbe in WebKit, dem Unterbau von Safari
 ./test/pg.sh                        # die Unit-Tests noch einmal, mit dem Zustand in einem echten PostgreSQL
 ./test/cloud.sh                     # Caddy + Server + PostgreSQL: Umzug von der Datei, Zertifikat, Konto, Ausfall der Datenbank, Schlüsselwechsel, Neustart
 ./test/backup.sh                    # Sicherung der Datenbank und Zurückspielen, auch nach dem Verlust aller Volumes
@@ -302,6 +322,7 @@ internal/store/      Zustand: store.go, users.go rechnen im Speicher; backend.go
 docker-compose.yml   lokal: der Server allein, selbstsigniert, Zustand in der Datei
 docker-compose.cloud.yml, Caddyfile, .env.example   Caddy davor, PostgreSQL dahinter
 backup.sh            Sicherung der Datenbank (Dienst backup) und Zurückspielen
+offsite-backup.sh, watchdog.sh, rs232-c2-offsite.*, rs232-c2-watchdog.*   Kopie woanders und Wächter von außen (auf einem anderen Rechner)
 test/e2e.sh          Ende-zu-Ende-Test gegen den Container
 test/ui.sh, ui_test.py   Browsertest der Weboberfläche
 test/pg.sh, cloud.sh     Zustand in PostgreSQL; der ganze Aufbau mit Caddy

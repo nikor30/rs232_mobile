@@ -1,0 +1,9 @@
+[Unit]
+Description=Check the RS232 control center every two minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=2min
+
+[Install]
+WantedBy=timers.target
