@@ -45,6 +45,8 @@ type console struct {
 	inBase  int64
 	brk     int // BREAKs asked for so far
 
+	e2e string // the device's one-time key: the streams are end to end between it and the browser (c2_e2e.h)
+
 	closing string // set by the administrator: the device is told with its next question
 	ended   *time.Time
 	reason  string
@@ -63,6 +65,7 @@ type conMsg struct {
 	IAck  int64  `json:"iack"` // input taken so far
 	LeftS int    `json:"left_s"`
 	End   string `json:"end"` // the device has closed the session, and why
+	E2E   string `json:"e2e"` // its one-time key, when the browser sent one with the request
 }
 
 type conReply struct {
@@ -139,6 +142,11 @@ func (sv *Server) conDevice(deviceID string, m *conMsg) (*conReply, error) {
 	}
 	c.lastDev, c.leftS = sv.now(), m.LeftS
 	touched := false
+	if c.e2e == "" && m.E2E != "" && len(m.E2E) <= 100 {
+		c.e2e = m.E2E // from here on the server carries what it cannot read
+		touched = true
+		log.Printf("console %d of %s: end to end", c.id, deviceID)
+	}
 	// output: take what is new, skip what a repeated message brings again
 	if next := c.outBase + int64(len(c.out)); m.Off <= next && m.Off+int64(len(m.D)) > next {
 		c.out = append(c.out, m.D[next-m.Off:]...)
@@ -205,6 +213,7 @@ type conView struct {
 	Opened *time.Time `json:"opened,omitempty"`
 	LeftS  int        `json:"left_s,omitempty"`
 	Reason string     `json:"reason,omitempty"`
+	E2E    string     `json:"e2e,omitempty"` // the device's one-time key: the browser derives the session from it
 }
 
 // conStatus tells the administrator where the remote console of a device
@@ -214,7 +223,7 @@ func (sv *Server) conStatus(w http.ResponseWriter, r *http.Request) {
 	var cur *conView
 	sv.mu.Lock()
 	if c := sv.conGet(id); c != nil {
-		cur = &conView{ID: c.id, State: "open", Port: c.port, Opened: &c.opened, LeftS: c.leftS}
+		cur = &conView{ID: c.id, State: "open", Port: c.port, Opened: &c.opened, LeftS: c.leftS, E2E: c.e2e}
 		if c.ended != nil {
 			cur.State, cur.Reason, cur.LeftS = "ended", c.reason, 0
 		}

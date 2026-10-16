@@ -1370,14 +1370,41 @@
     } catch (e) { /* the next round tries again */ }
     c2Timer = setTimeout(loadC2, 3000);
   }
+  // An invitation may name a profile: what the device is to accept with it is
+  // shown before enrolling, and enrolling then needs the tick.
+  function tokenProfile(token) {
+    try {
+      const b = token.trim().slice(5).replace(/-/g, '+').replace(/_/g, '/');
+      return token.trim().startsWith('c2e1:') ? (JSON.parse(atob(b + '='.repeat((4 - b.length % 4) % 4))).pf || null) : null;
+    } catch (e) { return null; }
+  }
+  function showProfile() {
+    const pf = tokenProfile($('#c2Token').value);
+    $('#c2Profile').hidden = !pf;
+    if (!pf) return;
+    $('#c2ProfName').textContent = '„' + pf.n + '“';
+    const items = [];
+    if (pf.ctl) items.push(tr('The control center may change settings and configurations and restart the device.'));
+    if (pf.un) items.push(tr('For {0} h, a remote console opens without a tap on the display.', [pf.un]));
+    if (pf.w) items.push(tr('After the approval the device moves to the Wi-Fi network {0} ({1}).', [pf.w, ['WPA2', 'EAP-TLS', 'PEAP', 'EAP-TTLS'][pf.a || 0]]));
+    if (!items.length) items.push(tr('Place and groups at the control center - nothing on the device itself.'));
+    const ul = $('#c2ProfList');
+    ul.textContent = '';
+    for (const t of items) { const li = document.createElement('li'); li.textContent = t; ul.append(li); }
+  }
+  $('#c2Token').addEventListener('input', showProfile);
   $('#c2Enroll').addEventListener('click', async () => {
     const token = $('#c2Token').value.trim();
     if (!token) { toast(tr('Paste the invitation token first')); return; }
+    const pf = tokenProfile(token);
+    if (pf && !$('#c2ProfOk').checked) { toast(tr('Tick that you accept the profile first')); return; }
     try {
-      const r = await fetch('/api/c2/enroll', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
+      const r = await fetch('/api/c2/enroll', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, accept: !!pf }) });
       const j = await r.json();
       if (!j.ok) { toast(j.error || tr('Enrollment not possible'), 5000); return; }
       $('#c2Token').value = '';
+      $('#c2ProfOk').checked = false;
+      showProfile();
       toast(tr('Enrolling …'));
       loadC2();
     } catch (e) { toast(tr('Device not reachable')); }
@@ -1408,6 +1435,7 @@
     setTimeout(() => {
       openPanel('net');
       $('#c2Token').value = token;
+      showProfile();
       $('#c2Token').scrollIntoView({ block: 'center' });
       toast(tr('Invitation token taken over – confirm with “Enroll”'), 5000);
     }, 300);

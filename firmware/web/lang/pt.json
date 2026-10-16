@@ -203,7 +203,10 @@
   "Server address": "Endereço do servidor",
   "https://…": "https://…",
   "Set": "Definir",
-  "Without a token: enter the server address. The device then asks that server by itself whenever its Wi-Fi is connected, until an administrator opens registration there.": "Sem token: informe o endereço do servidor. O dispositivo então pede sozinho a esse servidor sempre que o Wi-Fi estiver conectado, até que um administrador abra o registro lá."
+  "Without a token: enter the server address. The device then asks that server by itself whenever its Wi-Fi is connected, until an administrator opens registration there.": "Sem token: informe o endereço do servidor. O dispositivo então pede sozinho a esse servidor sempre que o Wi-Fi estiver conectado, até que um administrador abra o registro lá.",
+  "This invitation comes with the profile": "Este convite traz o perfil",
+  "I accept this for this device": "Eu permito isso para este dispositivo",
+  "By enrolling you accept, here at the device:": "Ao registrar, você permite aqui no dispositivo:"
  },
  "script": {
   "Port ": "Porta ",
@@ -410,6 +413,11 @@
   "The device asks this server to let it in. Empty the field and press “Set” to stop.": "O dispositivo pede a este servidor para entrar. Esvazie o campo e pressione “Definir” para parar.",
   "Enough to enroll while the server has registration open – no token needed.": "Basta para registrar enquanto o servidor estiver com o registro aberto – sem token.",
   "asking {0}": "pedindo a {0}",
-  "Server address set": "Endereço do servidor definido"
+  "Server address set": "Endereço do servidor definido",
+  "The control center may change settings and configurations and restart the device.": "A central pode alterar configurações e reiniciar o dispositivo.",
+  "After the approval the device moves to the Wi-Fi network {0} ({1}).": "Após a confirmação, o dispositivo muda para a rede Wi-Fi {0} ({1}).",
+  "Place and groups at the control center - nothing on the device itself.": "Local e grupos na central – nada muda no próprio dispositivo.",
+  "Tick that you accept the profile first": "Primeiro marque que você permite o perfil",
+  "For {0} h, a remote console opens without a tap on the display.": "Por {0} h, um console remoto abre sem toque na tela."
  }
 }

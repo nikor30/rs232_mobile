@@ -36,6 +36,10 @@ namespace Sd {
   const char *putFinish(uint32_t size, const uint8_t md5[16], void (*progress)(int pct));   // read back, compare, name it; nullptr = stored
   const char *removeRoot(const char *name);              // a file of the top folder; nullptr = gone
   String rootJson(size_t room);       // the files of the top folder as [{"n":..,"s":..}], as many as fit
+  // A small file of the top folder in one piece (the encrypted backup,
+  // sdbackup.cpp): written as "<name>.tmp", read back and compared, then named.
+  const char *writeRoot(const char *name, const uint8_t *data, size_t len);   // nullptr = stored
+  const char *readRoot(const char *name, uint8_t *&data, size_t &len, size_t max);   // data: external RAM, free() it
 
   // ---- USB memory stick ----
   // Hands the card to whatever the USB port is plugged into (a switch, a

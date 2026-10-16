@@ -214,6 +214,10 @@ Alle Aufrufe mit `Authorization: Bearer <C2_ADMIN_TOKEN>` oder mit dem Cookie ei
 |---|---|
 | `POST /admin/v1/enroll-tokens` `{"ttl_s":600,"note":""}` | Einladungs-Token, einmal verwendbar |
 | `POST /admin/v1/enrollment/open` `{"minutes":45}` | Anmeldung ohne Einladung öffnen: 15 bis 180 Minuten in Schritten von 15, `0` schließt; der Rest steht als `open_s` in `GET /admin/v1/server` |
+| `GET/POST /admin/v1/profiles`, `PUT/DELETE /admin/v1/profiles/{id}` | Profile für neue Geräte (Geheimnisse kommen nur als `pass_set`/`client_set`/`ca_set` zurück); `enroll-tokens` nimmt `"profile": id` |
+| `POST /admin/v1/devices/{id}/profile` `{"profile":id}` | Profil auf ein angemeldetes Gerät anwenden |
+| `POST /admin/v1/devices/{id}/backup` | verschlüsselte Sicherung auf die SD-Karte jetzt (sonst einmal am Tag von selbst) |
+| `POST /admin/v1/devices/{id}/restore` `{"from":"<Geräte-ID>"}` | Sicherung von der Karte zurückspielen, wahlweise mit dem Schlüssel eines anderen Geräts |
 | `GET /admin/v1/devices` | Geräte mit Zustand (`pending`, `active`, `revoked`), zuletzt gesehen, letzter Status; `old_key`, wenn ein Gerät den neuen Serverschlüssel noch nicht bestätigt hat |
 | `POST /admin/v1/devices/{id}/approve` `{"sas":"123456"}` | bestätigen mit dem Code vom Gerätedisplay; fünf falsche Eingaben verwerfen die Anmeldung |
 | `POST /admin/v1/devices/{id}/revoke` | sperren, sofort und endgültig |

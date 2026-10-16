@@ -71,6 +71,7 @@ type Token struct {
 	Secret  []byte    `json:"secret"`
 	Note    string    `json:"note,omitempty"`
 	Expires time.Time `json:"expires"`
+	Profile uint64    `json:"profile,omitempty"` // profiles.go: what the device gets when it is approved
 }
 
 type Command struct {
@@ -115,21 +116,27 @@ type Device struct {
 	OldKey      bool            `json:"old_key,omitempty"` // has not confirmed the server's new key yet (key change)
 	Commands    []*Command      `json:"commands,omitempty"`
 	Consoles    []*ConsoleLog   `json:"consoles,omitempty"`
+	Profile     uint64          `json:"profile,omitempty"`      // the profile it enrolled with
+	ProfileDone bool            `json:"profile_done,omitempty"` // its commands are queued
+	BackupKey   []byte          `json:"backup_key,omitempty"`   // backup.go at the server: opens its backup on the SD card
+	BackupAt    *time.Time      `json:"backup_at,omitempty"`    // when a backup was last queued
 }
 
 type data struct {
-	ServerKey []byte               `json:"server_key"`
-	OldKey    []byte               `json:"old_key,omitempty"`   // the previous server key, during a key change
-	OldUntil  *time.Time           `json:"old_until,omitempty"` // and how long it still counts
-	Tokens    map[string]*Token    `json:"tokens"`
-	Devices   map[string]*Device   `json:"devices"`
-	NextCmd   uint64               `json:"next_cmd"`
-	Users     map[string]*User     `json:"users,omitempty"`
-	Audit     []*AuditEntry        `json:"audit,omitempty"`
-	Templates map[uint64]*Template `json:"templates,omitempty"`
-	NextTpl   uint64               `json:"next_tpl,omitempty"`
-	Groups    map[uint64]*Group    `json:"groups,omitempty"`
-	NextGroup uint64               `json:"next_group,omitempty"`
+	ServerKey   []byte               `json:"server_key"`
+	OldKey      []byte               `json:"old_key,omitempty"`   // the previous server key, during a key change
+	OldUntil    *time.Time           `json:"old_until,omitempty"` // and how long it still counts
+	Tokens      map[string]*Token    `json:"tokens"`
+	Devices     map[string]*Device   `json:"devices"`
+	NextCmd     uint64               `json:"next_cmd"`
+	Users       map[string]*User     `json:"users,omitempty"`
+	Audit       []*AuditEntry        `json:"audit,omitempty"`
+	Templates   map[uint64]*Template `json:"templates,omitempty"`
+	NextTpl     uint64               `json:"next_tpl,omitempty"`
+	Groups      map[uint64]*Group    `json:"groups,omitempty"`
+	NextGroup   uint64               `json:"next_group,omitempty"`
+	Profiles    map[uint64]*Profile  `json:"profiles,omitempty"`
+	NextProfile uint64               `json:"next_profile,omitempty"`
 }
 
 // Template is a configuration text kept at the server: written once, sorted
@@ -425,7 +432,7 @@ func (s *Store) Health() (since time.Time, err error) {
 
 // ---------------------------------------------------------------- tokens
 
-func (s *Store) NewToken(ttl time.Duration, note string) (*Token, error) {
+func (s *Store) NewToken(ttl time.Duration, note string, profile uint64) (*Token, error) {
 	id := make([]byte, proto.TokenIDSize)
 	secret := make([]byte, proto.PSKSize)
 	if _, err := rand.Read(id); err != nil {
@@ -442,7 +449,10 @@ func (s *Store) NewToken(ttl time.Duration, note string) (*Token, error) {
 			s.ch.token(id)
 		}
 	}
-	t := &Token{ID: hex.EncodeToString(id), Secret: secret, Note: note, Expires: s.now().Add(ttl)}
+	if profile != 0 && s.d.Profiles[profile] == nil {
+		return nil, ErrNotFound
+	}
+	t := &Token{ID: hex.EncodeToString(id), Secret: secret, Note: note, Expires: s.now().Add(ttl), Profile: profile}
 	s.d.Tokens[t.ID] = t
 	s.ch.token(t.ID)
 	return t, s.save()
@@ -541,6 +551,7 @@ func (s *Store) Enroll(tokenID string, pub []byte, name string, info json.RawMes
 	s.ch.device(id)
 	d.Name, d.Info, d.State, d.SAS, d.SASAttempts, d.Enrolled = name, info, StatePending, sas, 0, s.now()
 	d.OldKey = false // it enrolled with the current key
+	d.Profile, d.ProfileDone = t.Profile, false
 	return s.save()
 }
 
@@ -704,8 +715,8 @@ func (s *Store) Poll(id string, status json.RawMessage, results []Result) (state
 				c.State, c.Sent = CmdSent, &now
 				s.ch.cmd(id, c.ID)
 				cmds = append(cmds, *c)
-				if c.Type == "set" || c.Type == "config_put" {
-					c.Args = nil // may hold passwords: handed over once, not kept
+				if c.Type == "set" || c.Type == "config_put" || c.Type == "cert_put" || c.Type == "sd_backup" || c.Type == "sd_restore" {
+					c.Args = nil // may hold passwords, keys or the backup key: handed over once, not kept
 				}
 				changed = true
 			}

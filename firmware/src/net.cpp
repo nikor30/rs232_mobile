@@ -26,6 +26,7 @@
 #include <esp_netif.h>
 #include <mbedtls/x509_crt.h>
 #include <mbedtls/pk.h>
+#include <mbedtls/base64.h>
 #include <lwip/sockets.h>   // non-blocking send() for the raw TCP path
 
 namespace Net {
@@ -666,12 +667,46 @@ static void handleC2Get() {
   sendJson(200, out);
 }
 
+// The summary of a profile in an invitation ("pf" in the token's JSON).
+static bool profileOf(const char *token, JsonDocument &out) {
+  String t = token;
+  t.trim();
+  if (!t.startsWith("c2e1:")) return false;
+  t = t.substring(5);
+  t.replace('-', '+');
+  t.replace('_', '/');
+  while (t.length() % 4) t += '=';
+  size_t n = 0;
+  uint8_t buf[768];
+  if (mbedtls_base64_decode(buf, sizeof(buf) - 1, &n, (const uint8_t *)t.c_str(), t.length())) return false;
+  JsonDocument d;
+  if (deserializeJson(d, (const char *)buf, n) || !d["pf"].is<JsonObject>()) return false;
+  out.set(d["pf"]);
+  return true;
+}
+
 static void handleC2Enroll() {
   if (!guard()) return;
   JsonDocument d;
   if (deserializeJson(d, http.arg("plain"))) return sendJson(400, TR("{\"ok\":false,\"error\":\"invalid JSON\"}", "{\"ok\":false,\"error\":\"JSON ungültig\"}", "{\"ok\":false,\"error\":\"JSON inválido\"}"));
-  const char *err = C2::enroll(d["token"] | "");
+  const char *token = d["token"] | "";
+  const char *err = C2::enroll(token);
   if (err) return sendJson(400, String("{\"ok\":false,\"error\":\"") + err + "\"}");
+  // An invitation with a profile asks for what otherwise is set only here:
+  // changes from the control center and unattended access. The person who
+  // pressed "Enroll" after reading that summary has granted it - here, at the
+  // device, as for the two switches themselves.
+  JsonDocument pf;
+  if ((d["accept"] | false) && profileOf(token, pf)) {
+    if (pf["ctl"] | false) {
+      settings.c2Control = true;
+      Store::save();
+    }
+    uint32_t h = pf["un"] | 0;
+    if (h) C2::unattendedSet(min<uint32_t>(h, 168) * 3600UL);
+    Serial.printf("[C2]   Profil \"%s\" angenommen: Aenderungen %s, unbeaufsichtigt %lu h\n", (const char *)(pf["n"] | ""),
+                  (pf["ctl"] | false) ? "erlaubt" : "unveraendert", (unsigned long)h);
+  }
   sendJson(200, "{\"ok\":true}");
 }
 

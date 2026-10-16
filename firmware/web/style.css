@@ -279,6 +279,8 @@ body.termonly #keys { display: none; }
 h3 { font-size: 13px; font-weight: 400; text-transform: uppercase; letter-spacing: .02em; color: var(--muted); margin: 26px 0 8px; }
 .tab > h3:first-child, form > h3:first-child { margin-top: 4px; }
 .hint { color: var(--muted); font-size: 13px; line-height: 1.4; margin: 6px 0; }
+.note { border: 1px solid var(--warn); border-radius: 10px; padding: 8px 12px; margin: 8px 0; font-size: 14px; line-height: 1.4; }
+.note ul { margin: 6px 0; padding-left: 20px; }
 code { background: var(--key); padding: 1px 6px; border-radius: 5px; font-size: 12px; }
 
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }

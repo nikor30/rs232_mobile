@@ -334,6 +334,64 @@ const char *removeRoot(const char *name) {
   return nullptr;
 }
 
+const char *writeRoot(const char *name, const uint8_t *data, size_t len) {
+  if (!ok) return "no SD card in the device";
+  if (putName.length()) return "a file is being written already";
+  BusGuard guard;
+  String path = String("/") + name, tmp = path + ".tmp";
+  if (SD.exists(tmp)) SD.remove(tmp);
+  File f = SD.open(tmp, FILE_WRITE);
+  if (!f) return "the SD card does not take the file";
+  size_t done = 0;
+  while (done < len) {
+    size_t n = f.write(data + done, min((size_t)4096, len - done));
+    if (!n) break;
+    done += n;
+    vTaskDelay(1);                       // the display shares the bus
+  }
+  f.close();
+  if (done != len) { SD.remove(tmp); return "writing to the SD card failed"; }
+  // read back: the card refuses writes now and then without saying so (WAVESHARE.md)
+  f = SD.open(tmp);
+  bool same = f && f.size() == len;
+  uint8_t buf[512];
+  for (size_t off = 0; same && off < len;) {
+    size_t n = f.read(buf, min(sizeof(buf), len - off));
+    same = n > 0 && !memcmp(buf, data + off, n);
+    off += n;
+  }
+  if (f) f.close();
+  if (!same) { SD.remove(tmp); return "the file on the SD card does not read back the same"; }
+  if (SD.exists(path)) SD.remove(path);
+  if (!SD.rename(tmp, path)) return "the file could not be named on the SD card";
+  cachedUsedMb = SD.usedBytes() / (1024ULL * 1024ULL);
+  return nullptr;
+}
+
+const char *readRoot(const char *name, uint8_t *&data, size_t &len, size_t max) {
+  data = nullptr;
+  len = 0;
+  if (!ok) return "no SD card in the device";
+  if (putName.length()) return "a file is being written already";
+  BusGuard guard;
+  File f = SD.open(String("/") + name);
+  if (!f || f.isDirectory()) { if (f) f.close(); return "no backup on the SD card"; }
+  size_t size = f.size();
+  if (!size || size > max) { f.close(); return "the backup on the SD card has an impossible size"; }
+  data = (uint8_t *)heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!data) { f.close(); return "not enough memory"; }
+  size_t got = 0;
+  while (got < size) {
+    int n = f.read(data + got, min((size_t)4096, size - got));
+    if (n <= 0) break;
+    got += n;
+  }
+  f.close();
+  if (got != size) { free(data); data = nullptr; return "reading the SD card failed"; }
+  len = size;
+  return nullptr;
+}
+
 String rootJson(size_t room) {
   String out = "[";
   if (ok && !putName.length()) {

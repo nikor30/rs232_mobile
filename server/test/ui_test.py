@@ -115,6 +115,37 @@ with sync_playwright() as p:
         shot(path="/out/ui-open.png")
         page.click("#openEnd")
         expect(page.locator("#openNote")).to_be_hidden()
+        # a profile for new devices, named in the invitation ("Open registration" has closed the dialog)
+        go("library", "profiles")
+        expect(page.locator("#noProfs")).to_be_visible()
+        page.click("#profNew")
+        page.fill("#profName", "Kunde A")
+        page.fill("#profSite", "Lager 3")
+        page.check("#profCtl")
+        page.select_option("#profUn", "24")
+        page.fill("#profSsid", "corp-dot1x")
+        page.select_option("#profAuth", "2")
+        expect(page.locator("#profUser")).to_be_visible()
+        page.fill("#profUser", "rs232")
+        page.fill("#profPass", "ein Passwort")
+        shot(path="/out/ui-profile.png")
+        page.click("#profForm button[type=submit]")
+        row = page.locator("#profs tbody tr", has_text="Kunde A")
+        expect(row).to_contain_text("corp-dot1x (PEAP)")
+        expect(row).to_contain_text("unattended 24 h")
+        go("fleet")
+        page.click("#invite")
+        before = page.input_value("#tokenText")
+        page.select_option("#inviteProf", label="Kunde A")
+        expect(page.locator("#tokenText")).not_to_have_value(before)
+        import base64, json as _json
+        t = page.input_value("#tokenText")[5:]
+        pf = _json.loads(base64.urlsafe_b64decode(t + "=" * (-len(t) % 4)))["pf"]
+        assert pf == {"n": "Kunde A", "ctl": True, "un": 24, "w": "corp-dot1x", "a": 2}, pf
+        page.select_option("#inviteProf", "0")             # the device of the later steps enrolls without one
+        page.wait_for_function("() => { const t = document.querySelector('#tokenText').value.slice(5).replace(/-/g, '+').replace(/_/g, '/');"
+                               " try { return !JSON.parse(atob(t + '='.repeat((4 - t.length % 4) % 4))).pf; } catch (e) { return false; } }")
+        token = page.input_value("#tokenText")
         print("TOKEN " + token)
 
     elif stage == "approve":

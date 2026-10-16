@@ -64,6 +64,7 @@ namespace C2 {
     uint8_t  port;          // 0-based
     uint16_t minutes;       // asked for
     uint32_t leftS;         // open: seconds until it closes by itself
+    char     code[7];       // end to end: the six digits to compare with the browser, empty without
   };
   Console console();
   void consoleAnswer(bool allow);           // main loop: the tap on the display

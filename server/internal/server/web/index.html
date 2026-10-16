@@ -181,6 +181,7 @@
       <div class="row left wrap">
         <a id="oConsole" class="btn primary">Open a console</a>
         <button class="btn" data-cmd="ping" type="button">Ping</button>
+        <button id="oProfile" class="btn" type="button" data-admin>Apply a profile</button>
       </div>
     </div>
 
@@ -201,6 +202,7 @@
           <div id="term"></div>
           <div class="row wrap">
             <span id="conInfo" class="dim"></span>
+            <span id="conE2E" class="chip" hidden></span>
             <span class="acts">
               <button id="conBreak" class="btn">BREAK</button>
               <button id="conClose" class="btn danger">End</button>
@@ -243,6 +245,13 @@
           <button class="btn" type="submit">Upload to the SD card</button>
         </form>
         <p id="sdNone" class="dim" data-manage hidden>The library holds no image yet (Library → Images).</p>
+        <h3>Encrypted backup</h3>
+        <p class="dim">Settings with their passwords, configurations and certificates, on the device's own card. The key stays here: without this server the file is of no use. A device with a card and changes allowed is backed up once a day.</p>
+        <div class="row left wrap" data-manage>
+          <button id="bkNow" class="btn" type="button">Back up now</button>
+          <button id="bkRestore" class="btn warn" type="button" data-admin>Restore from the card …</button>
+        </div>
+        <p id="bkText" class="dim"></p>
         <p id="sdState" class="dim" role="status"></p>
       </section>
       <section id="firmware" class="card" data-manage>
@@ -348,7 +357,20 @@
       <a href="#library/templates" data-tab="templates">Templates</a>
       <a href="#library/firmware" data-tab="firmware">Firmware</a>
       <a href="#library/images" data-tab="images">Images</a>
+      <a href="#library/profiles" data-tab="profiles" data-admin>Profiles</a>
     </div>
+    <section class="card panel" id="l-profiles" hidden>
+      <div class="row">
+        <h2>Profiles</h2>
+        <button id="profNew" class="btn primary" data-admin>New profile</button>
+      </div>
+      <p class="dim">What a new device gets when it is approved: place, groups and its Wi-Fi. Name a profile in an invitation; the person at the device sees what it asks for and accepts it there.</p>
+      <table id="profs" class="stack" hidden>
+        <thead><tr><th>Name</th><th>Location</th><th>Wi-Fi</th><th>Asks the device for</th><th>Changed</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <p id="noProfs" class="dim">No profile yet.</p>
+    </section>
     <section class="card panel" id="l-templates" hidden>
       <div class="row">
         <h2>Templates</h2>
@@ -546,6 +568,56 @@
   </form>
 </dialog>
 
+<dialog id="profDlg">
+  <form id="profForm">
+    <h2 id="profTitle">New profile</h2>
+    <div class="row left wrap">
+      <label class="grow">Name <input id="profName" maxlength="48" autocomplete="off" required></label>
+      <label class="grow">Note <input id="profNote" maxlength="200" autocomplete="off"></label>
+    </div>
+    <h3>At the control center</h3>
+    <div class="row left wrap">
+      <label class="grow">Region <input id="profRegion" maxlength="48" autocomplete="off"></label>
+      <label class="grow">Country <input id="profCountry" maxlength="48" autocomplete="off"></label>
+      <label class="grow">Site <input id="profSite" maxlength="48" autocomplete="off"></label>
+    </div>
+    <div id="profGroups" class="chips"></div>
+    <h3>Asks the device for</h3>
+    <label class="check"><input id="profCtl" type="checkbox"> Changes from the control center (settings, configurations, restart)</label>
+    <label>Unattended remote console
+      <select id="profUn"><option value="0">no</option><option value="1">1 h</option><option value="8">8 h</option><option value="24">24 h</option><option value="72">72 h</option><option value="168">7 days</option></select>
+    </label>
+    <h3>Wi-Fi after the approval</h3>
+    <p class="dim">Leave the SSID empty to keep the device's Wi-Fi. Needs changes from the control center.</p>
+    <div class="row left wrap">
+      <label class="grow">SSID <input id="profSsid" maxlength="32" autocomplete="off"></label>
+      <label>Security
+        <select id="profAuth"><option value="0">WPA2/WPA3 password</option><option value="1">802.1X EAP-TLS (certificate)</option><option value="2">802.1X PEAP</option><option value="3">802.1X EAP-TTLS</option></select>
+      </label>
+    </div>
+    <div class="row left wrap">
+      <label class="grow" data-prof="23">User <input id="profUser" maxlength="64" autocomplete="off"></label>
+      <label class="grow" data-prof="0123">Password <input id="profPass" type="password" maxlength="64" autocomplete="new-password"></label>
+      <label class="grow" data-prof="123">Identity (outer) <input id="profIdent" maxlength="64" autocomplete="off"></label>
+    </div>
+    <div class="row left wrap" data-prof="123">
+      <label class="grow">CA certificate of the RADIUS server (.pem) <input id="profCa" type="file" accept=".pem,.crt,.cer"></label>
+      <label class="check"><input id="profCaCheck" type="checkbox"> Check the RADIUS server against it</label>
+    </div>
+    <div class="row left wrap" data-prof="1">
+      <label class="grow">Client certificate with key (.p12 or .pem) <input id="profClient" type="file" accept=".p12,.pfx,.pem"></label>
+      <label class="grow">Password of the .p12 <input id="profClientPass" type="password" autocomplete="off"></label>
+    </div>
+    <label>DNS server (empty: from the network) <input id="profDns" maxlength="15" autocomplete="off"></label>
+    <p id="profHave" class="dim"></p>
+    <p id="profErr" class="err" hidden></p>
+    <div class="row end wrap">
+      <button id="profCancel" class="btn" type="button">Cancel</button>
+      <button class="btn primary" type="submit">Save</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="pickDlg">
   <form id="pickForm">
     <h2 id="pickTitle"></h2>
@@ -630,6 +702,9 @@
     <li>Join the device's hotspot with a phone and scan the code. The device's web interface opens with the token; tap “Enroll” there.</li>
     <li>The device shows up here as “waiting”. Type in the code from its display.</li>
   </ol>
+  <label>Profile for this device
+    <select id="inviteProf"><option value="0">none</option></select>
+  </label>
   <canvas id="qr" width="10" height="10"></canvas>
   <label>Or paste the token by hand (Menu → Network → Control center)
     <textarea id="tokenText" rows="4" readonly></textarea>

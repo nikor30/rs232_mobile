@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"embed"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -86,8 +87,21 @@ var commandArgs = map[string]func(args json.RawMessage) error{
 		return nil
 	},
 	// Stored configurations: read one out, write one back, remove one.
-	"config_get":    configArgs(false),
-	"config_put":    configArgs(true),
+	"config_get": configArgs(false),
+	"config_put": configArgs(true),
+	// a certificate for the device's WLAN client (profiles.go): slot "ca" or
+	// "client", the file base64-coded, the password of a .p12
+	"cert_put": func(args json.RawMessage) error {
+		var a struct {
+			Slot string `json:"slot"`
+			Data string `json:"data"`
+			Pass string `json:"pass"`
+		}
+		if err := json.Unmarshal(args, &a); err != nil || (a.Slot != "ca" && a.Slot != "client") || a.Data == "" || len(a.Data) > 8200 {
+			return errors.New(`cert_put needs {"slot": "ca" or "client", "data": base64 of the file, "pass": ""}`)
+		}
+		return nil
+	},
 	"config_delete": configArgs(false),
 	// A firmware package from the shelf (firmware.go). The device fetches it,
 	// checks the owner's signature and only then installs it.
@@ -130,13 +144,17 @@ var commandArgs = map[string]func(args json.RawMessage) error{
 	// its touch display, each time; minutes is the most they are asked for.
 	"console": func(args json.RawMessage) error {
 		var a struct {
-			Port    int `json:"port"`
-			Minutes int `json:"minutes"`
+			Port    int    `json:"port"`
+			Minutes int    `json:"minutes"`
+			E2E     string `json:"e2e"` // the browser's one-time key (console.go): base64 of a P-256 point
 		}
 		dec := json.NewDecoder(bytes.NewReader(args))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&a); err != nil {
 			return errors.New(`console needs {"port": 1, "minutes": 15}`)
+		}
+		if k, err := base64.StdEncoding.DecodeString(a.E2E); a.E2E != "" && (err != nil || len(k) != 65) {
+			return errors.New("e2e: base64 of a 65-byte P-256 key")
 		}
 		if a.Port < 1 || a.Port > 4 {
 			return errors.New("port: 1 to 4")
@@ -290,6 +308,13 @@ func (sv *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /admin/v1/server/rotate-key", sv.admin(sv.rotateKey))
 	mux.HandleFunc("POST /admin/v1/server/rotate-key/end", sv.admin(sv.endKeyChange))
 	mux.HandleFunc("POST /admin/v1/enroll-tokens", sv.admin(sv.newToken))
+	mux.HandleFunc("GET /admin/v1/profiles", sv.admin(sv.listProfiles))
+	mux.HandleFunc("POST /admin/v1/profiles", sv.admin(sv.putProfile))
+	mux.HandleFunc("PUT /admin/v1/profiles/{id}", sv.admin(sv.putProfile))
+	mux.HandleFunc("DELETE /admin/v1/profiles/{id}", sv.admin(sv.deleteProfile))
+	mux.HandleFunc("POST /admin/v1/devices/{id}/profile", sv.admin(sv.profileDevice))
+	mux.HandleFunc("POST /admin/v1/devices/{id}/backup", sv.onDevice(store.RightManage, sv.backupNow))
+	mux.HandleFunc("POST /admin/v1/devices/{id}/restore", sv.admin(sv.restoreBackup))
 	mux.HandleFunc("POST /admin/v1/enrollment/open", sv.admin(sv.openEnrollment))
 	mux.HandleFunc("GET /admin/v1/firmware", sv.signed(sv.listFirmware))
 	mux.HandleFunc("POST /admin/v1/firmware", sv.adminMax(sv.addFirmware, fwMaxPkg))
@@ -526,6 +551,7 @@ func (sv *Server) msg(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+		sv.autoBackup(e.deviceID, m.Status) // queued now, handed over with this answer
 		state, cmds, err := sv.st.Poll(e.deviceID, m.Status, m.Results)
 		if err != nil || state == store.StateRevoked {
 			sv.drop(sid)
@@ -772,8 +798,9 @@ func (sv *Server) status(w http.ResponseWriter, _ *http.Request) {
 
 func (sv *Server) newToken(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		TTLS int    `json:"ttl_s"`
-		Note string `json:"note"`
+		TTLS    int    `json:"ttl_s"`
+		Note    string `json:"note"`
+		Profile uint64 `json:"profile"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil && err != io.EOF {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad JSON"})
@@ -785,7 +812,7 @@ func (sv *Server) newToken(w http.ResponseWriter, r *http.Request) {
 	if in.TTLS > 24*3600 {
 		in.TTLS = 24 * 3600
 	}
-	t, err := sv.st.NewToken(time.Duration(in.TTLS)*time.Second, in.Note)
+	t, err := sv.st.NewToken(time.Duration(in.TTLS)*time.Second, in.Note, in.Profile)
 	if err != nil {
 		fail(w, err)
 		return
@@ -793,6 +820,15 @@ func (sv *Server) newToken(w http.ResponseWriter, r *http.Request) {
 	id, _ := hex.DecodeString(t.ID)
 	fp := proto.Fingerprint(sv.st.ServerKey().Public())
 	tok := proto.EnrollToken{URL: sv.cfg.PublicURL, Fingerprint: fp[:], ID: id, Secret: t.Secret}
+	if in.Profile != 0 {
+		p, err := sv.st.Profile(in.Profile)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		tok.Profile = tokenProfile(p)
+		note(r).detail = "profile " + p.Name
+	}
 	writeJSON(w, http.StatusCreated, map[string]any{"token": tok.String(), "expires": t.Expires})
 }
 
@@ -882,6 +918,12 @@ func (sv *Server) approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf("device %s approved", r.PathValue("id"))
+	// the profile it enrolled with: queued now, carried out when it next asks
+	if prof, done, err := sv.st.DeviceProfile(r.PathValue("id")); err == nil && prof != 0 && !done {
+		if err := sv.applyProfile(r.PathValue("id"), prof, who(r).Name); err != nil {
+			log.Printf("device %s: profile %d not applied: %v", r.PathValue("id"), prof, err)
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"state": store.StateActive})
 }
 

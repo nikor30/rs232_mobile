@@ -1,6 +1,7 @@
 #include "c2.h"
 #include "c2_proto.h"
 #include "c2_console.h"
+#include "c2_e2e.h"
 #include "c2_update.h"
 #include "update_key.h"
 #include "xfer.h"
@@ -24,6 +25,8 @@
 #include <esp_ota_ops.h>
 #include <soc/soc_memory_layout.h>
 #include <mbedtls/base64.h>
+#include "certs.h"
+#include "sdbackup.h"
 #include <mbedtls/sha256.h>
 #include <esp_heap_caps.h>
 #include <esp_random.h>
@@ -66,6 +69,11 @@ static std::vector<MainJob> jobs;        // under mux: task -> main loop
 static std::vector<String> jobResults;   // under mux: main loop -> task, one JSON object each
 static const size_t MAX_JOBS = 8;
 static volatile bool rebootWanted = false, rebootNow = false;
+// The command whose answer has to reach the server before the restart. Not
+// just "some answer": a profile sends certificates and then "set" in one go,
+// and the device restarted as soon as the first of them was answered - the
+// others stayed "sent" at the server for good.
+static volatile uint32_t rebootAfter = 0;
 static volatile uint32_t sdJob = 0;      // the "sd_put" command the task is to carry out (main loop -> task)
 static volatile uint32_t updateJob = 0;  // the "update" command the task is to carry out (main loop -> task)
 static char devName[33];
@@ -92,7 +100,24 @@ static struct {
   uint32_t seq = 0;              // next byte of the port's output to pass on (Bridge numbering)
   char reason[48] = "";
   C2Console::Stream *stream = nullptr;
+  // End to end (c2_e2e.h): set when the browser sent its key with the request.
+  C2E2E::Session *e2e = nullptr;
+  char e2ePub[92] = "";          // this device's key, base64, in every console message
+  uint8_t inPlain[C2E2E::MAX_PLAIN];
+  size_t inPlainLen = 0;         // decrypted input the port has not taken yet
 } con;
+
+// Forgets the console's keys. Under mux.
+static void conForgetKeys() {
+  if (con.e2e) {
+    memset(con.e2e, 0, sizeof(*con.e2e));
+    free(con.e2e);
+    con.e2e = nullptr;
+  }
+  con.e2ePub[0] = 0;
+  memset(con.inPlain, 0, sizeof(con.inPlain));
+  con.inPlainLen = 0;
+}
 static volatile bool conBusy = false;    // con.state != CON_NONE, readable without the lock
 static bool conAnnounced = false;        // task: the server has the "yes" to the console that is open now
 static bool conAtCollect = false;
@@ -268,6 +293,7 @@ static void forgetAll() {
     if (con.state != CON_NONE) {
       delete con.stream;
       con.stream = nullptr;
+      conForgetKeys();
       con.state = CON_NONE;
       conBusy = false;
     }
@@ -780,7 +806,9 @@ static void doPoll() {
   }
   if (ex != EX_OK) return retry(ex == EX_NET ? TR("server not reachable", "Server nicht erreichbar", "servidor inacessivel") : TR("unusable answer from the server", "Antwort des Servers unbrauchbar", "resposta invalida do servidor"));
 
-  if (rebootWanted && results.size()) rebootNow = true;    // the answer to "reboot" has arrived at the server
+  if (rebootWanted)                                         // has the answer to "reboot", "set" or "update" arrived?
+    for (JsonObject r : results.as<JsonArray>())
+      if ((r["id"] | 0UL) == rebootAfter) rebootNow = true;
   if (conAtCollect) conAnnounced = true;
   results.clear();
   retryMs = RETRY_MIN_MS;
@@ -840,6 +868,7 @@ static void conFinish(const char *reason) {
     Lock l;
     delete con.stream;
     con.stream = nullptr;
+    conForgetKeys();
     con.state = CON_NONE;
     conBusy = false;
   }
@@ -865,6 +894,7 @@ static void conStep() {
     if (con.state == CON_END) strlcpy(endReason, con.reason, sizeof(endReason));
     uint32_t left = con.state == CON_OPEN && (int32_t)(con.untilMs - millis()) > 0 ? (con.untilMs - millis()) / 1000 : 0;
     n = C2Console::buildMessage(msg, con.id, *con.stream, left, endReason);
+    if (con.e2ePub[0]) msg["e2e"] = (const char *)con.e2ePub;   // the browser's other half
   }
   if (!conOkMs) conOkMs = millis();
   keepAlive = true;
@@ -1017,6 +1047,7 @@ static void doUpdate(uint32_t id) {
   char out[80];
   snprintf(out, sizeof(out), "updated to %s (%s), restarting", m.fw, m.lang);
   answer(id, true, quoted(out));
+  rebootAfter = id;
   rebootWanted = true;                   // carried out once the answer has reached the server
   nextPollAt = millis();
 #endif
@@ -1325,6 +1356,7 @@ static void execute(const MainJob &job) {
     if (!settings.c2Control) answer(job.id, false, quoted(denied));
     else {
       answer(job.id, true, quoted("restarting"));
+      rebootAfter = job.id;
       rebootWanted = true;               // carried out once the answer has reached the server
     }
   } else if (job.type == "update") {
@@ -1370,6 +1402,7 @@ static void execute(const MainJob &job) {
       else {
         Serial.println("[C2]   Einstellungen von der Leitstelle gespeichert, Neustart");
         answer(job.id, true, quoted("saved, restarting"));
+        rebootAfter = job.id;
         rebootWanted = true;
       }
     }
@@ -1421,12 +1454,64 @@ static void execute(const MainJob &job) {
       con.port = port - 1;
       con.minutes = minutes;
       con.askedMs = millis();
+      conForgetKeys();
+      // The browser's one-time key: the console runs encrypted between it and
+      // this device, and the display shows the code to compare.
+      const char *bk = args["e2e"] | "";
+      uint8_t bpub[C2E2E::PUB], dpub[C2E2E::PUB];
+      size_t bn = 0;
+      if (*bk && !mbedtls_base64_decode(bpub, sizeof(bpub), &bn, (const uint8_t *)bk, strlen(bk)) && bn == C2E2E::PUB) {
+        con.e2e = (C2E2E::Session *)heap_caps_calloc(1, sizeof(C2E2E::Session), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        auto rng = [](void *, unsigned char *out, size_t len) { esp_fill_random(out, len); return 0; };
+        size_t pl = 0;
+        if (con.e2e && C2E2E::start(*con.e2e, bpub, dpub, rng, nullptr) &&
+            !mbedtls_base64_encode((uint8_t *)con.e2ePub, sizeof(con.e2ePub), &pl, dpub, sizeof(dpub)))
+          con.e2ePub[pl] = 0;
+        else conForgetKeys();
+      }
     }
     Display::wake();
     if (unattended) {
       Serial.printf("[C2]   Fernkonsole angefragt: Port %d, %d min - unbeaufsichtigter Zugriff ist erlaubt (noch %lu s)\n", port, minutes, (unsigned long)unattLeft);
       consoleAnswer(true);
     } else Serial.printf("[C2]   Fernkonsole angefragt: Port %d, %d min - wartet auf Zustimmung am Display\n", port, minutes);
+  } else if (job.type == "sd_backup" || job.type == "sd_restore") {
+    // The encrypted backup on the SD card (sdbackup.cpp). It holds passwords
+    // and keys, and a restore changes everything: both need the permission.
+    const char *k64 = args["key"] | "";
+    uint8_t key[32];
+    size_t n = 0;
+    String info;
+    const char *err = nullptr;
+    if (!settings.c2Control) err = denied;
+    else if (mbedtls_base64_decode(key, sizeof(key), &n, (const uint8_t *)k64, strlen(k64)) || n != sizeof(key)) err = "the backup key is not usable";
+    else if (job.type == "sd_backup") err = SdBackup::write(key, info);
+    else err = SdBackup::restore(key, info);
+    memset(key, 0, sizeof(key));
+    Serial.printf("[C2]   %s: %s\n", job.type == "sd_backup" ? "Sicherung auf die SD-Karte" : "Wiederherstellung von der SD-Karte", err ? err : info.c_str());
+    answer(job.id, !err, quoted(err ? err : info.c_str()));
+    if (!err && job.type == "sd_restore") {
+      rebootAfter = job.id;
+      rebootWanted = true;               // the restored settings take effect with the start
+    }
+  } else if (job.type == "cert_put") {
+    // A certificate for the WLAN client, sent by a profile (server/internal/
+    // server/profiles.go): the same checks as an upload in the web interface.
+    // It takes effect with the next start of the client - the "set" that
+    // follows restarts the device.
+    const char *slot = args["slot"] | "";
+    const char *b64 = args["data"] | "";
+    size_t len = strlen(b64), n = 0;
+    uint8_t *buf = len ? ext(len * 3 / 4 + 4) : nullptr;
+    String msg;
+    bool ok = false;
+    if (!settings.c2Control) msg = denied;
+    else if (strcmp(slot, "ca") && strcmp(slot, "client")) msg = "unknown slot";
+    else if (!buf || mbedtls_base64_decode(buf, len * 3 / 4 + 4, &n, (const uint8_t *)b64, len) || !n) msg = "the file is not base64";
+    else ok = Certs::upload(!strcmp(slot, "ca") ? Certs::CA : Certs::CLIENT, buf, n, args["pass"] | "", msg);
+    free(buf);
+    Serial.printf("[C2]   Zertifikat \"%s\" von der Leitstelle: %s\n", slot, ok ? "gespeichert" : msg.c_str());
+    answer(job.id, ok, quoted(msg.c_str()));
   } else answer(job.id, false, quoted("unknown command"));
 }
 
@@ -1519,13 +1604,14 @@ void consoleEnd() {
 }
 
 Console console() {
-  Console c = {0, 0, 0, 0};
+  Console c = {};
   if (!mux || !conBusy) return c;
   Lock l;
   c.state = con.state == CON_ASK ? 1 : con.state == CON_OPEN ? 2 : 0;
   c.port = con.port;
   c.minutes = con.minutes;
   if (con.state == CON_OPEN && (int32_t)(con.untilMs - millis()) > 0) c.leftS = (con.untilMs - millis()) / 1000;
+  if (con.e2e) strlcpy(c.code, con.e2e->code, sizeof(c.code));
   return c;
 }
 
@@ -1552,18 +1638,49 @@ static void conPump() {
     // port -> server. What does not fit waits in the port's ring; if the ring
     // has moved on, the gap is counted so the offsets stay true.
     uint32_t first = Bridge::ringStartSeq(port);
-    if ((int32_t)(first - con.seq) > 0 && !st.outLen) {
-      st.outSkip(first - con.seq);
-      con.seq = first;
-    }
-    if (st.outRoom() && (int32_t)(first - con.seq) <= 0) {
-      size_t n = Bridge::copyFrom(port, con.seq, st.out + st.outLen, st.outRoom());
-      st.outLen += n;
-      con.seq += n;
+    if (con.e2e) {
+      // Encrypted: frames go into the stream, never a gap in it (the browser
+      // reads frame after frame). What the ring lost before is just lost.
+      if ((int32_t)(first - con.seq) > 0) con.seq = first;
+      size_t room = st.outRoom();
+      if (room > 2 + C2E2E::TAG + 16) {
+        uint8_t plain[C2E2E::MAX_PLAIN];
+        size_t want = min(room - 2 - C2E2E::TAG, C2E2E::MAX_PLAIN);
+        size_t n = Bridge::copyFrom(port, con.seq, plain, want);
+        if (n) {
+          st.outLen += C2E2E::seal(*con.e2e, plain, n, st.out + st.outLen);
+          con.seq += n;
+        }
+      }
+    } else {
+      if ((int32_t)(first - con.seq) > 0 && !st.outLen) {
+        st.outSkip(first - con.seq);
+        con.seq = first;
+      }
+      if (st.outRoom() && (int32_t)(first - con.seq) <= 0) {
+        size_t n = Bridge::copyFrom(port, con.seq, st.out + st.outLen, st.outRoom());
+        st.outLen += n;
+        con.seq += n;
+      }
     }
     // server -> port: like typing in the web terminal. Input the port will
     // not take now (file transfer, auto-baud) is dropped, as it is there.
-    if (st.inLen) {
+    if (con.e2e) {
+      // frames from the browser: opened one at a time, as the port takes them
+      while (!con.inPlainLen && st.inLen) {
+        bool bad = false;
+        size_t used = C2E2E::open(*con.e2e, st.in, st.inLen, con.inPlain, con.inPlainLen, bad);
+        if (bad) return conEndLocked("console data was not genuine");
+        if (!used) break;                  // the rest of the frame is still on its way
+        st.inDrop(used);
+      }
+      if (con.inPlainLen) {
+        size_t room = Bridge::txFree(port), n = Bridge::write(port, con.inPlain, min(con.inPlainLen, room));
+        if (!n && room) n = con.inPlainLen;   // the port does not take input now: dropped, as in the web terminal
+        memmove(con.inPlain, con.inPlain + n, con.inPlainLen - n);
+        con.inPlainLen -= n;
+      }
+    } else if (st.inLen) {
       size_t room = Bridge::txFree(port), n = Bridge::write(port, st.in, min(st.inLen, room));
       st.inDrop(n ? n : room ? st.inLen : 0);
     }

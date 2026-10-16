@@ -75,7 +75,7 @@ func must(t *testing.T, err error) {
 // enroll brings a device with the given key into the store, pending.
 func enroll(t *testing.T, s *Store, pub, name string) string {
 	t.Helper()
-	tok, err := s.NewToken(time.Hour, "for "+name)
+	tok, err := s.NewToken(time.Hour, "for "+name, 0)
 	must(t, err)
 	must(t, s.Enroll(tok.ID, []byte(pub), name, json.RawMessage(`{"fw":"1.8.0","ports":4}`), "123456"))
 	for _, d := range s.Devices() {
@@ -98,7 +98,7 @@ func fill(t *testing.T, s *Store, c *clock) (active string) {
 	enroll(t, s, "key-of-device-two", "wartet")
 	gone := enroll(t, s, "key-of-device-three", "gesperrt")
 	must(t, s.Revoke(gone))
-	_, err := s.NewToken(time.Hour, "unbenutzt")
+	_, err := s.NewToken(time.Hour, "unbenutzt", 0)
 	must(t, err)
 
 	c.now = c.now.Add(time.Minute)
@@ -272,7 +272,7 @@ func TestPostgresTakesWhatDevicesSend(t *testing.T) {
 	onPostgres(t)
 	dir, c := t.TempDir(), &clock{now: t0}
 	s := openT(t, dir, c)
-	tok, err := s.NewToken(time.Hour, "zero\x00byte and \xff\xfe")
+	tok, err := s.NewToken(time.Hour, "zero\x00byte and \xff\xfe", 0)
 	must(t, err)
 	must(t, s.Enroll(tok.ID, []byte("key"), "name\x00with\xc3\x28junk", json.RawMessage("{\"a\":\"\\u0000\",\"b\":\"\xff\"}"), "123456"))
 	id := s.Devices()[0].ID
@@ -397,7 +397,7 @@ func TestCheckNoticesALostBackend(t *testing.T) {
 	if since, err := s.Health(); err == nil || !since.Equal(t0) {
 		t.Fatalf("health: since %v, %v", since, err)
 	}
-	if _, err := s.NewToken(time.Hour, "x"); err == nil {
+	if _, err := s.NewToken(time.Hour, "x", 0); err == nil {
 		t.Fatal("a token was saved into nothing")
 	}
 	// What could not be written goes out with the first check that works again.
@@ -435,7 +435,7 @@ func TestPostgresTakesTheLockAgain(t *testing.T) {
 	if _, err := OpenForTest(dir); err == nil || !strings.Contains(err.Error(), "another server") {
 		t.Fatalf("second server after the lock was taken again: %v", err)
 	}
-	if _, err := s.NewToken(time.Hour, "x"); err != nil {
+	if _, err := s.NewToken(time.Hour, "x", 0); err != nil {
 		t.Fatalf("save after the lock was taken again: %v", err)
 	}
 }
@@ -451,10 +451,10 @@ func TestPostgresStopsWritingWhenAnotherServerTookOver(t *testing.T) {
 	if err := s.Check(); !errors.Is(err, ErrTaken) {
 		t.Fatalf("check: %v", err)
 	}
-	if _, err := s.NewToken(time.Hour, "x"); !errors.Is(err, ErrTaken) {
+	if _, err := s.NewToken(time.Hour, "x", 0); !errors.Is(err, ErrTaken) {
 		t.Fatalf("the first server still writes: %v", err)
 	}
-	if _, err := s2.NewToken(time.Hour, "y"); err != nil {
+	if _, err := s2.NewToken(time.Hour, "y", 0); err != nil {
 		t.Fatalf("the second server: %v", err)
 	}
 }
@@ -464,7 +464,7 @@ func TestKeyChangeIsKept(t *testing.T) {
 	s := openT(t, dir, c)
 	first := s.ServerKey().Public()
 	a, b := enroll(t, s, "a", "eins"), enroll(t, s, "b", "zwei")
-	_, err := s.NewToken(time.Hour, "offen")
+	_, err := s.NewToken(time.Hour, "offen", 0)
 	must(t, err)
 	must(t, s.RotateKey(48*time.Hour))
 	if bytes.Equal(first, s.ServerKey().Public()) {
@@ -523,6 +523,10 @@ func TestPostgresMigratesFromTheFirstSchema(t *testing.T) {
 	p := s.b.(*pg)
 	for _, q := range []string{
 		// what the later schemas added, taken away again
+		`DROP TABLE profiles`,
+		`ALTER TABLE devices DROP COLUMN profile, DROP COLUMN profile_done`,
+		`ALTER TABLE tokens DROP COLUMN profile`,
+		`ALTER TABLE server DROP COLUMN next_profile`,
 		`DROP TABLE groups`,
 		`ALTER TABLE devices DROP COLUMN country, DROP COLUMN groups`,
 		`ALTER TABLE users DROP COLUMN role`,
@@ -550,5 +554,49 @@ func TestPostgresMigratesFromTheFirstSchema(t *testing.T) {
 	must(t, s.RotateKey(time.Hour))
 	if _, old, err := s.KeyFor(id); err != nil || !old {
 		t.Fatalf("after a key change: old=%v %v", old, err)
+	}
+}
+
+// A profile, the token that names it and the device enrolled with it survive
+// a restart - in the file and in PostgreSQL.
+func TestProfileSurvivesRestart(t *testing.T) {
+	dir, c := t.TempDir(), &clock{now: t0}
+	s := openT(t, dir, c)
+	p, err := s.PutProfile(&Profile{Name: "Kunde A", Site: "Lager", Control: true, UnattendedH: 8,
+		Wifi: &ProfileWifi{SSID: "corp", Auth: 1, CA: "pem", Client: []byte{1, 2, 3}, ClientPass: "x"}}, "anna")
+	must(t, err)
+	tok, err := s.NewToken(time.Hour, "", p.ID)
+	must(t, err)
+	if _, err := s.NewToken(time.Hour, "", p.ID+1); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("token for a missing profile: %v", err)
+	}
+	must(t, s.Close())
+	s = openT(t, dir, c)
+	q, err := s.Profile(p.ID)
+	if err != nil || q.Name != "Kunde A" || !q.Control || q.UnattendedH != 8 || q.Wifi == nil || q.Wifi.CA != "pem" || len(q.Wifi.Client) != 3 {
+		t.Fatalf("after the restart: %+v %v", q, err)
+	}
+	must(t, s.Enroll(tok.ID, []byte("profile-device"), "neu", nil, "123456"))
+	id := ""
+	for _, d := range s.Devices() {
+		if d.Name == "neu" {
+			id = d.ID
+		}
+	}
+	s.mu.Lock()
+	d := s.d.Devices[id]
+	prof := d.Profile
+	s.mu.Unlock()
+	if prof != p.ID {
+		t.Fatalf("the device's profile: %d", prof)
+	}
+	must(t, s.ProfileApplied(id, p.ID))
+	must(t, s.Close())
+	s = openT(t, dir, c)
+	if pr, done, err := s.DeviceProfile(id); err != nil || pr != p.ID || !done {
+		t.Fatalf("after the second restart: %d %v %v", pr, done, err)
+	}
+	if p2, err := s.PutProfile(&Profile{ID: p.ID, Name: "Kunde A", Wifi: &ProfileWifi{SSID: "corp", Auth: 1}}, "anna"); err != nil || p2.Wifi.CA != "pem" || len(p2.Wifi.Client) != 3 {
+		t.Fatalf("secrets left empty are kept: %+v %v", p2, err)
 	}
 }

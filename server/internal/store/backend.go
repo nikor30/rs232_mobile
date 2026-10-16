@@ -28,6 +28,7 @@ type changes struct {
 	users   map[string]bool
 	tpls    map[uint64]bool
 	groups  map[uint64]bool
+	profs   map[uint64]bool
 	audit   []*AuditEntry // appended
 }
 
@@ -38,7 +39,7 @@ type devChange struct {
 }
 
 func (ch *changes) empty() bool {
-	return !ch.meta && len(ch.tokens) == 0 && len(ch.devices) == 0 && len(ch.users) == 0 && len(ch.tpls) == 0 && len(ch.groups) == 0 && len(ch.audit) == 0
+	return !ch.meta && len(ch.tokens) == 0 && len(ch.devices) == 0 && len(ch.users) == 0 && len(ch.tpls) == 0 && len(ch.groups) == 0 && len(ch.profs) == 0 && len(ch.audit) == 0
 }
 
 func (ch *changes) token(id string) {
@@ -53,6 +54,13 @@ func (ch *changes) tpl(id uint64) {
 		ch.tpls = map[uint64]bool{}
 	}
 	ch.tpls[id] = true
+}
+
+func (ch *changes) profile(id uint64) {
+	if ch.profs == nil {
+		ch.profs = map[uint64]bool{}
+	}
+	ch.profs[id] = true
 }
 
 func (ch *changes) user(name string) {

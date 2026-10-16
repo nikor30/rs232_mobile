@@ -288,6 +288,11 @@
         <tr id="c2ConRow" hidden><th>Remote console</th><td><span id="c2Con"></span> <button id="c2ConEnd" class="btn danger" type="button" hidden>End</button></td></tr>
       </table>
       <label>invitation token <input id="c2Token" maxlength="1024" placeholder="c2e1:…" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+      <div id="c2Profile" class="note" hidden>
+        <p><b>This invitation comes with the profile <span id="c2ProfName"></span>.</b> By enrolling you accept, here at the device:</p>
+        <ul id="c2ProfList"></ul>
+        <label class="check"><input id="c2ProfOk" type="checkbox"> I accept this for this device</label>
+      </div>
       <label class="check"><input id="c2Control" type="checkbox"> The control center may change settings, read and write configurations, play them and restart the device</label>
       <p class="hint">Unticked, the server can only read: state, settings (without passwords) and the list of configurations. The box can be ticked only here, never from the server.</p>
       <p class="hint">The <b>Remote console</b> – the administrator operates a serial port through the server – does not depend on this box: every session has to be allowed on the device's touch display, runs for the requested time at most and can be ended there and here at any moment.</p>

@@ -19,7 +19,8 @@
   const STATES = { pending: t('waiting for confirmation'), active: t('connected'), revoked: t('revoked') };
   const CMD_STATES = { queued: t('queued'), sent: t('fetched'), done: t('done'), failed: t('refused'), expired: t('expired') };
   const CMD_NAMES = { ping: t('Ping'), status: t('Status'), settings: t('Settings'), configs: t('Configurations'), play: t('Play'), reboot: t('Restart'), console: t('Remote console'), update: t('Firmware update'), sd_put: t('File to the SD card'), sd_delete: t('Delete from the SD card'),
-    set: t('Change settings'), config_get: t('Read configuration'), config_put: t('Write configuration'), config_delete: t('Delete configuration') };
+    set: t('Change settings'), config_get: t('Read configuration'), config_put: t('Write configuration'), config_delete: t('Delete configuration'),
+    cert_put: t('Certificate to the device'), sd_backup: t('Backup to the SD card'), sd_restore: t('Restore from the SD card') };
   const APP = t('RS232 Control Center');
 
   let token = sessionStorage.getItem('c2admin') || '';   // admin token, if that is how this tab got in
@@ -29,7 +30,7 @@
   // what the side and the bar above the cards have narrowed the fleet down to
   let place = null, groupFilter = 0, filter = 'all';
   const VIEWS = { fleet: t('Devices'), library: t('Library'), access: t('Access'), server: t('Server') };
-  const TABS = { device: ['overview', 'console', 'content', 'settings', 'activity'], library: ['templates', 'firmware', 'images'], access: ['groups', 'users'], server: ['status', 'key', 'audit'] };
+  const TABS = { device: ['overview', 'console', 'content', 'settings', 'activity'], library: ['templates', 'firmware', 'images', 'profiles'], access: ['groups', 'users'], server: ['status', 'key', 'audit'] };
   const PANEL = { device: 'p', library: 'l', access: 'a', server: 's' };
   const RIGHTS = { use: t('use'), manage: t('manage') };
   // The cookie of a signed-in account travels by itself. The X-C2 header shows
@@ -540,6 +541,9 @@
     if (selected !== d.id) return;                  // another device was picked meanwhile
     // which files this device has checked on its card: its own answers say so
     sdChecked = {};
+    const bk = cmds.filter((c) => c.type === 'sd_backup').pop();
+    $('#bkText').textContent = !bk ? t('No backup yet.') : bk.state === 'done' ? t('Last backup {ago}: {what}', { ago: ago(bk.done), what: t(String(bk.result)) })
+      : bk.state === 'failed' ? t('The last backup failed: {why}', { why: t(String(bk.result)) }) : t('A backup is on its way to the device.');
     for (const c of cmds) {
       const m = c.type === 'sd_put' && c.state === 'done' && typeof c.result === 'string' && /^stored (.+) \(\d+ bytes, MD5 ([0-9a-f]{32}) checked on the card\)$/.exec(c.result);
       if (m) sdChecked[m[1]] = m[2];
@@ -703,6 +707,7 @@
 
   async function loadLibrary() {
     tabs('library', $('[data-tabs=library]'));
+    if (admin) loadProfiles();
     try { [templates, packages, images] = await Promise.all([api('GET', '/templates'), api('GET', '/firmware'), api('GET', '/images')]); } catch (e) { return; }
     libAt = Date.now();
     const mine = devices.filter((d) => d.state === 'active' && d.right === 'manage').map((d) => [d.id, (d.name || d.id.slice(0, 8)) + (placeText(d) ? ' – ' + placeText(d) : '')]);
@@ -1154,6 +1159,56 @@
   const unb64 = (text) => Uint8Array.from(atob(text || ''), (c) => c.charCodeAt(0));
   const mmss = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 
+  // End to end (firmware src/c2_e2e.h): the browser makes a one-time key for
+  // each request it sends; the device answers with its own when the console
+  // opens. Both derive the same keys - the server carries only ciphertext - and
+  // the same six digits, shown here and on the device's display.
+  const conKeys = {};                               // command id -> our key pair, until the console opens
+  const SUBTLE = window.crypto && window.crypto.subtle;
+  async function e2eSession(kp, devKey64) {
+    const bpub = new Uint8Array(await SUBTLE.exportKey('raw', kp.publicKey)), dpub = unb64(devKey64);
+    const dk = await SUBTLE.importKey('raw', dpub, { name: 'ECDH', namedCurve: 'P-256' }, false, []);
+    const z = await SUBTLE.deriveBits({ name: 'ECDH', public: dk }, kp.privateKey, 256);
+    const salt = new Uint8Array(130);
+    salt.set(bpub, 0);
+    salt.set(dpub, 65);
+    const ikm = await SUBTLE.importKey('raw', z, 'HKDF', false, ['deriveBits']);
+    const okm = new Uint8Array(await SUBTLE.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt, info: new TextEncoder().encode('rs232-console-e2e-v1') }, ikm, 68 * 8));
+    const code = String(new DataView(okm.buffer, 64, 4).getUint32(0) % 1000000).padStart(6, '0');
+    return {
+      kOut: await SUBTLE.importKey('raw', okm.slice(0, 32), 'AES-GCM', false, ['encrypt']),
+      kIn: await SUBTLE.importKey('raw', okm.slice(32, 64), 'AES-GCM', false, ['decrypt']),
+      ctrOut: 0, ctrIn: 0, buf: new Uint8Array(0), broken: false, code: code.slice(0, 3) + ' ' + code.slice(3),
+    };
+  }
+  const e2eIv = (n) => { const v = new Uint8Array(12); new DataView(v.buffer).setBigUint64(4, BigInt(n)); return v; };
+  async function e2eSeal(s, bytes) {                // one frame: length | AES-GCM
+    const ct = new Uint8Array(await SUBTLE.encrypt({ name: 'AES-GCM', iv: e2eIv(s.ctrOut++) }, s.kOut, bytes));
+    const f = new Uint8Array(2 + ct.length);
+    f[0] = ct.length >> 8;
+    f[1] = ct.length & 255;
+    f.set(ct, 2);
+    return f;
+  }
+  async function e2eOpen(s, bytes) {                // what the frames that are complete say
+    const all = new Uint8Array(s.buf.length + bytes.length);
+    all.set(s.buf);
+    all.set(bytes, s.buf.length);
+    const out = [];
+    let at = 0;
+    while (all.length - at >= 2) {
+      const len = (all[at] << 8) | all[at + 1];
+      if (len < 16 || len > 528) { s.broken = true; break; }
+      if (all.length - at < 2 + len) break;
+      try {
+        out.push(new Uint8Array(await SUBTLE.decrypt({ name: 'AES-GCM', iv: e2eIv(s.ctrIn) }, s.kIn, all.subarray(at + 2, at + 2 + len))));
+      } catch (e) { s.broken = true; break; }
+      s.ctrIn++;
+      at += 2 + len;
+    }
+    s.buf = all.slice(at);
+    return out;
+  }
   function conDetach() {
     if (!con) return;
     con.abort.abort();
@@ -1168,7 +1223,9 @@
     while (con === c && !c.ended && c.queue.length) {
       const item = c.queue[0];
       try {
-        await api('POST', `/devices/${c.dev}/console/${c.id}/input`, item);
+        // encrypted once, sent until it got through: a frame must not be made twice
+        if (c.e2e && item.d && !item.sealed) { item.d = b64(await e2eSeal(c.e2e, unb64(item.d))); item.sealed = true; }
+        await api('POST', `/devices/${c.dev}/console/${c.id}/input`, item.sealed ? { d: item.d } : item);
         c.queue.shift();
       } catch (e) {
         if (e.status === 429) { await new Promise((r) => setTimeout(r, 300)); continue; }   // the device is slower than the typing
@@ -1182,7 +1239,7 @@
     if (!con || con.ended) return;
     const last = con.queue[con.queue.length - 1];
     // bytes typed while a request is on its way travel together (but not past 1 kB)
-    if (item.d && last && last.d && last !== con.queue[0] && last.d.length + item.d.length < 1400) last.d = b64([...unb64(last.d), ...unb64(item.d)]);
+    if (item.d && last && last.d && !last.sealed && last !== con.queue[0] && last.d.length + item.d.length < 680) last.d = b64([...unb64(last.d), ...unb64(item.d)]);
     else con.queue.push(item);
     conSend();
   }
@@ -1201,8 +1258,16 @@
         continue;
       }
       if (con !== c) return;
-      if (o.lost) c.term.write(`\r\n\x1b[90m[${t('{n} characters are missing', { n: o.lost })}]\x1b[0m\r\n`);
-      if (o.d) c.term.write(unb64(o.d));
+      if (o.lost) {
+        c.term.write(`\r\n\x1b[90m[${t('{n} characters are missing', { n: o.lost })}]\x1b[0m\r\n`);
+        if (c.e2e) c.e2e.broken = true;           // the frames do not line up any more
+      }
+      if (o.d && c.e2e && !c.e2e.broken) for (const part of await e2eOpen(c.e2e, unb64(o.d))) c.term.write(part);
+      else if (o.d && !c.e2e) c.term.write(unb64(o.d));
+      if (c.e2e && c.e2e.broken && !c.e2eGone) {
+        c.e2eGone = true;
+        c.term.write(`\r\n\x1b[31m[${t('The encrypted stream cannot be read any more – end the session and open a new one.')}]\x1b[0m\r\n`);
+      }
       c.next = o.next;
       c.left = o.left_s;
       c.leftAt = Date.now();
@@ -1214,7 +1279,7 @@
       }
     }
   }
-  function conAttach(dev, id, left) {
+  function conAttach(dev, id, left, devKey) {
     conDetach();
     $('#conBox').hidden = false;
     const term = new Terminal({ cursorBlink: true, scrollback: 5000, fontSize: 14, convertEol: false });
@@ -1223,12 +1288,26 @@
     term.open($('#term'));
     fit.fit();
     const c = con = { dev, id, term, fit, next: 0, abort: new AbortController(), ended: false, queue: [], sending: false, left: left || 0, leftAt: Date.now() };
+    const e2e = $('#conE2E');
+    e2e.hidden = false;
+    e2e.className = 'chip';
+    e2e.textContent = t('not end to end');
+    e2e.title = t('The server can read this session (no key from this browser, or older firmware on the device).');
+    if (conKeys[id] && devKey) {
+      c.ready = e2eSession(conKeys[id], devKey).then((s) => {
+        c.e2e = s;
+        delete conKeys[id];
+        e2e.className = 'chip ok';
+        e2e.textContent = '🔒 ' + t('end to end · code {code}', { code: s.code });
+        e2e.title = t('Encrypted between this browser and the device. The device shows the same code - if it does, nobody sits in between, not even the server.');
+      });
+    } else c.ready = Promise.resolve();
     term.onData((data) => {                         // a pasted text arrives in one piece: hand it on in small ones
       const bytes = new TextEncoder().encode(data);
       for (let i = 0; i < bytes.length; i += 512) conInput({ d: b64(bytes.subarray(i, i + 512)) });
     });
     term.focus();
-    conRead(c);
+    c.ready.then(() => conRead(c));
   }
   function renderConsole(d) {
     if (con && con.dev !== d.id) conDetach();
@@ -1246,7 +1325,8 @@
       st.className = 'dim ' + cls;
       const busy = cur && ['requested', 'granted', 'open'].includes(cur.state);
       $('#conForm').hidden = !!busy || d.state !== 'active';
-      if (cur && cur.state === 'open' && !(con && con.id === cur.id) && tab === 'console') conAttach(d.id, cur.id, cur.left_s);
+      // with our key for this request, wait until the device's key is there: a session opened without would stay unencrypted here
+      if (cur && cur.state === 'open' && !(con && con.id === cur.id) && tab === 'console' && (!conKeys[cur.id] || cur.e2e || Date.now() - (conKeys[cur.id].openSeen || (conKeys[cur.id].openSeen = Date.now())) > 8000)) conAttach(d.id, cur.id, cur.left_s, cur.e2e);
       if (con) {
         const left = Math.max(0, con.left - Math.round((Date.now() - con.leftAt) / 1000));
         $('#conInfo').textContent = con.ended ? t('ended') : t('Port {port} · {left} min left', { port: cur ? cur.port : '', left: mmss(left) });
@@ -1269,9 +1349,22 @@
       $('#noConLog').hidden = !!v.sessions.length;
     }).catch(() => {});
   }
-  $('#conForm').addEventListener('submit', (e) => {
+  $('#conForm').addEventListener('submit', async (e) => {
     e.preventDefault();
-    send('console', { port: +$('#conPort').value, minutes: +$('#conMinutes').value });
+    const args = { port: +$('#conPort').value, minutes: +$('#conMinutes').value };
+    let kp = null;
+    if (SUBTLE) {
+      try {
+        kp = await SUBTLE.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveBits']);
+        args.e2e = b64(new Uint8Array(await SUBTLE.exportKey('raw', kp.publicKey)));
+      } catch (err) { kp = null; }
+    }
+    try {
+      const c = await api('POST', `/devices/${selected}/commands`, { type: 'console', args });
+      if (kp) conKeys[c.id] = kp;
+      toast(t('{cmd}: queued – the device fetches the command the next time it reports in', { cmd: CMD_NAMES.console }));
+    } catch (err) { toast(err.message, 5000); }
+    refresh();
   });
   $('#conBreak').addEventListener('click', () => { conInput({ brk: true }); if (con) con.term.focus(); });
   $('#conClose').addEventListener('click', async () => {
@@ -1321,9 +1414,141 @@
     if (s) $('#openText').textContent = t('Registration without invitation is open for another {time}. Devices that register appear under “Waiting”.', { time: mins(Math.max(1, Math.ceil(s / 60))) });
     $('#openUrl').textContent = server ? server.public_url || '' : '';
   }
-  $('#invite').addEventListener('click', async () => {
+  // ---- profiles for new devices: kept at the server, named in an invitation
+  let profiles = [], profEditing = 0;
+  const AUTHS = ['WPA2', 'EAP-TLS', 'PEAP', 'EAP-TTLS'];
+  async function loadProfiles() {
+    try { profiles = await api('GET', '/profiles'); } catch (e) { return; }
+    const tb = $('#profs').tBodies[0];
+    tb.textContent = '';
+    for (const p of profiles) {
+      const asks = [p.control ? t('changes') : '', p.unattended_h ? t('unattended {h} h', { h: p.unattended_h }) : ''].filter(Boolean).join(', ') || '–';
+      const edit = el('button', { className: 'btn small', type: 'button', textContent: t('Edit') });
+      edit.addEventListener('click', () => editProfile(p));
+      const del = el('button', { className: 'btn small danger', type: 'button', textContent: t('Delete') });
+      del.addEventListener('click', async () => {
+        if (!await ask(t('Delete this profile?'), p.name, t('Delete'))) return;
+        try { await api('DELETE', `/profiles/${p.id}`); } catch (e) { toast(e.message, 5000); }
+        loadProfiles();
+      });
+      tb.append(el('tr', {}, el('td', { textContent: p.name + (p.note ? ' – ' + p.note : '') }), el('td', { textContent: [p.region, p.country, p.site].filter(Boolean).join(' › ') || '–' }),
+        el('td', { textContent: p.wifi ? `${p.wifi.ssid} (${AUTHS[p.wifi.auth] || ''})` : '–' }), el('td', { textContent: asks }),
+        el('td', { textContent: ago(p.updated) }), el('td', { className: 'acts' }, edit, del)));
+    }
+    label($('#profs'));
+    $('#profs').hidden = !profiles.length;
+    $('#noProfs').hidden = !!profiles.length;
+  }
+  function profAuthShow() {
+    const a = $('#profAuth').value;
+    for (const n of $('#profForm').querySelectorAll('[data-prof]')) n.hidden = !n.dataset.prof.includes(a);
+  }
+  function editProfile(p) {
+    profEditing = p ? p.id : 0;
+    const w = (p && p.wifi) || {};
+    $('#profTitle').textContent = p ? t('Edit profile') : t('New profile');
+    $('#profName').value = p ? p.name : '';
+    $('#profNote').value = (p && p.note) || '';
+    $('#profRegion').value = (p && p.region) || '';
+    $('#profCountry').value = (p && p.country) || '';
+    $('#profSite').value = (p && p.site) || '';
+    $('#profCtl').checked = !!(p && p.control);
+    $('#profUn').value = String((p && p.unattended_h) || 0);
+    $('#profSsid').value = w.ssid || '';
+    $('#profAuth').value = String(w.auth || 0);
+    $('#profUser').value = w.user || '';
+    $('#profIdent').value = w.identity || '';
+    $('#profPass').value = '';
+    $('#profPass').placeholder = w.pass_set ? t('unchanged') : '';
+    $('#profCaCheck').checked = !!w.ca_check;
+    $('#profDns').value = w.dns || '';
+    $('#profCa').value = $('#profClient').value = $('#profClientPass').value = '';
+    $('#profHave').textContent = [w.ca_set ? t('CA certificate stored') : '', w.client_set ? t('client certificate stored') : ''].filter(Boolean).join(' · ');
+    const box = $('#profGroups');
+    box.textContent = '';
+    for (const g of groups) {
+      const cb = el('input', { type: 'checkbox', value: g.id, checked: !!(p && (p.groups || []).includes(g.id)) });
+      box.append(el('label', { className: 'check' }, cb, ' ' + g.name));
+    }
+    $('#profErr').hidden = true;
+    profAuthShow();
+    $('#profDlg').showModal();
+  }
+  const fileText = (inp) => (inp.files[0] ? inp.files[0].text() : Promise.resolve(''));
+  const fileB64 = async (inp) => {
+    if (!inp.files[0]) return null;
+    const b = new Uint8Array(await inp.files[0].arrayBuffer());
+    let s = '';
+    for (const x of b) s += String.fromCharCode(x);
+    return btoa(s);
+  };
+  $('#profAuth').addEventListener('change', profAuthShow);
+  $('#profNew').addEventListener('click', () => editProfile(null));
+  $('#profCancel').addEventListener('click', () => $('#profDlg').close());
+  $('#profForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const body = {
+      name: $('#profName').value, note: $('#profNote').value, region: $('#profRegion').value, country: $('#profCountry').value, site: $('#profSite').value,
+      groups: [...$('#profGroups').querySelectorAll('input:checked')].map((c) => Number(c.value)), control: $('#profCtl').checked, unattended_h: Number($('#profUn').value),
+    };
+    if ($('#profSsid').value.trim()) {
+      body.wifi = {
+        ssid: $('#profSsid').value.trim(), auth: Number($('#profAuth').value), user: $('#profUser').value.trim(), identity: $('#profIdent').value.trim(),
+        pass: $('#profPass').value, ca_check: $('#profCaCheck').checked, dns: $('#profDns').value.trim(),
+        ca: await fileText($('#profCa')), client_pass: $('#profClientPass').value,
+      };
+      const client = await fileB64($('#profClient'));
+      if (client) body.wifi.client = client;
+    }
+    try {
+      await api(profEditing ? 'PUT' : 'POST', profEditing ? `/profiles/${profEditing}` : '/profiles', body);
+      $('#profDlg').close();
+      loadProfiles();
+    } catch (err) { $('#profErr').textContent = err.message; $('#profErr').hidden = false; }
+  });
+  $('#bkNow').addEventListener('click', async () => {
+    try { await api('POST', `/devices/${selected}/backup`); toast(t('Backup queued – the device writes it the next time it reports in')); } catch (err) { toast(err.message, 6000); }
+  });
+  $('#bkRestore').addEventListener('click', async () => {
+    const opts = [[selected, t('this device’s own backup')]].concat(devices.filter((x) => x.id !== selected && x.state !== 'pending').map((x) => [x.id, t('the backup of {name}', { name: x.name || x.id.slice(0, 8) })]));
+    const from = await pick(t('Restore from the SD card'), t('Which backup is on the card'), t('Continue'), opts);
+    if (!from) return;
+    if (!await ask(t('Restore this backup?'), t('The device replaces its settings, configurations and certificates with those from the card and restarts. Changes allowed and unattended access stay as they are.'), t('Restore'), 'warn')) return;
+    try { await api('POST', `/devices/${selected}/restore`, { from }); toast(t('Restore queued')); } catch (err) { toast(err.message, 6000); }
+  });
+  $('#oProfile').addEventListener('click', async () => {
+    if (!profiles.length) try { profiles = await api('GET', '/profiles'); } catch (e) { toast(e.message); return; }
+    if (!profiles.length) { toast(t('No profile yet - make one in the library')); return; }
+    const id = await pick(t('Apply a profile'), t('Profile'), t('Apply'), profiles.map((p) => [p.id, p.name]));
+    if (!id) return;
+    try {
+      await api('POST', `/devices/${selected}/profile`, { profile: Number(id) });
+      toast(t('Profile applied: place and groups set, the rest is queued for the device'));
+    } catch (err) { toast(err.message, 6000); }
+  });
+
+  async function newInvite() {
     let inv;
-    try { inv = await api('POST', '/enroll-tokens', { ttl_s: 600 }); } catch (err) { toast(err.message); return; }
+    const profile = Number($('#inviteProf').value || 0);
+    try { inv = await api('POST', '/enroll-tokens', { ttl_s: 600, profile }); } catch (err) { toast(err.message); return null; }
+    return inv;
+  }
+  $('#inviteProf').addEventListener('change', async () => {
+    const inv = await newInvite();
+    if (inv) showInvite(inv);
+  });
+  $('#invite').addEventListener('click', async () => {
+    try { profiles = await api('GET', '/profiles'); } catch (e) { profiles = []; }
+    const sel = $('#inviteProf');
+    sel.textContent = '';
+    sel.append(el('option', { value: '0', textContent: t('none') }));
+    for (const p of profiles) sel.append(el('option', { value: p.id, textContent: p.name }));
+    const inv = await newInvite();
+    if (!inv) return;
+    showInvite(inv);
+    $('#inviteDlg').showModal();
+  });
+  function showInvite(inv) {
     $('#tokenText').value = inv.token;
     drawQr($('#qr'), HOTSPOT + '#c2=' + encodeURIComponent(inv.token));
     const until = new Date(inv.expires);
@@ -1334,8 +1559,7 @@
     };
     tick();
     expTimer = setInterval(tick, 1000);
-    $('#inviteDlg').showModal();
-  });
+  }
   $('#copyToken').addEventListener('click', async () => {
     try { await navigator.clipboard.writeText($('#tokenText').value); toast(t('Copied')); } catch (e) { $('#tokenText').select(); toast(t('Selected – copy with Ctrl+C')); }
   });
@@ -1354,6 +1578,7 @@
     'DELETE /groups/{id}': t('Group deleted'), 'POST /users/{name}/role': t('Role changed'), 'POST /templates': t('Template added'), 'PUT /templates/{id}': t('Template changed'),
     'DELETE /templates/{id}': t('Template deleted'), 'POST /templates/{id}/send': t('Template sent'), 'POST /firmware': t('Firmware uploaded'), 'DELETE /firmware/{id}': t('Firmware deleted'),
     'POST /images': t('Image uploaded'), 'DELETE /images/{id}': t('Image deleted'), 'POST /images/{id}/link': t('Image downloaded'),
+    'POST /profiles': t('Profile added'), 'PUT /profiles/{id}': t('Profile changed'), 'DELETE /profiles/{id}': t('Profile deleted'), 'POST /devices/{id}/profile': t('Profile applied'),
   };
   function showCode(name, code) {
     $('#codeFor').textContent = name;

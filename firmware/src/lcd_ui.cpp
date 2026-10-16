@@ -298,6 +298,7 @@ struct Snapshot {
   uint8_t conState;            // remote console: 0 none, 1 the server asks, 2 open
   uint16_t conMinutes;
   char    conPort[20], conLeft[12];
+  char    conCode[8];          // end to end: "123 456" to compare with the browser, empty without
   bool    staConfigured, staConnected, tcpEnabled, tcpConnected;
   uint8_t webClients, apStations;
   uint8_t bleState;
@@ -598,6 +599,8 @@ static void buildSnapshot() {
   if (rc.state) {
     s.conMinutes = rc.minutes;
     copyStr(s.conPort, sizeof(s.conPort), Store::portName(rc.port));
+    if (rc.code[0]) snprintf(s.conCode, sizeof(s.conCode), "%.3s %s", rc.code, rc.code + 3);
+    else s.conCode[0] = 0;
     if (rc.leftS >= 120) snprintf(s.conLeft, sizeof(s.conLeft), "%lu min", (unsigned long)((rc.leftS + 59) / 60));
     else snprintf(s.conLeft, sizeof(s.conLeft), "%lu s", (unsigned long)rc.leftS);
   }
@@ -2537,8 +2540,15 @@ static void drawConsoleDialog() {
   g->setFont(&fonts::DejaVu12);
   g->setTextColor(C_DIM);
   String lines[3];
-  int n = wrap(text, w - 20, lines, 3);
+  int n = wrap(text, w - 20, lines, S.conCode[0] ? 2 : 3);
   for (int i = 0; i < n; i++) g->drawString(lines[i].c_str(), W / 2, y + 38 + i * LINE_H);
+  if (S.conCode[0]) {
+    // encrypted between the browser and this device: the same six digits there means nobody in between
+    char code[40];
+    snprintf(code, sizeof(code), TR("Code %s - as in the browser?", "Code %s - wie im Browser?", "Codigo %s - igual ao navegador?"), S.conCode);
+    g->setTextColor(C_TEXT);
+    g->drawString(code, W / 2, y + 38 + 2 * LINE_H + 2);
+  }
   int bw = (w - 3 * BTN_GAP) / 2, by = y + h - BTN_H - 8;
   button(x + BTN_GAP, by, bw, BTN_H, ask ? TR("Refuse", "Ablehnen", "Recusar") : TR("Back", "Zurueck", "Voltar"), ask ? B_CON_DENY : B_CON_BACK);
   button(x + 2 * BTN_GAP + bw, by, bw, BTN_H, ask ? TR("Allow", "Erlauben", "Permitir") : TR("End", "Beenden", "Encerrar"), ask ? B_CON_ALLOW : B_CON_END, ask ? C_GREEN : C_RED);

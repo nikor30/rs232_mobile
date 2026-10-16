@@ -205,7 +205,10 @@
   "Server address": "Serveradresse",
   "https://…": "https://…",
   "Set": "Setzen",
-  "Without a token: enter the server address. The device then asks that server by itself whenever its Wi-Fi is connected, until an administrator opens registration there.": "Ohne Token: die Serveradresse eintragen. Das Gerät fragt dann von selbst bei diesem Server an, sobald sein WLAN verbunden ist – bis ein Administrator dort die Anmeldung öffnet."
+  "Without a token: enter the server address. The device then asks that server by itself whenever its Wi-Fi is connected, until an administrator opens registration there.": "Ohne Token: die Serveradresse eintragen. Das Gerät fragt dann von selbst bei diesem Server an, sobald sein WLAN verbunden ist – bis ein Administrator dort die Anmeldung öffnet.",
+  "This invitation comes with the profile": "Diese Einladung bringt das Profil",
+  "I accept this for this device": "Ich erlaube das für dieses Gerät",
+  "By enrolling you accept, here at the device:": "Mit dem Anmelden erlaubst du hier am Gerät:"
  },
  "script": {
   "Not connected": "Nicht verbunden",
@@ -408,6 +411,11 @@
   "The device asks this server to let it in. Empty the field and press “Set” to stop.": "Das Gerät fragt bei diesem Server an. Zum Beenden das Feld leeren und „Setzen“ drücken.",
   "Enough to enroll while the server has registration open – no token needed.": "Genügt zur Anmeldung, solange der Server die Anmeldung geöffnet hat – ohne Token.",
   "asking {0}": "fragt an bei {0}",
-  "Server address set": "Serveradresse gesetzt"
+  "Server address set": "Serveradresse gesetzt",
+  "The control center may change settings and configurations and restart the device.": "Die Leitstelle darf Einstellungen und Konfigurationen ändern und das Gerät neu starten.",
+  "After the approval the device moves to the Wi-Fi network {0} ({1}).": "Nach der Bestätigung wechselt das Gerät ins WLAN {0} ({1}).",
+  "Place and groups at the control center - nothing on the device itself.": "Standort und Gruppen in der Leitstelle – am Gerät selbst ändert sich nichts.",
+  "Tick that you accept the profile first": "Erst das Häkchen setzen, dass du das Profil erlaubst",
+  "For {0} h, a remote console opens without a tap on the display.": "{0} h lang öffnet sich eine Fernkonsole ohne Tipp am Display."
  }
 }

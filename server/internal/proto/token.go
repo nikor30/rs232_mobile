@@ -16,6 +16,18 @@ type EnrollToken struct {
 	Fingerprint []byte `json:"fp"` // Fingerprint() of the server's static public key
 	ID          []byte `json:"id"` // TokenIDSize bytes, sent in the clear
 	Secret      []byte `json:"s"`  // PSKSize bytes, never sent
+	// What the device is asked to accept at enrolment (store.Profile): shown
+	// there before the person presses "Enroll". Older firmware ignores it.
+	Profile *TokenProfile `json:"pf,omitempty"`
+}
+
+// TokenProfile is the summary of a profile that travels in the invitation.
+type TokenProfile struct {
+	Name       string `json:"n"`
+	Control    bool   `json:"ctl,omitempty"` // allow changes from the control center
+	Unattended int    `json:"un,omitempty"`  // hours of unattended access
+	SSID       string `json:"w,omitempty"`   // Wi-Fi it will be moved to after the approval
+	Auth       int    `json:"a,omitempty"`   // of that Wi-Fi: 0 PSK, 1 EAP-TLS, 2 PEAP, 3 TTLS
 }
 
 const tokenPrefix = "c2e1:"
