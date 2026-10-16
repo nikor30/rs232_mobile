@@ -49,7 +49,7 @@ Nordic UART Service, fest auf Port 1. Der Gerätename ist der Hotspot-Name. Jede
 | LCD SCLK / MOSI / MISO / DC / CS / Backlight | 39 / 38 / 40 / 42 / 45 / 1 | LovyanGFX-Boardkonfiguration, am Gerät bestätigt |
 | Touch + Lagesensor I²C SDA / SCL | 48 / 47 | ebenso |
 | SD CS (SPI-Leitungen des LCD) | 41 | am Gerät bestätigt (Karte eingebunden) |
-| Port 1 RX / TX | 44 / 21 | RX: UART-Pad „RXD“; TX: Stiftleiste Pin 22 (GPIO21). Aus Schaltplan und ESP32-S3-Datenblatt, **am Gerät ungeprüft** — siehe unten |
+| Port 1 RX / TX | 44 / 21 (Voreinstellung) | Stiftleiste rechts Pin 4 „RXD“ (GPIO44) und links Pin 22 (GPIO21) — **nicht** Pin 3 „TXD“ (GPIO43). Am Testplatz ist der MAX3232 andersherum verdrahtet und Port 1 entsprechend eingestellt (RX 21, TX 44); siehe unten |
 | Akkumessung (BAT_ADC, Teiler 3:1) | 5 | am Gerät bestätigt: 1,35 V am Pin bei angeschlossenem LiPo; voreingestellt |
 
 Weitere Header-Pins sind noch nicht freigegeben. Die Belegung der Stiftleisten steht im Schaltplan des Herstellers (`ESP32-S3-Touch-LCD-2-SchDoc.pdf`, verlinkt im Wiki aus `info.md`).
@@ -62,6 +62,13 @@ IO43 ist `U0TXD`. Das ROM des ESP32-S3 schreibt bei jedem Reset seine Startmeldu
 - Der 4,7-kΩ-Pull-up der Kameraschnittstelle (TWI_SDA) hält die Leitung im Reset auf Ruhepegel. Mit eingesteckter Kamera ist der Pin belegt.
 - IO44 (RXD) bleibt Empfangspin; er ist beim Start ein Eingang. „RX/TX tauschen“ geht weiterhin (21 ↔ 44).
 - IO43 wird in der Weboberfläche nicht mehr angeboten. Eine gespeicherte Belegung mit IO43 fällt beim Start auf die Voreinstellung zurück.
+
+### MAX3232 am Testplatz (16./17. Oktober 2026)
+
+Modul an 3V3 und GND der Stiftleiste, die beiden TTL-Leitungen an GPIO21 (links Pin 22) und GPIO44 (rechts Pin 4, „RXD“). Welche Leitung des Moduls Ein- und welche Ausgang ist, sagen die Aufdrucke billiger Module nicht verlässlich — am Testplatz sendet das Board auf **GPIO44** und empfängt auf **GPIO21** (Port 1 so gespeichert, „RX/TX tauschen“ aus). Der erste Versuch scheiterte an einer Leitung auf dem falschen Stift.
+
+- **Prüfen ohne Gegenstelle:** DB9-Pins 2 und 3 brücken, dann `lcd_debug.py pins`: Der Befehl schließt den UART kurz, treibt jeden der beiden Pins und liest den anderen. Die Zeile mit „folgt (Schleife geschlossen)“ nennt den Sendepin. Zeigen beide „folgt nicht“, ist die Schleife offen (Verdrahtung, Versorgung des Moduls).
+- **Geprüft:** Schleife über die Weboberfläche (Echo, RX-Zähler steigt); ein Cisco WS-C3750X-24P-S (IOS 15.2(4)E10) mit 9600 8N1 über das Web-Terminal (Eingabeaufforderung, `show version`) und über die Fernkonsole der Leitstelle Ende-zu-Ende in beiden Richtungen.
 
 ## Akku und Laden
 
@@ -216,7 +223,7 @@ Weitere Regeln, die dabei entstanden sind: Die Karte wird **vor** dem LCD gestar
 3. WLAN-Beitritt: Suchen, Tastatur, Nachfrage, Speichern und Wieder-Ausschalten sind geprüft; ein erfolgreicher Verbindungsaufbau mit einem echten Schlüssel nicht.
 4. Skripte: Ablauf geprüft, aber ohne angeschlossenes Gerät (jede Zeile wartet dann 2 s auf eine Antwort).
 5. Bluetooth Richtung Gerät → Handy mit Loopback (TXD–RXD gebrückt) und mit einer Handy-App prüfen.
-6. MAX3232 anschließen (Modul-TXD an IO21, Modul-RXD an IO44), echter Konsolenzugriff. Dabei prüfen, dass beim Reset nichts auf IO21 erscheint.
+6. ~~MAX3232 anschließen, echter Konsolenzugriff~~ — erledigt am 16./17. Oktober 2026, siehe „MAX3232 am Testplatz“. Offen: prüfen, dass beim Reset nichts auf dem Sendepin erscheint.
 7. Akku: Spannung mit dem Multimeter gegenmessen (`BAT_CAL`); Ladeerkennung im Akkubetrieb, am Netzteil und beim Ab-/Anstecken prüfen. Davon hängt der Sparmodus ab.
 11. Stromsparen: USB abziehen und prüfen, dass nach 10 s `[PWR] CPU-Takt 80 MHz` kommt (über die Weboberfläche oder nach dem Wiederanstecken im Log) und das Display abdunkelt; Stromaufnahme an, dunkel und ausgeschaltet messen.
 12. Ausschalten am Display (Setup → Ausschalten → Ja) und Einschalten mit der BOOT-Taste von Hand prüfen; ebenso das Scrollen und die größeren Tasten mit echtem Finger.

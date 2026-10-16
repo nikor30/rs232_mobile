@@ -10,7 +10,6 @@ that is to accept updates is built and flashed.
     fw_sign.py keygen              make the key (once) and write src/update_key.h
     fw_sign.py pubkey              write src/update_key.h again from the key
     fw_sign.py sign [de|en|pt]     sign the build of that language -> dist/*.rsfw
-    fw_sign.py sign --board viewe de      the same for the other board (default: waveshare)
     fw_sign.py sign --image F --lang de
     fw_sign.py show FILE.rsfw      what a package says, and whether its signature holds
 
@@ -39,7 +38,7 @@ CONTEXT = "rs232-console firmware"       # the same string is in src/c2_update.c
 ALGORITHM = "ML-DSA-65"
 PUB_SIZE, SIG_SIZE = 1952, 3309
 ENVS = {"en": "waveshare-s3-lcd2", "de": "waveshare-s3-lcd2-de", "pt": "waveshare-s3-lcd2-pt"}
-BOARDS = {"waveshare": "waveshare-s3-lcd2", "viewe": "viewe-s3-5inch"}     # PlatformIO environment without the language
+BOARDS = {"waveshare": "waveshare-s3-lcd2"}     # PlatformIO environment without the language
 MAGIC = b"RSFW1\n"
 
 

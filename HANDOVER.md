@@ -85,6 +85,8 @@ Die `platformio.ini` löst über die PlatformIO-Registry auf (Arduino-Core 2.0.1
 | 1.7.1 | **LBO-Warnleitung** für Ladeboards |
 | 1.8.0 | **Waveshare ESP32-S3-Touch-LCD-2**: Board-Profil, Farb-Touch-Oberfläche, Bluetooth-LE-Konsole, SD, Akkuanzeige mit Ladeerkennung, Sparmodus und Ausschalten; **Akku-Kalibrierung** (0-%-/100-%-Punkt) für alle Boards — Stand und offene Punkte: `firmware/WAVESHARE.md` |
 | — | 9. Oktober 2026, ohne Versionssprung: **Aufräumen auf ein Board.** DevKit-Mockup, T-RSS3 und VIEWE-Panel entfernt, ebenso OLED-Treiber, LVGL-GUI und Status-LED; die Einstellungen `oledFlip`/`oledBrightness` heißen in der Web-API jetzt `displayFlip`/`displayBrightness` (NVS-Schlüssel unverändert). Ebenfalls entfernt: Core-3-/mbedTLS-3-Kompatibilität und die LBO-Warnleitung (`batLbo`) |
+| 1.8.1/1.8.2 | 13.–16. Oktober 2026: das VIEWE-5″-Board (UEDX80480050) noch einmal als zweites Gerät, mit eigenem RGB-Bus (`rgb_bounce`) |
+| — | 16. Oktober 2026: **VIEWE-Board eingefroren** und wieder aus `main` entfernt — letzter Stand Tag `viewe-5inch-frozen` (Commit `f0e9d02`) |
 
 ## 8. Hartes Erfahrungswissen
 

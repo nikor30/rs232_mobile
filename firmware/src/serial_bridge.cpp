@@ -381,7 +381,50 @@ void sendBreak(uint8_t p, uint16_t ms) {
   msg(prefix(p) + "BREAK: " + String(ms) + TR(" ms sent", " ms gesendet", " ms enviado"));
 }
 
+// Debug console "pins": what the wiring of a hardware port does, without the
+// UART. The port is closed for about a tenth of a second and opened again.
+//  - each pin with pull-down and with pull-up: a driven pin reads the same both
+//    times (an RS232 receiver idles high), an open one follows the pull
+//  - each pin driven low and high while the other one is read: through a
+//    level shifter and a loopback on the RS232 side the input follows the
+//    output (two inversions) - the pair that does is the right TX -> RX
+static volatile int8_t probeReq = -1;
+void requestPinProbe(uint8_t port) { probeReq = port; }
+
+static void pinProbe(uint8_t p) {
+  Port &pt = ports[p];
+  if (!pt.on || !pt.hw) { Serial.printf("[PORT] Pins: Port %u ist kein offener Hardware-Port\n", p + 1); return; }
+  const int a = settings.port[p].rx, b = settings.port[p].tx;
+  pt.hs->end();
+  auto level = [](int pin, uint8_t mode) { pinMode(pin, mode); delay(5); return digitalRead(pin); };
+  auto idle = [&](int pin) {
+    int lo = level(pin, INPUT_PULLDOWN), hi = level(pin, INPUT_PULLUP);
+    pinMode(pin, INPUT);
+    return lo && hi ? "getrieben high" : !lo && !hi ? "getrieben low" : "offen (folgt dem Pull)";
+  };
+  Serial.printf("[PORT] Pins Port %u (eingestellt RX GPIO%d, TX GPIO%d): GPIO%d %s, GPIO%d %s\n", p + 1, a, b, a, idle(a), b, idle(b));
+  const int pairs[2][2] = {{b, a}, {a, b}};
+  for (auto &pr : pairs) {
+    int out = pr[0], in = pr[1];
+    pinMode(in, INPUT_PULLDOWN);
+    pinMode(out, OUTPUT);
+    digitalWrite(out, LOW);  delay(5); int l = digitalRead(in);
+    digitalWrite(out, HIGH); delay(5); int h = digitalRead(in);
+    digitalWrite(out, LOW);  delay(5); int l2 = digitalRead(in);
+    pinMode(out, INPUT);
+    pinMode(in, INPUT);
+    Serial.printf("[PORT] Pins: GPIO%d sendet -> GPIO%d liest %d/%d/%d bei low/high/low: %s\n", out, in, l, h, l2,
+                  (!l && h && !l2) ? "folgt (Schleife geschlossen)" : (l && !h && l2) ? "folgt invertiert" : "folgt nicht");
+  }
+  openPort(p, pt.cfg);
+}
+
 void loop() {
+  if (probeReq >= 0) {
+    int8_t p = probeReq;
+    probeReq = -1;
+    if (p < MAX_PORTS) pinProbe(p);
+  }
   for (uint8_t p = 0; p < MAX_PORTS; p++) {
     Port &pt = ports[p];
     if (!pt.on) continue;

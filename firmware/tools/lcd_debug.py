@@ -19,6 +19,7 @@ Talks to the firmware over the USB serial port without resetting the board:
     lcd_debug.py batcal full            the voltage measured right now is 100 % ("empty": 0 %, "reset": undo,
                                         "3400 4050": both points in mV, 0 = the curve's own)
     lcd_debug.py c2                     command-and-control server: state, code, timings, stack and heap
+    lcd_debug.py pins [PORT]            wiring of a serial port: which pin is driven, does TX come back on RX
     lcd_debug.py saver 1                power saving as on battery: 1 on, 0 off, -1 automatic
     lcd_debug.py stick                  SD card as a USB memory stick (the console ends; back: restart at the device).
     lcd_debug.py poweroff 15            switch off, wake by timer after 15 s (waits for the board to return).
@@ -191,12 +192,17 @@ def main(argv):
             time.sleep(2.5)
             s = open_port()
             sys.stdout.write(read_until(s, lambda b: False, 4).decode("utf8", "replace"))
-        elif c in ("screen", "rot", "pclk", "bl", "radio", "bench"):      # pclk N: pixel clock in MHz on RGB panels, restarts the board
+        elif c in ("screen", "rot", "radio", "bench"):
             s.write(f"{c} {argv[i + 1]}\n".encode()); i += 1
             time.sleep(0.5)
         elif c == "bat":
             s.write(b"bat\n")
             sys.stdout.write(read_until(s, lambda b: b"Akku:" in b and b.endswith(b"\n"), 2).decode("utf8", "replace"))
+        elif c == "pins":
+            port = argv[i + 1] if i + 1 < len(argv) and argv[i + 1].isdigit() else ""
+            if port: i += 1
+            s.write(f"pins {port}".strip().encode() + b"\n")
+            sys.stdout.write(read_until(s, lambda b: b.count(b"Pins") >= 3 or b"kein offener" in b, 3).decode("utf8", "replace"))
         elif c == "c2":
             s.write(b"c2\n")
             sys.stdout.write(read_until(s, lambda b: b"Leitstelle:" in b and b.endswith(b"\n"), 2).decode("utf8", "replace"))
