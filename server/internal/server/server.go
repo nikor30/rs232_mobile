@@ -562,6 +562,11 @@ func (sv *Server) msg(w http.ResponseWriter, r *http.Request) {
 		for _, c := range cmds {
 			out.Cmds = append(out.Cmds, serverCmd{c.ID, c.Type, c.Args})
 		}
+		// While somebody works at a console of this device, what they send it
+		// besides (a script to play) must not wait half a minute.
+		if sv.conLive(e.deviceID) || slices.ContainsFunc(cmds, func(c store.Command) bool { return c.Type == "console" }) {
+			out.PollS = min(out.PollS, conPollS)
+		}
 	case !e.enroll && m.T == "con":
 		if d, err := sv.st.Device(e.deviceID); err != nil || d.State != store.StateActive {
 			sv.drop(sid)

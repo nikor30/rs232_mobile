@@ -24,6 +24,7 @@ const (
 	conChunkIn   = 512                    // bytes of input handed to the device per answer
 	conMaxIn     = 64 * 1024              // typed and not yet taken by the device
 	conMaxOut    = 256 * 1024             // output kept for the browser
+	conPollS     = 5                      // seconds between polls while a console is open (the firmware's least)
 	conMaxChunk  = 8 * 1024               // output accepted from the device per message
 	conSilence   = 45 * time.Second       // a device that stops asking has lost its link
 	conKeep      = 10 * time.Minute       // how long the end of a session stays readable
@@ -89,6 +90,14 @@ func (sv *Server) conEnd(c *console, reason string) {
 	log.Printf("console %d of %s closed after %s: %s (%d bytes in, %d out)", c.id, c.deviceID,
 		now.Sub(c.opened).Round(time.Second), reason, in, out)
 	c.changed()
+}
+
+// conLive tells whether a console of the device is open or on its way.
+func (sv *Server) conLive(deviceID string) bool {
+	sv.mu.Lock()
+	defer sv.mu.Unlock()
+	c := sv.cons[deviceID]
+	return c != nil && c.ended == nil
 }
 
 // conGet returns the device's console, closing or forgetting it if its time
@@ -351,6 +360,7 @@ func (sv *Server) conInput(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		D   []byte `json:"d"`
 		Brk bool   `json:"brk"`
+		At  *int64 `json:"at"` // where D goes in the input stream: a request sent again is taken once
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad JSON"})
@@ -362,6 +372,20 @@ func (sv *Server) conInput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer sv.mu.Unlock()
+	if in.At != nil && len(in.D) > 0 {
+		// The browser does not know whether a request whose answer was lost got
+		// here. What is here already is confirmed again; a gap is refused - an
+		// encrypted stream with a hole in it is useless to the device.
+		have := c.inBase + int64(len(c.in))
+		if *in.At+int64(len(in.D)) <= have {
+			writeJSON(w, http.StatusOK, map[string]any{"queued": len(c.in), "again": true})
+			return
+		}
+		if *in.At != have {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "input is missing in between"})
+			return
+		}
+	}
 	if len(c.in)+len(in.D) > conMaxIn {
 		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "the device is not taking input that fast"})
 		return

@@ -198,6 +198,7 @@
         </form>
         <p id="conHint" class="dim"></p>
         <p id="conState" class="dim"></p>
+        <button id="conEndOther" class="btn danger" type="button" hidden>End that session</button>
         <div id="conBox" hidden>
           <div id="term"></div>
           <div class="row wrap">
@@ -207,6 +208,13 @@
               <button id="conBreak" class="btn">BREAK</button>
               <button id="conClose" class="btn danger">End</button>
             </span>
+          </div>
+          <p id="conTip" class="dim">Select to copy, right-click to paste.</p>
+          <div id="conScripts" data-manage hidden>
+            <h3>Scripts</h3>
+            <p id="conScriptHint" class="dim"></p>
+            <div id="conScriptList" class="scripts"></div>
+            <p id="conScriptState" class="dim"></p>
           </div>
         </div>
       </section>

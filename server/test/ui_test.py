@@ -516,6 +516,31 @@ with sync_playwright() as p:
         expect(term).to_contain_text("[BREAK]", timeout=20000)
         expect(page.locator("#conInfo")).to_contain_text("min left")
         expect(page.locator("#conForm")).to_be_hidden()
+        if os.environ.get("UI_BROWSER", "chromium") == "chromium":   # WebKit gives a page no clipboard permission
+            # as in PuTTY: selecting copies, the right button pastes
+            ctx.grant_permissions(["clipboard-read", "clipboard-write"])
+            box = page.locator("#term .xterm-screen").bounding_box()
+            page.mouse.move(box["x"] + 4, box["y"] + 4)
+            page.mouse.down()
+            page.mouse.move(box["x"] + box["width"] - 4, box["y"] + 60, steps=5)
+            page.mouse.up()
+            page.wait_for_function("navigator.clipboard.readText().then((x) => x.includes('Switch>'))", timeout=5000)
+            page.evaluate("navigator.clipboard.writeText('pasted-here')")
+            page.locator("#term").click(button="right")
+            expect(term).to_contain_text("pasted-here", timeout=20000)
+        # a script under the terminal: asked twice, then played on the console's port
+        scripts = page.locator("#conScripts")
+        expect(scripts).to_be_visible()
+        expect(scripts).to_contain_text("Played on port 1")
+        row = page.locator("#conScriptList .script", has_text="Uplink").first
+        row.get_by_role("button", name="Play").click()
+        expect(page.locator("#askDlg")).to_contain_text("on port 1")
+        page.click("#askYes")                       # the same dialog asks again at once
+        yes("Really play")
+        expect(page.locator("#conScriptState")).to_contain_text("Waiting for the device to fetch", timeout=20000)
+        # the terminal's rows end inside its box: the last one is not cut off
+        fit = page.evaluate("""() => { const b = document.querySelector('#term').getBoundingClientRect(), s = document.querySelector('#term .xterm-screen').getBoundingClientRect(); return [s.bottom, b.bottom]; }""")
+        assert fit[0] <= fit[1] + 0.5, f"last terminal row cut off: screen ends at {fit[0]}, box at {fit[1]}"
         # not full_page: with the terminal focused that leaves the page scrolled somewhere
         # else than the browser believes, and the next click misses its button
         page.locator("#p-console").scroll_into_view_if_needed()
@@ -523,6 +548,8 @@ with sync_playwright() as p:
         page.click("#conClose")
         expect(term).to_contain_text("closed by the administrator", timeout=20000)
         expect(page.locator("#conForm")).to_be_visible()
+        # the simulator fetches commands only between consoles (the firmware also during one)
+        expect(page.locator("#conScriptState")).to_contain_text("✓ Uplink", timeout=30000)
         tab("activity")
         expect(page.locator("#conLog tbody tr").first).to_contain_text("closed by the administrator", timeout=20000)
 

@@ -72,6 +72,10 @@ func TestConsoleRoundTrip(t *testing.T) {
 	if v := e.conState(c.ID()); v.Console.State != "open" || v.Console.Port != 2 || v.Console.LeftS != 900 || len(v.Sessions) != 1 {
 		t.Fatalf("open: %+v %+v", v.Console, v.Sessions)
 	}
+	// while it is open the device asks more often: a script sent besides does not wait half a minute
+	if p, err := c.Poll(nil, nil); err != nil || p.PollS != conPollS {
+		t.Fatalf("poll during the console: %+v %v", p, err)
+	}
 	var out conOut
 	e.admin("GET", sess+"/output?from=0&wait=0", nil, &out)
 	if string(out.D) != "Switch>" || out.Next != 7 || out.State != "open" {
@@ -106,6 +110,23 @@ func TestConsoleRoundTrip(t *testing.T) {
 	if len(r.D) != 0 || r.IOff != 5 || r.Brk != 1 {
 		t.Fatalf("confirmed, with a BREAK: %+v", r)
 	}
+	// input with its place in the stream: sent again, it is taken once; a gap is refused
+	for i := 0; i < 2; i++ {
+		if code := e.admin("POST", sess+"/input", map[string]any{"d": []byte("ab"), "at": 5}, nil); code != 200 {
+			t.Fatalf("input at 5 (%d): HTTP %d", i, code)
+		}
+	}
+	if code := e.admin("POST", sess+"/input", map[string]any{"d": []byte("x"), "at": 9}, nil); code != 422 {
+		t.Fatalf("input with a gap: HTTP %d", code)
+	}
+	r, _ = c.Console(device.ConMsg{ID: id, Off: 9, IAck: 5})
+	if string(r.D) != "ab" || r.IOff != 5 {
+		t.Fatalf("input sent twice: %+v", r)
+	}
+	c.Console(device.ConMsg{ID: id, Off: 9, IAck: 7})
+	if code := e.admin("POST", sess+"/input", map[string]any{"d": []byte("ab"), "at": 5}, nil); code != 200 {
+		t.Fatalf("input confirmed already: HTTP %d", code)
+	}
 
 	// a second console for the same device has to wait
 	if code := e.admin("POST", "/admin/v1/devices/"+c.ID()+"/commands",
@@ -117,12 +138,12 @@ func TestConsoleRoundTrip(t *testing.T) {
 	if code := e.admin("POST", sess+"/close", nil, nil); code != 200 {
 		t.Fatalf("close: HTTP %d", code)
 	}
-	r, _ = c.Console(device.ConMsg{ID: id, Off: 9, D: []byte("bye"), IAck: 5})
+	r, _ = c.Console(device.ConMsg{ID: id, Off: 9, D: []byte("bye"), IAck: 7})
 	if r.End == "" {
 		t.Fatalf("device not told: %+v", r)
 	}
 	v := e.conState(c.ID())
-	if v.Console.State != "ended" || len(v.Sessions) != 1 || v.Sessions[0].End == nil || v.Sessions[0].Out != 12 || v.Sessions[0].In != 5 || v.Sessions[0].Port != 2 {
+	if v.Console.State != "ended" || len(v.Sessions) != 1 || v.Sessions[0].End == nil || v.Sessions[0].Out != 12 || v.Sessions[0].In != 7 || v.Sessions[0].Port != 2 {
 		t.Fatalf("log: %+v %+v", v.Console, v.Sessions)
 	}
 	if code := e.admin("POST", sess+"/input", map[string]any{"d": []byte("x")}, nil); code != 409 {

@@ -1223,12 +1223,19 @@
     while (con === c && !c.ended && c.queue.length) {
       const item = c.queue[0];
       try {
-        // encrypted once, sent until it got through: a frame must not be made twice
-        if (c.e2e && item.d && !item.sealed) { item.d = b64(await e2eSeal(c.e2e, unb64(item.d))); item.sealed = true; }
-        await api('POST', `/devices/${c.dev}/console/${c.id}/input`, item.sealed ? { d: item.d } : item);
+        // encrypted once and given its place in the stream once: a frame must
+        // not be made twice, and the server takes a request sent again only once
+        if (item.d && item.at == null) {
+          if (c.e2e) item.d = b64(await e2eSeal(c.e2e, unb64(item.d)));
+          item.at = c.inAt;
+        }
+        await api('POST', `/devices/${c.dev}/console/${c.id}/input`, item.d ? { d: item.d, at: item.at } : item);
+        if (item.d) c.inAt += unb64(item.d).length;
         c.queue.shift();
       } catch (e) {
         if (e.status === 429) { await new Promise((r) => setTimeout(r, 300)); continue; }   // the device is slower than the typing
+        // the connection dropped or the server restarts: the same request again, it is taken once
+        if (item.d && (!e.status || e.status >= 500) && (item.tries = (item.tries || 0) + 1) <= 30) { await new Promise((r) => setTimeout(r, 1000)); continue; }
         if (e.status !== 409 && e.status !== 404) toast(e.message);
         c.queue.length = 0;
       }
@@ -1239,7 +1246,7 @@
     if (!con || con.ended) return;
     const last = con.queue[con.queue.length - 1];
     // bytes typed while a request is on its way travel together (but not past 1 kB)
-    if (item.d && last && last.d && !last.sealed && last !== con.queue[0] && last.d.length + item.d.length < 680) last.d = b64([...unb64(last.d), ...unb64(item.d)]);
+    if (item.d && last && last.d && last.at == null && last !== con.queue[0] && last.d.length + item.d.length < 680) last.d = b64([...unb64(last.d), ...unb64(item.d)]);
     else con.queue.push(item);
     conSend();
   }
@@ -1282,12 +1289,12 @@
   function conAttach(dev, id, left, devKey) {
     conDetach();
     $('#conBox').hidden = false;
-    const term = new Terminal({ cursorBlink: true, scrollback: 5000, fontSize: 14, convertEol: false });
+    const term = new Terminal({ cursorBlink: true, scrollback: 5000, fontSize: 14, convertEol: false, rightClickSelectsWord: false });
     const fit = new FitAddon.FitAddon();
     term.loadAddon(fit);
     term.open($('#term'));
     fit.fit();
-    const c = con = { dev, id, term, fit, next: 0, abort: new AbortController(), ended: false, queue: [], sending: false, left: left || 0, leftAt: Date.now() };
+    const c = con = { dev, id, term, fit, next: 0, abort: new AbortController(), ended: false, queue: [], sending: false, inAt: 0, left: left || 0, leftAt: Date.now() };
     const e2e = $('#conE2E');
     e2e.hidden = false;
     e2e.className = 'chip';
@@ -1305,6 +1312,11 @@
     term.onData((data) => {                         // a pasted text arrives in one piece: hand it on in small ones
       const bytes = new TextEncoder().encode(data);
       for (let i = 0; i < bytes.length; i += 512) conInput({ d: b64(bytes.subarray(i, i + 512)) });
+    });
+    // as in PuTTY: what is selected is on the clipboard at once
+    term.onSelectionChange(() => {
+      const text = term.getSelection();
+      if (text && navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {});
     });
     term.focus();
     c.ready.then(() => conRead(c));
@@ -1326,12 +1338,18 @@
       const busy = cur && ['requested', 'granted', 'open'].includes(cur.state);
       $('#conForm').hidden = !!busy || d.state !== 'active';
       // with our key for this request, wait until the device's key is there: a session opened without would stay unencrypted here
-      if (cur && cur.state === 'open' && !(con && con.id === cur.id) && tab === 'console' && (!conKeys[cur.id] || cur.e2e || Date.now() - (conKeys[cur.id].openSeen || (conKeys[cur.id].openSeen = Date.now())) > 8000)) conAttach(d.id, cur.id, cur.left_s, cur.e2e);
+      // end to end with another browser (or with this page before it was loaded again): without
+      // its key nothing here can be read, and what is typed would reach the device unsealed and end the session
+      const elsewhere = cur && cur.state === 'open' && cur.e2e && !conKeys[cur.id] && !(con && con.id === cur.id);
+      if (elsewhere) { st.textContent = t('Open on port {port}, end to end with another browser: only that one can read and type.', { port: cur.port }); st.className = 'dim wait'; }
+      $('#conEndOther').hidden = !elsewhere;
+      if (cur && cur.state === 'open' && !elsewhere && !(con && con.id === cur.id) && tab === 'console' && (!conKeys[cur.id] || cur.e2e || Date.now() - (conKeys[cur.id].openSeen || (conKeys[cur.id].openSeen = Date.now())) > 8000)) conAttach(d.id, cur.id, cur.left_s, cur.e2e);
       if (con) {
         const left = Math.max(0, con.left - Math.round((Date.now() - con.leftAt) / 1000));
         $('#conInfo').textContent = con.ended ? t('ended') : t('Port {port} · {left} min left', { port: cur ? cur.port : '', left: mmss(left) });
         $('#conBreak').hidden = $('#conClose').hidden = con.ended;
       }
+      conScripts(d, cur && cur.state === 'open' ? cur.port : 0);
       const body = $('#conLog tbody');
       body.textContent = '';
       for (const l of v.sessions.slice().reverse()) {
@@ -1348,6 +1366,85 @@
       $('#conLog').hidden = !v.sessions.length;
       $('#noConLog').hidden = !!v.sessions.length;
     }).catch(() => {});
+  }
+  // Scripts under the terminal: played by the device on the console's port
+  // (Player in the firmware: line by line, waiting for the prompt), so what
+  // they do shows up in the terminal while it happens. The device's own
+  // configurations, and library templates that are not on it as they are -
+  // those are written to it first. Asked twice: it cannot be taken back.
+  let scriptsKey = '', scriptCmd = 0;
+  function conScripts(d, port) {
+    const box = $('#conScripts'), st = d.status || {};
+    box.hidden = !con || con.ended || !port || d.right !== 'manage';
+    if (box.hidden) { scriptsKey = ''; return; }
+    const onDev = st.cfgs || [];
+    const list = onDev.map((c) => ({ name: c.n, where: t('on the device') }));
+    for (const tpl of templates) {
+      const have = onDev.find((c) => c.n === tpl.name);
+      if (!have || have.s !== new Blob([tpl.text]).size) list.push({ name: tpl.name, tpl, where: have ? t('library – differs from the one on the device') : t('library') });
+    }
+    const allowed = st.ctl !== false;
+    $('#conScriptHint').textContent = !allowed ? t('Changes are not allowed at the device: scripts cannot be played from here.')
+      : list.length ? t('Played on port {port} – watch it in the terminal above.', { port }) : t('No scripts on the device and none in the library.');
+    const key = JSON.stringify([d.id, port, allowed, !!scriptCmd, list.map((x) => [x.name, x.where])]);
+    if (key === scriptsKey) return;
+    scriptsKey = key;
+    const box2 = $('#conScriptList');
+    box2.textContent = '';
+    for (const x of list) {
+      const b = el('button', { className: 'btn small warn', type: 'button', textContent: t('Play'), disabled: !allowed || !!scriptCmd });
+      b.addEventListener('click', () => playScript(d, x, port));
+      box2.append(el('div', { className: 'script' }, el('span', { textContent: x.name, title: x.name }, el('small', { textContent: x.where })), b));
+    }
+  }
+  async function playScript(d, x, port) {
+    if (!await ask(t('Play “{name}” on port {port}?', { name: x.name, port }), t('The lines go to the console of whatever is connected there.'), t('Continue'), 'warn')) return;
+    if (!await ask(t('Really play “{name}” now?', { name: x.name }), x.tpl
+      ? t('The template is written to the device first (a configuration of the same name there is replaced), then played line by line. This cannot be undone.')
+      : t('The device plays it line by line. This cannot be undone.'), t('Play now'))) return;
+    const note = (text) => { $('#conScriptState').textContent = text; };
+    scriptCmd = -1;
+    scriptsKey = '';
+    try {
+      if (x.tpl) {
+        const args = { name: x.tpl.name, text: x.tpl.text };
+        if (new Blob([JSON.stringify(args)]).size > 6000) throw new Error(t('Too large to write from here: {list}', { list: x.name }));
+        note(t('Writing “{name}” …', { name: x.name }));
+        await run(d.id, 'config_put', args);
+      }
+      const c = await api('POST', `/devices/${d.id}/commands`, { type: 'play', args: { name: x.name, port } });
+      scriptCmd = c.id;
+      note(t('Waiting for the device to fetch “{name}” …', { name: x.name }));
+      const term = con;
+      // a line of our own in the terminal, between what the port says (grey, on a line of its own)
+      const mark = (text) => { if (con === term && !term.ended) term.term.write(`\r\n\x1b[90m[${text}]\x1b[0m\r\n`); };
+      let started = false;
+      for (;;) {                                    // as long as it takes: the terminal shows it line by line
+        await new Promise((r) => setTimeout(r, 1000));
+        const now = (await api('GET', `/devices/${d.id}/commands`)).find((y) => y.id === c.id);
+        if (!now) throw new Error(t('The device did not answer'));
+        if (!started && now.state !== 'queued') {
+          started = true;
+          note(t('“{name}” is being played …', { name: x.name }));
+          mark(t('Script “{name}” starts', { name: x.name }));
+        }
+        // the player's own words come in the device's language
+        if (now.state === 'failed' || now.state === 'expired') {
+          const why = typeof now.result === 'string' ? t(now.result) : (now.result && now.result.result) || CMD_STATES[now.state];
+          mark(t('Script “{name}”: {result}', { name: x.name, result: why }));
+          throw new Error(why);
+        }
+        if (now.state === 'done') {
+          const res = (now.result && now.result.result) || '';
+          note('✓ ' + x.name + (res ? ': ' + res : ''));
+          mark(t('Script “{name}”: {result}', { name: x.name, result: res || t('done') }));
+          break;
+        }
+      }
+    } catch (err) { note(err.message); toast(err.message, 6000); }
+    scriptCmd = 0;
+    scriptsKey = '';
+    refresh();
   }
   $('#conForm').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -1366,7 +1463,28 @@
     } catch (err) { toast(err.message, 5000); }
     refresh();
   });
+  // as in PuTTY: the right button pastes (the browser asks once whether the page may read the clipboard)
+  $('#term').addEventListener('contextmenu', async (e) => {
+    if (!con) return;
+    e.preventDefault();
+    const c = con;
+    if (c.ended) return;
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text && con === c) c.term.paste(text);
+    } catch (err) { toast(t('This browser does not let the page read the clipboard – paste with Ctrl+Shift+V.'), 5000); }
+    c.term.focus();
+  });
   $('#conBreak').addEventListener('click', () => { conInput({ brk: true }); if (con) con.term.focus(); });
+  $('#conEndOther').addEventListener('click', async () => {
+    const d = devices.find((x) => x.id === selected);
+    if (!d || !await ask(t('End the session of the other browser?'), t('Whoever works in it is cut off.'), t('End'))) return;
+    try {
+      const v = await api('GET', `/devices/${d.id}/console`);
+      if (v.console) await api('POST', `/devices/${d.id}/console/${v.console.id}/close`);
+    } catch (err) { toast(err.message); }
+    refresh();
+  });
   $('#conClose').addEventListener('click', async () => {
     if (!con) return;
     try { await api('POST', `/devices/${con.dev}/console/${con.id}/close`); } catch (err) { toast(err.message); }
