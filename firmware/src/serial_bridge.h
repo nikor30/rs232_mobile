@@ -42,5 +42,7 @@ namespace Bridge {
 
   extern uint32_t rxBytes[MAX_PORTS], txBytes[MAX_PORTS];
   extern uint32_t lastRxMs[MAX_PORTS], lastTxMs[MAX_PORTS];
-  extern uint32_t lastUserStartMs[MAX_PORTS];   // user typed 'C' or NAK (echo guard for XMODEM start)
+  extern uint32_t lastUserStartMs[MAX_PORTS];
+  extern uint32_t reopened[MAX_PORTS];          // the self-check found the UART stuck and opened the port again
+  extern char reopenWhy[MAX_PORTS][40];         // ... the last time, because of this (German, like the log)   // user typed 'C' or NAK (echo guard for XMODEM start)
 }

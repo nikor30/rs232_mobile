@@ -3,12 +3,18 @@
 #include "xfer.h"
 #include <SoftwareSerial.h>
 #include <driver/uart.h>
+#include <hal/uart_ll.h>
+#include <soc/gpio_sig_map.h>
+#include <soc/gpio_struct.h>
+#include <soc/uart_periph.h>
 
 namespace Bridge {
 
 uint32_t rxBytes[MAX_PORTS] = {0}, txBytes[MAX_PORTS] = {0};
 uint32_t lastRxMs[MAX_PORTS] = {0}, lastTxMs[MAX_PORTS] = {0};
 uint32_t lastUserStartMs[MAX_PORTS] = {0};
+uint32_t reopened[MAX_PORTS] = {0};
+char reopenWhy[MAX_PORTS][40] = {};
 
 static DataSink dataSink = nullptr;
 static MsgSink msgSink = nullptr;
@@ -35,6 +41,9 @@ struct Port {
   uint32_t busyUntilUs = 0;             // hardware: when the bytes given to the UART are out
   uint32_t charUs = 1042;               // time per character on the line
   int uartNum = -1;
+  // self-check (check()): since when something has looked wrong
+  uint32_t checkMs = 0, fifoSince = 0, txSince = 0;
+  uint32_t unansweredSince = 0;         // sent to, nothing back since then
 };
 static Port ports[MAX_PORTS];
 
@@ -100,6 +109,7 @@ static void flushPending(uint8_t p) {
   ringPut(pt, pt.pend, pt.pendLen);
   rxBytes[p] += pt.pendLen;
   lastRxMs[p] = millis();
+  pt.unansweredSince = 0;
   if (dataSink) dataSink(p, pt.pend, pt.pendLen);
   pt.pendLen = 0;
 }
@@ -114,6 +124,7 @@ static void openPort(uint8_t p, const SerialCfg &c) {
   pt.charUs = (1 + c.bits + (c.parity != 'N' ? 1 : 0) + c.stop) * 1000000UL / (c.baud ? c.baud : 9600);
   pt.txHead = pt.txTail = 0;
   pt.busyUntilUs = micros();
+  pt.fifoSince = pt.txSince = pt.unansweredSince = 0;
   if (pt.hw) {
     pt.hs->end();
     pt.hs->setRxBufferSize(UART_RX_BUF);
@@ -359,6 +370,7 @@ size_t writeRaw(uint8_t p, const uint8_t *data, size_t len) {
   size_t n = portWrite(p, data, len);
   txBytes[p] += n;
   lastTxMs[p] = millis();
+  if (n && !ports[p].unansweredSince) ports[p].unansweredSince = millis();
   return n;
 }
 
@@ -419,6 +431,63 @@ static void pinProbe(uint8_t p) {
   openPort(p, pt.cfg);
 }
 
+// ---------------------------------------------------------------- self-check
+// On 18 Oct 2026 port 1 went deaf twice for hours (issue #12): bytes were
+// handed to the UART, the switch answered nothing, and opening the port again
+// with the same settings brought the answer at once. Every half second the
+// hardware port is looked at where the UART driver can get stuck - data in
+// the receive FIFO that the driver does not take, receive interrupts switched
+// off, a transmitter that does not finish, pins no longer routed to the UART,
+// a wrong clock divider. As the last resort: the line was sent to and nothing
+// at all has come back for 5 s (a console echoes within milliseconds). Then
+// the port is opened again - it costs nothing - and why is logged and counted
+// (rxReopen/rxWhy in /api/status).
+static const uint32_t CHECK_MS = 500, STUCK_MS = 1500, UNANSWERED_MS = 5000;
+
+static void reopen(uint8_t p, const char *why) {
+  Port &pt = ports[p];
+  flushPending(p);
+  reopened[p]++;
+  strlcpy(reopenWhy[p], why, sizeof(reopenWhy[p]));
+  Serial.printf("[PORT] Port %u: %s - neu geoeffnet (%lu. Mal)\n", p + 1, why, (unsigned long)reopened[p]);
+  openPort(p, pt.cfg);
+}
+
+static void check(uint8_t p) {
+  Port &pt = ports[p];
+  uint32_t now = millis();
+  if (now - pt.checkMs < CHECK_MS) return;
+  pt.checkMs = now;
+  if (!pt.hw || pt.uartNum < 0 || Xfer::on(p) || autobaudRunning(p)) {
+    pt.unansweredSince = 0;
+    return;
+  }
+  uart_dev_t *hw = UART_LL_GET_HW(pt.uartNum);
+  const char *why = nullptr;
+  bool fifo = uart_ll_get_rxfifo_len(hw) > 0 && portAvailable(pt) <= 0;
+  bool rxOff = !(uart_ll_get_intr_ena_status(hw) & (UART_INTR_RXFIFO_FULL | UART_INTR_RXFIFO_TOUT));
+  if (!fifo && !rxOff) pt.fifoSince = 0;
+  else if (!pt.fifoSince) pt.fifoSince = now;
+  else if (now - pt.fifoSince >= STUCK_MS) why = rxOff ? "Empfangs-Interrupt aus" : "Daten im FIFO, Treiber nimmt sie nicht";
+  bool txBusy = !uart_ll_is_tx_idle(hw) && (int32_t)(micros() - pt.busyUntilUs) > 0;
+  if (!txBusy) pt.txSince = 0;
+  else if (!pt.txSince) pt.txSince = now;
+  else if (!why && now - pt.txSince >= STUCK_MS) why = "Sender wird nicht fertig";
+  const uint32_t rxSig = pt.uartNum == 1 ? U1RXD_IN_IDX : U2RXD_IN_IDX, txSig = pt.uartNum == 1 ? U1TXD_OUT_IDX : U2TXD_OUT_IDX;
+  // (the UART's own IO_MUX pins bypass the matrix: nothing to compare there)
+  const auto &pins = uart_periph_signal[pt.uartNum].pins;
+  if (!why && pt.rx >= 0 && pt.rx != pins[SOC_UART_RX_PIN_IDX].default_gpio &&
+      (!GPIO.func_in_sel_cfg[rxSig].sig_in_sel || (int)GPIO.func_in_sel_cfg[rxSig].func_sel != pt.rx)) why = "RX-Pin nicht mehr am UART";
+  if (!why && pt.tx >= 0 && pt.tx != pins[SOC_UART_TX_PIN_IDX].default_gpio && GPIO.func_out_sel_cfg[pt.tx].func_sel != txSig)
+    why = "TX-Pin nicht mehr am UART";
+  if (!why && pt.cfg.baud) {
+    uint32_t b = uart_ll_get_baudrate(hw);
+    if (b < pt.cfg.baud * 95 / 100 || b > pt.cfg.baud * 105 / 100) why = "Baudrate im UART verstellt";
+  }
+  if (!why && pt.unansweredSince && !txqLen(pt) && now - pt.unansweredSince >= UNANSWERED_MS) why = "gesendet, 5 s keine Antwort";
+  if (why) reopen(p, why);
+}
+
 void loop() {
   if (probeReq >= 0) {
     int8_t p = probeReq;
@@ -429,6 +498,7 @@ void loop() {
     Port &pt = ports[p];
     if (!pt.on) continue;
     drain(pt);
+    check(p);
     if (autobaudRunning(p)) {
       abStep();
       continue;
