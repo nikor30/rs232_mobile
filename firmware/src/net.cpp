@@ -335,6 +335,7 @@ static String statusJson() {
     o["autobaud"] = Bridge::autobaudRunning(p);
     o["rx"] = Bridge::rxBytes[p];
     o["tx"] = Bridge::txBytes[p];
+    o["txq"] = TX_QUEUE - 1 - Bridge::txFree(p);   // input waiting for the line
     o["rxReopen"] = Bridge::reopened[p];
     if (Bridge::reopened[p]) o["rxWhy"] = Bridge::reopenWhy[p];
     o["tcp"] = tcpConnected(p);

@@ -44,6 +44,8 @@ struct Port {
   // self-check (check()): since when something has looked wrong
   uint32_t checkMs = 0, fifoSince = 0, txSince = 0;
   uint32_t unansweredSince = 0;         // sent to, nothing back since then
+  uint32_t queueSince = 0;              // bytes waiting and none taken since then
+  uint16_t queueTail = 0;
 };
 static Port ports[MAX_PORTS];
 
@@ -69,6 +71,24 @@ static void msg(const String &m) {
 }
 
 static size_t txqLen(const Port &pt) { return (uint16_t)(pt.txHead + TX_QUEUE - pt.txTail) % TX_QUEUE; }
+
+// How long the bytes handed to the UART still take on the line, in us.
+// busyUntilUs is a 32-bit micros() stamp, and micros() wraps every 71.6 min:
+// once a port had sent nothing for more than half of that, the old stamp
+// compared as lying in the future, drain() waited for a UART that had long
+// been idle, and the port sent nothing for up to 36 minutes - typed bytes
+// were queued (and counted), none went out (issue #12, 18/19 Oct 2026).
+// The UART is never busy for longer than BUSY_MAX_US: a stamp further ahead
+// is stale and is pulled to now.
+static const uint32_t BUSY_MAX_US = 5000000;
+static uint32_t busyAhead(Port &pt) {
+  uint32_t now = micros(), ahead = pt.busyUntilUs - now;
+  if ((int32_t)ahead <= 0 || ahead > BUSY_MAX_US) {
+    pt.busyUntilUs = now;
+    return 0;
+  }
+  return ahead;
+}
 
 bool swapOk(uint8_t p) { return p < MAX_PORTS && Store::txPinOk(settings.port[p].rx); }
 uint32_t maxBaud(uint8_t p) { return isHardware(p) ? 1000000 : SW_MAX_BAUD; }
@@ -124,7 +144,7 @@ static void openPort(uint8_t p, const SerialCfg &c) {
   pt.charUs = (1 + c.bits + (c.parity != 'N' ? 1 : 0) + c.stop) * 1000000UL / (c.baud ? c.baud : 9600);
   pt.txHead = pt.txTail = 0;
   pt.busyUntilUs = micros();
-  pt.fifoSince = pt.txSince = pt.unansweredSince = 0;
+  pt.fifoSince = pt.txSince = pt.unansweredSince = pt.queueSince = 0;
   if (pt.hw) {
     pt.hs->end();
     pt.hs->setRxBufferSize(UART_RX_BUF);
@@ -172,9 +192,7 @@ static void drain(Port &pt) {
   uint8_t buf[256];
   if (pt.hw) {
     // keep at most ~20 ms of data inside the UART driver: its write never blocks
-    uint32_t now = micros();
-    if ((int32_t)(pt.busyUntilUs - now) < 0) pt.busyUntilUs = now;
-    uint32_t ahead = pt.busyUntilUs - now;
+    uint32_t ahead = busyAhead(pt);
     if (ahead >= 20000) return;
     size_t n = (20000 - ahead) / pt.charUs + 16;
     if (n > sizeof(buf)) n = sizeof(buf);
@@ -207,7 +225,7 @@ bool txIdle(uint8_t p) {
   if (!enabled(p)) return true;
   Port &pt = ports[p];
   if (txqLen(pt)) return false;
-  return !pt.hw || (int32_t)(pt.busyUntilUs - micros()) <= 1000;
+  return !pt.hw || busyAhead(pt) <= 1000;
 }
 
 bool busy() {
@@ -379,7 +397,7 @@ void sendBreak(uint8_t p, uint16_t ms) {
   Port &pt = ports[p];
   pt.txTail = pt.txHead;             // queued input is dropped (BREAK is for ROMmon & co)
   if (pt.hw) {
-    while ((int32_t)(pt.busyUntilUs - micros()) > 0) delay(1);    // at most ~20 ms
+    while (busyAhead(pt)) delay(1);    // at most ~20 ms
     pt.hs->flush();
     // TTL low = RS232 space = BREAK: invert the idle TX line (UART driver keeps running)
     uart_set_line_inverse((uart_port_t)pt.uartNum, UART_SIGNAL_TXD_INV);
@@ -438,7 +456,9 @@ static void pinProbe(uint8_t p) {
 // hardware port is looked at where the UART driver can get stuck - data in
 // the receive FIFO that the driver does not take, receive interrupts switched
 // off, a transmitter that does not finish, pins no longer routed to the UART,
-// a wrong clock divider. As the last resort: the line was sent to and nothing
+// a wrong clock divider, input that waits in the queue and is not handed on
+// (the cause of issue #12 was such a stall, see busyAhead()). As the last
+// resort: the line was sent to and nothing
 // at all has come back for 5 s (a console echoes within milliseconds). Then
 // the port is opened again - it costs nothing - and why is logged and counted
 // (rxReopen/rxWhy in /api/status).
@@ -459,7 +479,7 @@ static void check(uint8_t p) {
   if (now - pt.checkMs < CHECK_MS) return;
   pt.checkMs = now;
   if (!pt.hw || pt.uartNum < 0 || Xfer::on(p) || autobaudRunning(p)) {
-    pt.unansweredSince = 0;
+    pt.unansweredSince = pt.queueSince = 0;
     return;
   }
   uart_dev_t *hw = UART_LL_GET_HW(pt.uartNum);
@@ -469,7 +489,7 @@ static void check(uint8_t p) {
   if (!fifo && !rxOff) pt.fifoSince = 0;
   else if (!pt.fifoSince) pt.fifoSince = now;
   else if (now - pt.fifoSince >= STUCK_MS) why = rxOff ? "Empfangs-Interrupt aus" : "Daten im FIFO, Treiber nimmt sie nicht";
-  bool txBusy = !uart_ll_is_tx_idle(hw) && (int32_t)(micros() - pt.busyUntilUs) > 0;
+  bool txBusy = !uart_ll_is_tx_idle(hw) && !busyAhead(pt);
   if (!txBusy) pt.txSince = 0;
   else if (!pt.txSince) pt.txSince = now;
   else if (!why && now - pt.txSince >= STUCK_MS) why = "Sender wird nicht fertig";
@@ -484,6 +504,11 @@ static void check(uint8_t p) {
     uint32_t b = uart_ll_get_baudrate(hw);
     if (b < pt.cfg.baud * 95 / 100 || b > pt.cfg.baud * 105 / 100) why = "Baudrate im UART verstellt";
   }
+  // input waits in the queue and the loop has not handed any of it to the UART
+  if (!txqLen(pt) || pt.txTail != pt.queueTail) pt.queueSince = 0;
+  else if (!pt.queueSince) pt.queueSince = now;
+  else if (!why && now - pt.queueSince >= STUCK_MS) why = "Sendewarteschlange steht";
+  pt.queueTail = pt.txTail;
   if (!why && pt.unansweredSince && !txqLen(pt) && now - pt.unansweredSince >= UNANSWERED_MS) why = "gesendet, 5 s keine Antwort";
   if (why) reopen(p, why);
 }
