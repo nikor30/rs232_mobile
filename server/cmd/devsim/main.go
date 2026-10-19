@@ -297,9 +297,10 @@ func runConsole(c *device.Client, id uint64, limit time.Duration) string {
 	var off, iack int64
 	var line []byte
 	brk := 0
+	rec, recs := "", 0 // the "SD card": only the name of the file, like the device reports it
 	deadline := time.Now().Add(limit)
 	for failures := 0; ; {
-		m := device.ConMsg{ID: id, Off: off, D: out[:min(len(out), 1024)], IAck: iack, LeftS: int(time.Until(deadline).Seconds())}
+		m := device.ConMsg{ID: id, Off: off, D: out[:min(len(out), 1024)], IAck: iack, LeftS: int(time.Until(deadline).Seconds()), Rec: rec}
 		if m.LeftS <= 0 {
 			m.End = "time is up"
 		}
@@ -319,6 +320,12 @@ func runConsole(c *device.Client, id uint64, limit time.Duration) string {
 		out = out[len(m.D):]
 		if r.End != "" {
 			return r.End
+		}
+		if r.Rec && rec == "" {
+			recs++
+			rec = fmt.Sprintf("/logs/port1-%03d.log", recs)
+		} else if !r.Rec {
+			rec = ""
 		}
 		if skip := iack - r.IOff; skip >= 0 && skip < int64(len(r.D)) {
 			for _, b := range r.D[skip:] {

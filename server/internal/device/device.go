@@ -151,15 +151,20 @@ type ConMsg struct {
 	IAck  int64  `json:"iack"`
 	LeftS int    `json:"left_s"`
 	End   string `json:"end,omitempty"`
+	// The session's recording on the SD card: the file, or why there is none.
+	Rec    string `json:"rec,omitempty"`
+	RecErr string `json:"rec_err,omitempty"`
 }
 
 // ConReply brings input for the serial port (from offset IOff), the number of
-// BREAKs asked for so far, and End if the session is over.
+// BREAKs asked for so far, End if the session is over, and Rec while it is to
+// be recorded.
 type ConReply struct {
 	IOff int64  `json:"ioff"`
 	D    []byte `json:"d"`
 	Brk  int    `json:"brk"`
 	End  string `json:"end"`
+	Rec  bool   `json:"rec"`
 }
 
 // Console sends one console message on the current session.

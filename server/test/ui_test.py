@@ -516,6 +516,13 @@ with sync_playwright() as p:
         expect(term).to_contain_text("[BREAK]", timeout=20000)
         expect(page.locator("#conInfo")).to_contain_text("min left")
         expect(page.locator("#conForm")).to_be_hidden()
+        # recording: the device records on its card, the browser sends the text to the server
+        page.check("#conRecOn")
+        expect(page.locator("#conRecState")).to_contain_text("device: /logs/port1-001.log", timeout=20000)
+        page.locator("#term .xterm-helper-textarea").focus()
+        page.keyboard.type("show")
+        page.keyboard.press("Enter")
+        expect(page.locator("#conRecState")).not_to_contain_text("server: 0 kB", timeout=20000)
         if os.environ.get("UI_BROWSER", "chromium") == "chromium":   # WebKit gives a page no clipboard permission
             # as in PuTTY: selecting copies, the right button pastes
             ctx.grant_permissions(["clipboard-read", "clipboard-write"])
@@ -550,6 +557,15 @@ with sync_playwright() as p:
         expect(page.locator("#conForm")).to_be_visible()
         # the simulator fetches commands only between consoles (the firmware also during one)
         expect(page.locator("#conScriptState")).to_contain_text("✓ Uplink", timeout=30000)
+        rec = page.locator("#recList tbody tr").first
+        expect(rec).to_be_visible(timeout=20000)
+        with page.expect_download() as dl:
+            rec.get_by_role("button", name="Download").click()
+        text = open(dl.value.path(), "rb").read()
+        assert b"GigabitEthernet0/40 is up" in text, f"recording on the server: {text[-200:]!r}"
+        rec.get_by_role("button", name="Delete").click()
+        yes("Delete the recording")
+        expect(page.locator("#recCard")).to_be_hidden(timeout=20000)
         tab("activity")
         expect(page.locator("#conLog tbody tr").first).to_contain_text("closed by the administrator", timeout=20000)
 

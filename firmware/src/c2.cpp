@@ -1692,6 +1692,42 @@ static void conPump() {
   if (brk) Bridge::sendBreak(port);      // takes 300 ms: not under the lock
 }
 
+// Main loop: the recording of a remote console (the switch at the server).
+// It is the SD card's session log of that port - the same file REC at the
+// display writes; one that was running already is used and left running.
+// The card is not touched under the lock.
+static void conRecord() {
+  static bool on = false, own = false;
+  static uint8_t port = 0;
+  if (!conBusy && !on) return;
+  bool want;
+  {
+    Lock l;
+    want = con.state == CON_OPEN && con.stream && con.stream->recWant;
+    if (want && !on) port = con.port;
+  }
+  if (want == on) return;
+  char name[40] = "", err[48] = "";
+  if (want) {
+    if (!Sd::mounted()) strlcpy(err, "no SD card in the device", sizeof(err));
+    else if (Sd::logging(port)) own = false;
+    else if (Sd::logStart(port)) own = true;
+    else strlcpy(err, "the recording could not be started on the SD card", sizeof(err));
+    if (!err[0]) strlcpy(name, Sd::logName(port).c_str(), sizeof(name));
+    Serial.printf("[C2]   Fernkonsole: Mitschnitt %s\n", err[0] ? err : name);
+  } else {
+    if (own) Sd::logStop(port);
+    own = false;
+    Serial.println("[C2]   Fernkonsole: Mitschnitt beendet");
+  }
+  on = want;
+  Lock l;
+  if (con.stream) {
+    strlcpy(con.stream->rec, name, sizeof(con.stream->rec));
+    strlcpy(con.stream->recErr, err, sizeof(con.stream->recErr));
+  }
+}
+
 void loop() {
   if (!mux) return;
   if (rebootNow) {
@@ -1706,6 +1742,7 @@ void loop() {
     playJob = 0;
   }
   if (conBusy) conPump();
+  conRecord();
   unattendedTick();
   inventoryTick();
   MainJob job;

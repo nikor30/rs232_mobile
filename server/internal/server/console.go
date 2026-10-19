@@ -48,6 +48,13 @@ type console struct {
 
 	e2e string // the device's one-time key: the streams are end to end between it and the browser (c2_e2e.h)
 
+	// recording to a text file (recordings.go)
+	rec       bool   // switched on: the device records on its SD card, the browser sends the text here
+	recFile   string // the server's copy, once it has been switched on
+	recHave   int64  // bytes in it
+	devRec    string // the device's file, as it reports it
+	devRecErr string // or why it records nothing
+
 	closing string // set by the administrator: the device is told with its next question
 	ended   *time.Time
 	reason  string
@@ -60,13 +67,15 @@ func (c *console) changed() {
 }
 
 type conMsg struct {
-	ID    uint64 `json:"id"`
-	Off   int64  `json:"off"`  // offset of D in the port's output since the session began
-	D     []byte `json:"d"`    // base64 in JSON
-	IAck  int64  `json:"iack"` // input taken so far
-	LeftS int    `json:"left_s"`
-	End   string `json:"end"` // the device has closed the session, and why
-	E2E   string `json:"e2e"` // its one-time key, when the browser sent one with the request
+	ID     uint64 `json:"id"`
+	Off    int64  `json:"off"`  // offset of D in the port's output since the session began
+	D      []byte `json:"d"`    // base64 in JSON
+	IAck   int64  `json:"iack"` // input taken so far
+	LeftS  int    `json:"left_s"`
+	End    string `json:"end"`     // the device has closed the session, and why
+	E2E    string `json:"e2e"`     // its one-time key, when the browser sent one with the request
+	Rec    string `json:"rec"`     // the file on its SD card that the session is recorded to
+	RecErr string `json:"rec_err"` // or why it cannot record
 }
 
 type conReply struct {
@@ -74,6 +83,7 @@ type conReply struct {
 	D    []byte `json:"d,omitempty"`
 	Brk  int    `json:"brk,omitempty"`
 	End  string `json:"end,omitempty"`
+	Rec  bool   `json:"rec,omitempty"` // record the session on the SD card
 }
 
 // end closes a console. Callers hold sv.mu.
@@ -156,6 +166,10 @@ func (sv *Server) conDevice(deviceID string, m *conMsg) (*conReply, error) {
 		touched = true
 		log.Printf("console %d of %s: end to end", c.id, deviceID)
 	}
+	if c.devRec != m.Rec || c.devRecErr != m.RecErr {
+		c.devRec, c.devRecErr = clip(m.Rec, 64), clip(m.RecErr, 80)
+		touched = true
+	}
 	// output: take what is new, skip what a repeated message brings again
 	if next := c.outBase + int64(len(c.out)); m.Off <= next && m.Off+int64(len(m.D)) > next {
 		c.out = append(c.out, m.D[next-m.Off:]...)
@@ -181,7 +195,7 @@ func (sv *Server) conDevice(deviceID string, m *conMsg) (*conReply, error) {
 	// What the administrator types then leaves at once instead of after the
 	// device's next round.
 	if len(m.D) == 0 && len(c.in) == 0 && c.closing == "" && m.IAck == c.inBase {
-		wake, brk := c.wake, c.brk
+		wake, brk, rec := c.wake, c.brk, c.rec
 		sv.mu.Unlock()
 		t := time.NewTimer(conHold)
 	wait:
@@ -189,7 +203,7 @@ func (sv *Server) conDevice(deviceID string, m *conMsg) (*conReply, error) {
 			select {
 			case <-wake:
 				sv.mu.Lock()
-				if len(c.in) > 0 || c.closing != "" || c.brk != brk || c.ended != nil {
+				if len(c.in) > 0 || c.closing != "" || c.brk != brk || c.rec != rec || c.ended != nil {
 					break wait
 				}
 				wake = c.wake // only output moved; keep waiting
@@ -208,7 +222,7 @@ func (sv *Server) conDevice(deviceID string, m *conMsg) (*conReply, error) {
 	if c.ended != nil {
 		return &conReply{End: c.reason}, nil
 	}
-	r := &conReply{IOff: c.inBase, Brk: c.brk}
+	r := &conReply{IOff: c.inBase, Brk: c.brk, Rec: c.rec}
 	r.D = append(r.D, c.in[:min(len(c.in), conChunkIn)]...)
 	return r, nil
 }
@@ -216,13 +230,17 @@ func (sv *Server) conDevice(deviceID string, m *conMsg) (*conReply, error) {
 // ---------------------------------------------------------------- administrator
 
 type conView struct {
-	ID     uint64     `json:"id"`
-	State  string     `json:"state"` // requested | granted | open | ended | refused
-	Port   int        `json:"port,omitempty"`
-	Opened *time.Time `json:"opened,omitempty"`
-	LeftS  int        `json:"left_s,omitempty"`
-	Reason string     `json:"reason,omitempty"`
-	E2E    string     `json:"e2e,omitempty"` // the device's one-time key: the browser derives the session from it
+	ID        uint64     `json:"id"`
+	State     string     `json:"state"` // requested | granted | open | ended | refused
+	Port      int        `json:"port,omitempty"`
+	Opened    *time.Time `json:"opened,omitempty"`
+	LeftS     int        `json:"left_s,omitempty"`
+	Reason    string     `json:"reason,omitempty"`
+	E2E       string     `json:"e2e,omitempty"` // the device's one-time key: the browser derives the session from it
+	Rec       bool       `json:"rec,omitempty"` // recorded to a text file (recordings.go)
+	RecHave   int64      `json:"rec_have,omitempty"`
+	DevRec    string     `json:"dev_rec,omitempty"`
+	DevRecErr string     `json:"dev_rec_err,omitempty"`
 }
 
 // conStatus tells the administrator where the remote console of a device
@@ -232,7 +250,8 @@ func (sv *Server) conStatus(w http.ResponseWriter, r *http.Request) {
 	var cur *conView
 	sv.mu.Lock()
 	if c := sv.conGet(id); c != nil {
-		cur = &conView{ID: c.id, State: "open", Port: c.port, Opened: &c.opened, LeftS: c.leftS, E2E: c.e2e}
+		cur = &conView{ID: c.id, State: "open", Port: c.port, Opened: &c.opened, LeftS: c.leftS, E2E: c.e2e,
+			Rec: c.rec, RecHave: c.recHave, DevRec: c.devRec, DevRecErr: c.devRecErr}
 		if c.ended != nil {
 			cur.State, cur.Reason, cur.LeftS = "ended", c.reason, 0
 		}
@@ -339,7 +358,8 @@ func (sv *Server) conOutput(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	defer sv.mu.Unlock()
-	out := map[string]any{"state": "open", "left_s": c.leftS, "port": c.port}
+	out := c.recView()
+	out["state"], out["left_s"], out["port"] = "open", c.leftS, c.port
 	if from < c.outBase { // the browser was away for longer than the buffer holds
 		out["lost"] = c.outBase - from
 		from = c.outBase

@@ -46,6 +46,9 @@ type Config struct {
 	// at most ImageMax bytes each and ImageTotal together (0: 2 and 20 GB).
 	ImageDir             string
 	ImageMax, ImageTotal int64
+	// RecordDir keeps recordings of remote consoles (recordings.go). Empty:
+	// the server keeps none, the device still can.
+	RecordDir string
 }
 
 const (
@@ -341,6 +344,11 @@ func (sv *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /admin/v1/devices/{id}/console/{sess}/output", sv.onDevice(store.RightUse, sv.conOutput))
 	mux.HandleFunc("POST /admin/v1/devices/{id}/console/{sess}/input", sv.onDevice(store.RightUse, sv.conInput))
 	mux.HandleFunc("POST /admin/v1/devices/{id}/console/{sess}/close", sv.onDevice(store.RightUse, sv.conClose))
+	mux.HandleFunc("POST /admin/v1/devices/{id}/console/{sess}/record", sv.onDevice(store.RightUse, sv.conRecord))
+	mux.HandleFunc("POST /admin/v1/devices/{id}/console/{sess}/transcript", sv.onDevice(store.RightUse, sv.conTranscript))
+	mux.HandleFunc("GET /admin/v1/devices/{id}/recordings", sv.onDevice(store.RightUse, sv.listRecordings))
+	mux.HandleFunc("GET /admin/v1/devices/{id}/recordings/{name}", sv.onDevice(store.RightUse, sv.getRecording))
+	mux.HandleFunc("POST /admin/v1/devices/{id}/recordings/{name}/delete", sv.onDevice(store.RightManage, sv.deleteRecording))
 	return mux
 }
 

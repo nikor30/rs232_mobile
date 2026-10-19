@@ -174,6 +174,7 @@ func main() {
 	}
 	cfg := server.Config{AdminToken: admin, PublicURL: publicURL, PollS: pollS, FirmwareDir: filepath.Join(dataDir, "firmware"),
 		ImageDir: filepath.Join(dataDir, "images"), ImageMax: mb("C2_IMAGE_MAX_MB", 2048), ImageTotal: mb("C2_IMAGE_TOTAL_MB", 20480),
+		RecordDir:     filepath.Join(dataDir, "recordings"),
 		SecureCookies: strings.HasPrefix(publicURL, "https://"), TrustProxy: os.Getenv("C2_TRUST_PROXY") == "1"}
 	if tenant := os.Getenv("C2_ENTRA_TENANT"); tenant != "" {
 		cfg.Entra = &server.EntraConfig{Tenant: strings.ToLower(tenant), ClientID: os.Getenv("C2_ENTRA_CLIENT_ID"), ClientSecret: os.Getenv("C2_ENTRA_CLIENT_SECRET")}

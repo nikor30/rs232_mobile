@@ -3,6 +3,8 @@ package server
 import (
 	"bytes"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -301,5 +303,71 @@ func TestConsoleWaitsOnBothSides(t *testing.T) {
 	e.admin("GET", sess+"/output?from=0&wait=0", nil, &out)
 	if out.Lost == 0 || out.Next != off || len(out.D) != conMaxOut || out.From != off-conMaxOut {
 		t.Fatalf("overflow: lost %d from %d next %d len %d", out.Lost, out.From, out.Next, len(out.D))
+	}
+}
+
+func TestConsoleRecording(t *testing.T) {
+	e := newEnv(t)
+	c := e.enrolled()
+	id := e.granted(c)
+	base := "/admin/v1/devices/" + c.ID()
+	sess := fmt.Sprintf("%s/console/%d", base, id)
+	if r, _ := c.Console(device.ConMsg{ID: id, D: []byte("Switch>"), LeftS: 900}); r.Rec {
+		t.Fatal("recording before anybody switched it on")
+	}
+	if code := e.admin("POST", sess+"/transcript", map[string]any{"d": []byte("x"), "at": 0}, nil); code != 409 {
+		t.Fatalf("text while the recording is off: HTTP %d", code)
+	}
+	var v map[string]any
+	if code := e.admin("POST", sess+"/record", map[string]bool{"on": true}, &v); code != 200 || v["rec"] != true {
+		t.Fatalf("switch on: HTTP %d %v", code, v)
+	}
+	// the device is told, and says where it records
+	r, _ := c.Console(device.ConMsg{ID: id, Off: 7})
+	if !r.Rec {
+		t.Fatal("device not told to record")
+	}
+	c.Console(device.ConMsg{ID: id, Off: 7, Rec: "/logs/port2-001.log"})
+	if st := e.conState(c.ID()).Console; !st.Rec || st.DevRec != "/logs/port2-001.log" {
+		t.Fatalf("status: %+v", st)
+	}
+	// the browser's text: a request sent again is written once
+	for _, p := range []struct {
+		d  string
+		at int
+	}{{"Switch>", 0}, {"Switch>", 0}, {"h>show", 5}, {"\r\n", 11}} {
+		if code := e.admin("POST", sess+"/transcript", map[string]any{"d": []byte(p.d), "at": p.at}, nil); code != 200 {
+			t.Fatalf("text %q: HTTP %d", p.d, code)
+		}
+	}
+	var list struct{ Recordings []recordingInfo }
+	e.admin("GET", base+"/recordings", nil, &list)
+	if len(list.Recordings) != 1 || list.Recordings[0].Session != id || list.Recordings[0].Size != 13 {
+		t.Fatalf("list: %+v", list)
+	}
+	name := list.Recordings[0].Name
+	if b, _ := os.ReadFile(filepath.Join(e.dir, "recordings", name)); string(b) != "Switch>show\r\n" {
+		t.Fatalf("file: %q", b)
+	}
+	if code := e.admin("POST", base+"/recordings/"+name+"/delete", nil, nil); code != 409 {
+		t.Fatalf("delete while recording: HTTP %d", code)
+	}
+	// off: the device is told, the browser's text is refused
+	e.admin("POST", sess+"/record", map[string]bool{"on": false}, nil)
+	if r, _ := c.Console(device.ConMsg{ID: id, Off: 7}); r.Rec {
+		t.Fatal("device still told to record")
+	}
+	if code := e.admin("POST", sess+"/transcript", map[string]any{"d": []byte("more"), "at": 13}, nil); code != 409 {
+		t.Fatalf("text after off: HTTP %d", code)
+	}
+	if code := e.admin("GET", base+"/recordings/"+name, nil, nil); code != 200 {
+		t.Fatalf("download: HTTP %d", code)
+	}
+	if code := e.admin("GET", base+"/recordings/..%2fstate.json", nil, nil); code != 404 {
+		t.Fatalf("a file outside: HTTP %d", code)
+	}
+	c.Console(device.ConMsg{ID: id, Off: 7, End: "closed at the device"})
+	if code := e.admin("POST", base+"/recordings/"+name+"/delete", nil, nil); code != 200 {
+		t.Fatalf("delete: HTTP %d", code)
 	}
 }

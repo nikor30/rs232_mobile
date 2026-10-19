@@ -344,6 +344,9 @@ int main(int argc, char **argv) {
         printf("CLOSED %s\n", end);
         break;
       }
+      // the "SD card" records when the server asks, as the device does it
+      if (st.recWant && !st.rec[0]) strcpy(st.rec, "/logs/port1-001.log");
+      if (!st.recWant) st.rec[0] = 0;
       size_t take = st.inLen < st.outRoom() ? st.inLen : st.outRoom();
       typed.append((const char *)st.in, take);
       st.outPut(st.in, take);

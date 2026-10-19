@@ -209,6 +209,10 @@
               <button id="conClose" class="btn danger">End</button>
             </span>
           </div>
+          <div id="conRec" class="row left wrap">
+            <label class="check"><input id="conRecOn" type="checkbox"> Record to a text file</label>
+            <span id="conRecState" class="dim"></span>
+          </div>
           <p id="conTip" class="dim">Select to copy, right-click to paste.</p>
           <div id="conScripts" data-manage hidden>
             <h3>Scripts</h3>
@@ -217,6 +221,14 @@
             <p id="conScriptState" class="dim"></p>
           </div>
         </div>
+      </section>
+      <section id="recCard" class="card" hidden>
+        <h2>Recordings</h2>
+        <p class="dim">Kept on the server as plain text; the device has its own copy on its SD card.</p>
+        <table id="recList" class="stack">
+          <thead><tr><th>Session</th><th>Saved</th><th>Size</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
       </section>
     </div>
 

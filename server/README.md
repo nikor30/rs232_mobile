@@ -246,6 +246,9 @@ Alle Aufrufe mit `Authorization: Bearer <C2_ADMIN_TOKEN>` oder mit dem Cookie ei
 | `GET /admin/v1/devices/{id}/console/{sitzung}/output?from=0` | Ausgabe des Ports ab einem Offset, base64; wartet bis zu 20 s auf Neues (`wait=` in Sekunden verkürzt das) |
 | `POST /admin/v1/devices/{id}/console/{sitzung}/input` `{"d":"<base64>","brk":false}` | Eingabe für den Port, `brk` schickt ein BREAK; 429, wenn das Gerät nicht nachkommt |
 | `POST /admin/v1/devices/{id}/console/{sitzung}/close` | Sitzung beenden |
+| `POST /admin/v1/devices/{id}/console/{sitzung}/record` `{"on":true}` | Aufzeichnen in eine Textdatei ein/aus: Das Gerät schreibt auf seine SD-Karte (`dev_rec` bzw. `dev_rec_err` im Zustand der Konsole), der Server legt eine Kopie unter `C2_DATA_DIR/recordings` ab |
+| `POST /admin/v1/devices/{id}/console/{sitzung}/transcript` `{"d":"<base64>","at":N}` | Klartext für die Kopie des Servers, vom Browser (nur der kann eine Ende-zu-Ende-Sitzung lesen); `at` = Stelle in der Datei, Wiederholtes wird einmal geschrieben; 409 bei ausgeschalteter Aufzeichnung, 413 über 32 MB |
+| `GET /admin/v1/devices/{id}/recordings`, `GET …/recordings/{name}`, `POST …/recordings/{name}/delete` | Aufzeichnungen des Servers auflisten, herunterladen, löschen (Löschen braucht `manage`) |
 | `GET /admin/v1/users` | Konten: Art, Zustand, letzte Anmeldung — keine Geheimnisse |
 | `POST /admin/v1/users` `{"name":"anna","kind":"local"}` oder `{"name":"ben","kind":"entra","entra":"ben@firma.de"}` | Konto anlegen; für `local` kommt der Einrichtungscode zurück, einmal |
 | `POST /admin/v1/users/{name}/reset` | Passwort und Authenticator-App verwerfen, neuer Einrichtungscode |

@@ -33,6 +33,8 @@ size_t buildMessage(JsonDocument &msg, uint32_t id, const Stream &s, uint32_t le
   msg["iack"] = s.inAck;
   msg["left_s"] = leftS;
   if (end && end[0]) msg["end"] = end;
+  if (s.rec[0]) msg["rec"] = (const char *)s.rec;
+  if (s.recErr[0]) msg["rec_err"] = (const char *)s.recErr;
   return n;
 }
 
@@ -46,6 +48,7 @@ void accepted(Stream &s, size_t n) {
 const char *applyReply(JsonDocument &reply, Stream &s) {
   const char *end = reply["end"] | "";
   if (end[0]) return end;
+  s.recWant = reply["rec"] | false;
   const char *b64 = reply["d"] | "";
   size_t b64Len = strlen(b64);
   if (b64Len) {

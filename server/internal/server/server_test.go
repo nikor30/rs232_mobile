@@ -36,7 +36,8 @@ func newEnv(t *testing.T) *env {
 	}
 	t.Cleanup(func() { e.sv.st.Close() })
 	e.sv = New(Config{AdminToken: adminToken, FirmwareDir: filepath.Join(e.dir, "firmware"),
-		ImageDir: filepath.Join(e.dir, "images"), ImageMax: 1 << 20, ImageTotal: 3 << 19}, st)
+		ImageDir: filepath.Join(e.dir, "images"), ImageMax: 1 << 20, ImageTotal: 3 << 19,
+		RecordDir: filepath.Join(e.dir, "recordings")}, st)
 	e.sv.SetClock(func() time.Time { return e.now })
 	e.ts = httptest.NewServer(e.sv.Handler())
 	e.sv.cfg.PublicURL = e.ts.URL

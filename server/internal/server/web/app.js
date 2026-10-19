@@ -1269,8 +1269,9 @@
         c.term.write(`\r\n\x1b[90m[${t('{n} characters are missing', { n: o.lost })}]\x1b[0m\r\n`);
         if (c.e2e) c.e2e.broken = true;           // the frames do not line up any more
       }
-      if (o.d && c.e2e && !c.e2e.broken) for (const part of await e2eOpen(c.e2e, unb64(o.d))) c.term.write(part);
-      else if (o.d && !c.e2e) c.term.write(unb64(o.d));
+      if (o.d && c.e2e && !c.e2e.broken) for (const part of await e2eOpen(c.e2e, unb64(o.d))) { c.term.write(part); recPut(c, part); }
+      else if (o.d && !c.e2e) { const part = unb64(o.d); c.term.write(part); recPut(c, part); }
+      recShow(c, o);
       if (c.e2e && c.e2e.broken && !c.e2eGone) {
         c.e2eGone = true;
         c.term.write(`\r\n\x1b[31m[${t('The encrypted stream cannot be read any more – end the session and open a new one.')}]\x1b[0m\r\n`);
@@ -1286,6 +1287,89 @@
       }
     }
   }
+  // Recording to a text file: the device writes its own copy to the SD card,
+  // and this browser - the only one with the plain text of an end to end
+  // session - sends what it shows to the server for the server's copy.
+  function recPut(c, part) {
+    if (!c.rec || !part.length) return;
+    c.recBuf.push(part);
+    recFlush(c);
+  }
+  async function recFlush(c) {
+    if (c.recBusy) return;
+    c.recBusy = true;
+    while (c.recBuf.length && con === c) {
+      const n = c.recBuf.reduce((a, p) => a + p.length, 0), all = new Uint8Array(Math.min(n, 32768));
+      let at = 0;
+      while (c.recBuf.length && at + c.recBuf[0].length <= all.length) { all.set(c.recBuf[0], at); at += c.recBuf.shift().length; }
+      if (!at) { all.set(c.recBuf[0].subarray(0, all.length)); c.recBuf[0] = c.recBuf[0].subarray(all.length); at = all.length; }
+      for (let i = 0; ; i++) {
+        try {
+          const v = await api('POST', `/devices/${c.dev}/console/${c.id}/transcript`, { d: b64(all.subarray(0, at)), at: c.recAt });
+          c.recAt = v.have;
+          break;
+        } catch (err) {
+          // switched off meanwhile, or full: what is left is not kept
+          if (err.status === 409 || err.status === 413 || i >= 30 || con !== c) { if (err.status !== 409) toast(err.message); c.recBuf.length = 0; break; }
+          await new Promise((ok) => setTimeout(ok, 1000));
+        }
+      }
+    }
+    c.recBusy = false;
+  }
+  function recShow(c, o) {
+    if (o && 'rec' in o) {
+      if (o.rec && !c.rec) c.recAt = o.rec_have || 0;
+      c.rec = !!o.rec;
+      c.devRec = o.dev_rec || '';
+      c.devRecErr = o.dev_rec_err || '';
+    }
+    $('#conRec').hidden = c.ended && !c.rec;
+    $('#conRecOn').checked = c.rec;
+    $('#conRecOn').disabled = c.ended;
+    const parts = [];
+    if (c.rec) {
+      parts.push(c.devRecErr ? t('device: {why}', { why: t(c.devRecErr) }) : c.devRec ? t('device: {file}', { file: c.devRec }) : t('device: waiting for it'));
+      parts.push(t('server: {size}', { size: c.recAt ? bytes(c.recAt) : '0 kB' }));
+    }
+    $('#conRecState').textContent = parts.join(' · ');
+    $('#conRecState').title = t('The server keeps its copy as plain text: it can read it, even for an end to end session.');
+  }
+  function renderRecordings(d) {
+    api('GET', `/devices/${d.id}/recordings`).then((v) => {
+      if (selected !== d.id) return;
+      const body = $('#recList tbody');
+      body.textContent = '';
+      for (const r of v.recordings) {
+        const del = el('button', { className: 'btn small danger', type: 'button', textContent: t('Delete') });
+        del.dataset.manage = '';
+        del.addEventListener('click', async () => {
+          if (!await ask(t('Delete the recording of session {n}?', { n: r.session }), t('Only the server\'s copy; the one on the device\'s SD card stays.'), t('Delete'))) return;
+          try { await api('POST', `/devices/${d.id}/recordings/${encodeURIComponent(r.name)}/delete`); } catch (err) { toast(err.message); }
+          renderRecordings(d);
+        });
+        const get = el('button', { className: 'btn small', type: 'button', textContent: t('Download') });
+        get.addEventListener('click', async () => {      // with the sign-in headers: a plain link has no token
+          try {
+            const res = await fetch(`/admin/v1/devices/${d.id}/recordings/${encodeURIComponent(r.name)}`, { cache: 'no-store', headers: authHeaders() });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const a = el('a', { href: URL.createObjectURL(await res.blob()), download: r.name });
+            document.body.append(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+          } catch (err) { toast(err.message); }
+        });
+        body.append(el('tr', null,
+          el('td', { textContent: r.session }),
+          el('td', { textContent: when(r.time) }),
+          el('td', { textContent: bytes(r.size) }),
+          el('td', null, el('span', { className: 'acts' }, get, d.right === 'manage' ? del : ''))));
+      }
+      label($('#recList'));
+      $('#recCard').hidden = !v.recordings.length;
+    }).catch(() => {});
+  }
   function conAttach(dev, id, left, devKey) {
     conDetach();
     $('#conBox').hidden = false;
@@ -1294,7 +1378,7 @@
     term.loadAddon(fit);
     term.open($('#term'));
     fit.fit();
-    const c = con = { dev, id, term, fit, next: 0, abort: new AbortController(), ended: false, queue: [], sending: false, inAt: 0, left: left || 0, leftAt: Date.now() };
+    const c = con = { dev, id, term, fit, next: 0, abort: new AbortController(), ended: false, queue: [], sending: false, inAt: 0, left: left || 0, leftAt: Date.now(), rec: false, recAt: 0, recBuf: [], recBusy: false };
     const e2e = $('#conE2E');
     e2e.hidden = false;
     e2e.className = 'chip';
@@ -1349,6 +1433,8 @@
         $('#conInfo').textContent = con.ended ? t('ended') : t('Port {port} · {left} min left', { port: cur ? cur.port : '', left: mmss(left) });
         $('#conBreak').hidden = $('#conClose').hidden = con.ended;
       }
+      if (con && cur && con.id === cur.id) recShow(con, cur.state === 'open' ? Object.assign({ rec: !!cur.rec }, cur) : null);
+      renderRecordings(d);
       conScripts(d, cur && cur.state === 'open' ? cur.port : 0);
       const body = $('#conLog tbody');
       body.textContent = '';
@@ -1484,6 +1570,16 @@
       if (v.console) await api('POST', `/devices/${d.id}/console/${v.console.id}/close`);
     } catch (err) { toast(err.message); }
     refresh();
+  });
+  $('#conRecOn').addEventListener('change', async (ev) => {
+    const c = con, on = ev.target.checked;
+    if (!c) return;
+    try {
+      const v = await api('POST', `/devices/${c.dev}/console/${c.id}/record`, { on });
+      recShow(c, v);
+      if (on) toast(t('Recording: on the device\'s SD card and on the server'));
+    } catch (err) { toast(err.message); ev.target.checked = c.rec; }
+    c.term.focus();
   });
   $('#conClose').addEventListener('click', async () => {
     if (!con) return;

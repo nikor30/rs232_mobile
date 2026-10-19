@@ -25,6 +25,11 @@ struct Stream {
   uint64_t inAck = 0;              // input bytes accepted so far
   uint32_t brkSeen = 0;            // BREAKs the server has asked for in total
   uint32_t brkDue = 0;             // of those, not yet put on the line
+  // Recording to a text file: the server switches it (recWant), the device
+  // says where it records (rec, the file on the SD card) or why not (recErr).
+  bool recWant = false;
+  char rec[40] = "";
+  char recErr[48] = "";
 
   size_t outRoom() const { return OUT_MAX - outLen; }
   void outPut(const uint8_t *data, size_t n);        // n <= outRoom()

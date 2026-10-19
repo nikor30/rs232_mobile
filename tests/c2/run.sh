@@ -106,6 +106,10 @@ admin POST /admin/v1/devices/$ID/console/$CON/input '{"d":"c2hvdw0="}' >/dev/nul
 expect "typed and echoed" "$(output "$GREETING+b'show\\r'")" "2005 characters, as sent"
 admin POST /admin/v1/devices/$ID/console/$CON/input '{"brk":true}' >/dev/null
 expect "BREAK" "$(output "$GREETING+b'show\\r[BREAK]'")" "2012 characters, as sent"
+admin POST /admin/v1/devices/$ID/console/$CON/record '{"on":true}' >/dev/null
+devrec() { admin GET /admin/v1/devices/$ID/console | json 'd["console"].get("dev_rec","")'; }
+for i in $(seq 1 20); do [ -n "$(devrec)" ] && break; sleep 0.5; done
+expect "recording: the device says where it records" "$(devrec)" /logs/port1-001.log
 admin POST /admin/v1/devices/$ID/console/$CON/close >/dev/null
 [ "$(timeout 30 docker wait $P-console)" = 0 ] || { docker logs $P-console >&2; fail "console client"; }
 docker logs $P-console >"$LOG" 2>&1
