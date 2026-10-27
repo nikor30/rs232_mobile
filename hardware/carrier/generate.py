@@ -654,7 +654,8 @@ def write_project(path: str, root_uid: str, sheet_uids: List[str]):
 
 
 # ---------------------------------------------------------------------------- build
-def build():
+def build(write: bool = True):
+    """Build schematic, placement and nets; write the KiCad files unless write is False."""
     root_uid = U("root-sheet")
     sheet_uids = [U(f"sheet-ch{n}") for n in range(1, 5)]
     root_path = f"/{root_uid}"
@@ -684,7 +685,8 @@ def build():
         ch.place(p)
     for n, net in enumerate(["ISO5V", "ISOGND"]):
         ch.label(net, 215.9, 40.64 + 2.54 * n, 0, "local")
-    ch.write(os.path.join(OUT, "channel.kicad_sch"), "2")
+    if write:
+        ch.write(os.path.join(OUT, "channel.kicad_sch"), "2")
 
     # ---- root sheet
     rparts = root_parts()
@@ -708,7 +710,8 @@ def build():
         root.sheet_symbol(f"CH{n}", "channel.kicad_sch", sheet_uids[n - 1], 215.9, 30.48 + 25.4 * (n - 1), 30.48, 12.7,
                           {"ESP_TX": ("input", "L", f"ESP_TX{n}"), "ISO_IN": ("input", "L", f"ISO_IN{n}"), "ESP_RX": ("output", "R", f"ESP_RX{n}")},
                           str(n + 1))
-    root.write(os.path.join(OUT, f"{PROJECT}.kicad_sch"), "1")
+    if write:
+        root.write(os.path.join(OUT, f"{PROJECT}.kicad_sch"), "1")
 
     # ---- PCB
     placed = []
@@ -736,6 +739,8 @@ def build():
                 ip.y = BOARD_H + V["RJ45_PROTRUDE"] + V["RJ45_FRONT"]   # rot 180: front face at y + (-front)
             placed.append((ip, full, f"{root_path}/{sheet_uids[n - 1]}/{U('channel:' + tp.ref)}"))
     net_list = sorted(nets, key=lambda s: (s.startswith("/"), s))
+    if not write:
+        return placed, net_list
     write_pcb(os.path.join(OUT, f"{PROJECT}.kicad_pcb"), placed, net_list)
     write_project(os.path.join(OUT, f"{PROJECT}.kicad_pro"), root_uid, sheet_uids)
     with open(os.path.join(OUT, "fp-lib-table"), "w") as fh:
