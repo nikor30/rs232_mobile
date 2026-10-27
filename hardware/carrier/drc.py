@@ -60,6 +60,12 @@ def main():
     ok &= run(["kicad-cli", "pcb", "export", "pdf", "--layers", "B.Cu,B.SilkS,Edge.Cuts", "--mirror", "-o", os.path.join(FAB, "rs232_carrier-bottom.pdf"), PCB])
     ok &= run(["kicad-cli", "pcb", "export", "svg", "--layers", "F.Cu,B.Cu,F.SilkS,Edge.Cuts,F.Fab", "--page-size-mode", "2", "--exclude-drawing-sheet",
                "-o", os.path.join(FAB, "rs232_carrier-board.svg"), PCB])
+    try:
+        import cairosvg
+        cairosvg.svg2png(url=os.path.join(FAB, "rs232_carrier-board.svg"), write_to=os.path.join(FAB, "rs232_carrier-board.png"),
+                         output_width=1800, background_color="black")
+    except Exception as exc:   # the PNG is only a preview
+        print("board png skipped:", exc)
     zipf = os.path.join(FAB, "rs232_carrier-gerbers-pcbway")
     shutil.make_archive(zipf, "zip", gerb)
     print("fab files:", sorted(os.listdir(FAB)))

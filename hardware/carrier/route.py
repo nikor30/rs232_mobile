@@ -222,6 +222,15 @@ class Router:
                 for layer, sl, m in item.masks(extra):
                     self.counts[(g, c)][layer][sl] -= m
 
+    def snapshot(self):
+        import copy
+        return ({k: v.copy() for k, v in self.counts.items()}, self.novia.copy(),
+                {k: list(v) for k, v in self.own_items.items()}, list(self.tracks), list(self.vias),
+                copy.deepcopy(self.comps))
+
+    def restore(self, snap):
+        self.counts, self.novia, self.own_items, self.tracks, self.vias, self.comps = snap
+
     def rip_up(self, net):
         """Remove all routed copper of a net."""
         for item in self.own_items.get(net, []):
@@ -304,7 +313,7 @@ class Router:
         self.comps[net] = comps
         return ok
 
-    def plane_tree(self, net):
+    def plane_tree(self, net, allow_ripup=True):
         """Connect all components of a plane net (vias, through-hole pads) with tracks."""
         comps = [c for c in self.comps.get(net, []) if c]
         if len(comps) < 2:
@@ -327,17 +336,37 @@ class Router:
                 cents.append(tc)
                 continue
             path = self.astar(net, connected, target, tc)
-            if path is None:
-                victims = sorted((v for v in self.nets_near(net, tc[0], tc[1], 2.0) if not self.plane_polygon(v)), key=lambda n: half_width(n))[:4]
+            if path is None and allow_ripup:
+                # transactional rip-up: tear up the signal nets around the target, link, re-route
+                # them without further rip-up; if any of them fails, roll everything back
+                snap = self.snapshot()
+                conn_snap = set(connected)
+                victims = sorted((v for v in self.nets_near(net, tc[0], tc[1], 2.5) if not self.plane_polygon(v)), key=lambda n: half_width(n))[:6]
                 for v in victims:
                     self.rip_up(v)
-                    self.ripped.add(v)
                 if victims:
-                    print(f"  rip-up for {net}: {victims}")
                     path = self.astar(net, connected, target, tc)
+                if path is not None:
+                    self.commit(net, path, None, connected)
+                    saved_ripped = self.ripped
+                    good = all(self.route_net(v, allow_ripup=False) for v in victims)
+                    self.ripped = saved_ripped
+                    if good:
+                        print(f"  rip-up for {net}: {victims} (re-routed)")
+                        connected |= target
+                        cents.append(tc)
+                        continue
+                    path = None
+                if path is None:
+                    self.restore(snap)
+                    connected.clear()
+                    connected |= conn_snap
             if path is None:
-                print(f"  !! no route for {net} to component at {tc}")
-                ok = False
+                # the pour on both layers normally reaches it anyway; the DRC's unconnected-items
+                # check is the arbiter, so do not tear up signal nets for a redundant link
+                print(f"  -- no track for {net} to component at ({tc[0]:.1f}, {tc[1]:.1f}), left to the pour")
+                if "--debug" in sys.argv:
+                    self.debug_image(net, connected, target)
             else:
                 self.commit(net, path, None, connected)
             connected |= target
@@ -540,9 +569,15 @@ class Router:
                 if l == layer:
                     img[j, i] = (0, 1, 0)
             ax.imshow(img, origin="upper", extent=(0, NX * GRID, NY * GRID, 0))
+            if targets:
+                tx = sum(i for _, i, _ in targets) / len(targets) * GRID
+                ty = sum(j for _, _, j in targets) / len(targets) * GRID
+                ax.set_xlim(tx - 8, tx + 8)
+                ax.set_ylim(ty + 8, ty - 8)
             ax.set_title(f"{net} layer {'F' if layer == 0 else 'B'} (red=blocked, blue=src, green=target)")
         fig.tight_layout()
-        fig.savefig(os.path.join(HERE, f"debug_{net.replace('/', '_')}.png"), dpi=110)
+        self._dbg = getattr(self, "_dbg", 0) + 1
+        fig.savefig(os.path.join(HERE, f"debug_{net.replace('/', '_')}_{self._dbg}.png"), dpi=110)
         plt.close(fig)
 
     # ----- output
@@ -602,31 +637,31 @@ def main():
     queue = [n for n in order if n not in plane]
     done = set()
     rerouted = {}
-    while queue:
-        net = queue.pop(0)
-        t1 = time.time()
-        ok = r.route_net(net, allow_ripup=rerouted.get(net, 0) < 2)
-        done.add(net)
-        print(f"[{len(done):3d}/{len(order)}] {net:22s} {'ok' if ok else 'FAILED'}  {time.time() - t1:5.1f}s  tracks={len(r.tracks)} vias={len(r.vias)}")
-        if not ok:
-            failed.append(net)
-        for v in sorted(r.ripped):
-            rerouted[v] = rerouted.get(v, 0) + 1
-            if v in failed:
-                failed.remove(v)
-            queue.insert(0, v)   # re-route the victims right away
+
+    def run(queue):
+        while queue:
+            net = queue.pop(0)
+            t1 = time.time()
+            ok = r.route_net(net, allow_ripup=rerouted.get(net, 0) < 2)
+            done.add(net)
+            print(f"[{len(done):3d}/{len(order)}] {net:22s} {'ok' if ok else 'FAILED'}  {time.time() - t1:5.1f}s  tracks={len(r.tracks)} vias={len(r.vias)}")
+            if not ok:
+                failed.append(net)
+            for v in sorted(r.ripped):
+                rerouted[v] = rerouted.get(v, 0) + 1
+                if v in failed:
+                    failed.remove(v)
+                queue.insert(0, v)   # re-route the victims right away
+
+    run(queue)
+    # plane trees last: short links between the fanout vias, no rip-up (the pour is the fallback,
+    # the DRC's unconnected-items check is the arbiter)
     for net in plane:
         t1 = time.time()
         ok = r.plane_tree(net)
         print(f"tree   {net:22s} {'ok' if ok else 'FAILED'}  {time.time() - t1:5.1f}s  tracks={len(r.tracks)} vias={len(r.vias)}")
         if not ok:
             failed.append(net)
-        for v in sorted(r.ripped):
-            if r.route_net(v, allow_ripup=False):
-                if v in failed:
-                    failed.remove(v)
-            else:
-                failed.append(v)
     failed = sorted(set(failed))
     pcb = os.path.join(G.OUT, f"{G.PROJECT}.kicad_pcb")
     txt = open(pcb).read()

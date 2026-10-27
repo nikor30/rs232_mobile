@@ -26,9 +26,8 @@ Der Lagesensor für die automatische Drehung sitzt auf dem Modul; auf der Träge
 
 ### Externe Antenne
 
-Das Modul hat eine Keramikantenne und — nach den Produktseiten der Schwesterboards — vermutlich eine
-IPEX-Buchse mit einem 0-Ω-Umschaltwiderstand; für das 2″-Modul konnte das nicht nachgelesen werden (die
-Waveshare-Seiten waren aus der Sandbox nicht erreichbar). Das Gehäuse hat links eine Bohrung (6,5 mm) für eine
+Das Modul hat eine Keramikantenne; das Bauteilfoto von Waveshare zeigt keine IPEX-Buchse, die
+Schwesterboards haben eine mit 0-Ω-Umschaltwiderstand — am Modul nachsehen. Das Gehäuse hat links eine Bohrung (6,5 mm) für eine
 RP-SMA-Einbaubuchse; ein U.FL/IPEX-Pigtail von dort zum Modul. **Am Modul nachsehen**, ob eine IPEX-Buchse
 bestückt ist; wenn nicht, bleibt nur die Keramikantenne (das Gehäuse setzt sie an die linke, metallfreie Seite,
 rund 50 mm von den RJ45-Buchsen entfernt).
@@ -118,7 +117,7 @@ täglich gebraucht wird, keine sichtbaren Schrauben, Fugen nur dort, wo man sie 
   Glas in den Rahmen), Boden mit Akku aufsetzen, bis die sechs Haken klicken.
 - Nicht nach außen geführt: der SD-Slot (sitzt beim mittigen Modul 22 mm von der Wand; die Karte bleibt
   eingebaut, Zugriff über den USB-Stick-Modus oder nach Abnehmen des Bodens).
-- Außen **83 × 114 × 29 mm**. Drucken: Körper mit der Oberseite nach unten (Pfosten wachsen nach oben, der
+- Außen **83 × 114 × 31 mm**. Drucken: Körper mit der Oberseite nach unten (Pfosten wachsen nach oben, der
   Glasrahmen wird glatt), Boden flach (Haken wachsen nach oben); PETG oder ABS, nicht PLA. Farbe nach Rams:
   helles Warmgrau oder Anthrazit, matt. Regeln aus den FDM-Leitfäden (Hubs, Formlabs, Core77): Spiel 0,3 mm,
   Hakenlänge ≈ 4 × Dicke mit Wurzelradius, in Z gedruckte Haken dicker als flach gedruckte. **Erster Druck als
@@ -136,18 +135,21 @@ Anforderungen. Für Bestückung durch PCBWay: `rs232_carrier-pos.csv` und `bom.c
 
 ## Vor der Bestellung prüfen
 
-Die Maße des Waveshare-Moduls stammen aus den Produktfotos (`esp32-s3-ports.jpg`, Maßstab über den
-2,54-mm-Rasterabstand der Stiftleisten), nicht aus einer Zeichnung — die Waveshare-Seiten waren aus der Sandbox
-nicht erreichbar. Alles steht in `carrier/generate.py` unter `VERIFY`; nach der Korrektur die drei Skripte
-neu laufen lassen.
+Die Maße des Waveshare-Moduls stammen aus der offiziellen Maßzeichnung (Platine 35,00 × 48,20 mm, vier
+Bohrungen 29,00 × 42,20 mm im Abstand 3,00 mm von den Kanten, Glas 37,10 × 58,80 mm mit R2,60, Stapel
+9,70 mm gesamt bzw. 7,20 mm von der Glasoberseite bis zur Platinenunterseite, Stiftleisten 30,48 mm
+auseinander, USB-C mittig). Alles steht in `carrier/generate.py` unter `VERIFY`; nach einer Korrektur die
+drei Skripte neu laufen lassen.
 
-1. **Abstand der beiden Stiftleisten** des Moduls (angenommen 29,8 mm, Mitte zu Mitte) und die Lage von
-   Pin 1 (7,24 mm vom Rand). Ein Fehler von mehr als 0,3 mm und das Modul passt nicht in die Buchsen.
-2. **Außenmaße des Moduls** (34,2 × 47,4 mm), **Bohrungen** (2,2 mm, 2,8/2,7 mm von den Ecken) und das
-   **Glas** (35,5 × 56,5 mm, 4,6 mm Überstand an beiden kurzen Seiten) — bestimmen Gehäusefenster und
-   Standorte der M2-Bolzen.
-3. **Stapelhöhe** 11 mm (Buchsenleiste 8,5 mm + Stiftleistenkörper 2,5 mm) und Glasoberkante 3,5 mm über
-   der Modulplatine. Bestimmt die Höhe der Distanzbolzen und die Blende.
+1. **Lage von Pin 1** der Stiftleisten in Längsrichtung (7,3 mm vom USB-C-fernen Rand, aus der Zeichnung
+   abgeleitet, nicht bemaßt). Ein Fehler von mehr als 0,3 mm und das Modul passt nicht in die Buchsen —
+   vor dem Einlöten der Buchsenleisten mit dem Modul abgleichen.
+2. **Glasüberstand**: Das Glas (58,80 mm) ist 10,6 mm länger als die Platine (48,20 mm); angenommen ist je
+   5,3 mm Überstand an beiden kurzen Seiten und 1,05 mm an den langen. Die Zeichnung bemaßt den Überstand
+   nicht getrennt — am Modul nachmessen, sonst stimmt das Gehäusefenster nicht.
+3. **Stapelhöhe** 11 mm (Buchsenleiste 8,5 mm + Stiftleistenkörper 2,5 mm) und Glasoberkante 5,6 mm über
+   der Modulplatine (7,20 − 1,60 aus der Seitenansicht). Bestimmt, ob das Glas bündig mit dem Körper
+   abschließt; mit 1-mm-Unterlegscheiben unter den Buchsenleisten lässt sich das ausgleichen.
 4. **RJ45-Buchse**: Der Footprint `RJ45_Generic` ist ein Platzhalter (Pins 1,27 mm Raster, zwei Reihen 2,54 mm,
    Zapfen 3,25 mm im Abstand 11,43 mm). Vor der Bestellung die Buchse festlegen (z. B. Amphenol 54602-908LF
    oder RJHSE-5380) und den Footprint in `generate.py` an deren Datenblatt anpassen — oder in KiCad den
@@ -161,8 +163,8 @@ neu laufen lassen.
 10. **VBAT an Pin 14 der Stiftleiste**: Mit dem Multimeter prüfen, dass der Pin direkt mit BAT+ des MX1.25-Anschlusses
     verbunden ist (0 Ω). Nur dann lädt und versorgt der Akku an J4 das Modul über die Stiftleiste. Sonst ein kurzes
     Kabel von J4 durch den Schlitz zum MX1.25-Anschluss ziehen und J4 nicht bestücken.
-11. **Glasdicke und Höhe** über der Modulplatine (angenommen 3,5 mm): bestimmt, ob die Glasoberseite bündig mit der
-    Oberschale abschließt.
+11. **USB-C-Überstand** des Moduls (angenommen 1,9 mm über die Platinenkante) — bestimmt den Abstand der
+    Stirnwand zur Modulkante.
 
 Was sonst noch offen ist: Die Firmwareänderung ist ungetestet (kein PlatformIO in der Sandbox); die
 Optokoppler-Schaltung ist nach Datenblattwerten ausgelegt, nicht gemessen; der Autorouter hat keine

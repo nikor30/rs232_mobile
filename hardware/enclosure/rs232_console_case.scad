@@ -17,23 +17,24 @@ base_t = 2.0;
 base_inset = 0.6;
 bat_t = 7.0;
 pin_clr = 2.0;
-z_top = 16.1;
+z_top = 18.2;
 plate_t = 2.0;
-ws_x0 = 21.9;
+ws_x0 = 21.5;
 ws_y0 = 1.0;
-ws_w = 34.2;
-ws_l = 47.4;
-glass_w = 35.5;
-glass_l = 56.5;
+ws_w = 35.0;
+ws_l = 48.2;
+glass_w = 37.1;
+glass_l = 58.8;
+glass_r = 2.6;
 z_glass_bot = 12.6;
 ch_pitch = 19.0;
 ch_x0 = 10.4;
 rj_w = 16.5;
 rj_h = 14.1;
-usb_x = 39.1;
+usb_x = 39.0;
 usb_z = 9.4;
-btn_x1 = 50.35;
-btn_x2 = 27.85;
+btn_x1 = 48.45;
+btn_x2 = 29.55;
 btn_z = 9.4;
 sma_y = 12.0;
 sma_z = 7.5;
@@ -47,7 +48,7 @@ hook_x_front = 39.0;
 foot_d = 8.0;
 foot_depth = 0.6;
 holes_m25 = [[3.5, 45.0], [75.0, 45.0], [20.0, 82.0], [58.0, 82.0]];
-holes_m2 = [[53.3, 45.7], [24.7, 45.7], [53.3, 3.7], [24.7, 3.7]];
+holes_m2 = [[53.5, 46.2], [24.5, 46.2], [53.5, 4.0], [24.5, 4.0]];
 
 cav_x1 = -gap;  cav_x2 = pcb_w + gap;
 cav_y1 = -1.0;  cav_y2 = pcb_h + gap;          // 1.0 at the USB-C end: the module's USB-C shell sticks out 1.9 mm
@@ -97,7 +98,7 @@ module body() {
         // cavity, open at the bottom
         box(cav_x1, cav_y1, cav_x2, cav_y2, z_bot - 1, z_plate_bot);
         // the display glass is the top surface; the frame is open at the USB-C end
-        box(gx1, out_y1 - 1, gx2, gy2, z_plate_bot - 1, z_top + 1);
+        rbox(gx1, out_y1 - 1, gx2, gy2, z_plate_bot - 1, z_top + 1, glass_r + 0.15);   // window with the glass's R2.6 corners
         box(gx1, out_y1 - 1, gx2, cav_y1 + 1, z_glass_bot - 0.3, z_top + 1);     // end wall under the glass overhang
         openings();
         // groove inside the walls for the base hooks
@@ -156,7 +157,7 @@ module carrier_preview() {
     color("#2d6a4f") box(0, 0, pcb_w, pcb_h, z_pcb_bot, 0);
     for (i = [0:3]) color("#c0c0c0") box(ch_x0 + i * ch_pitch - 7.95, pcb_h - 21.9, ch_x0 + i * ch_pitch + 7.95, pcb_h - 0.6, 0, 13.5);
     color("#1f3b73") box(ws_x0, ws_y0, ws_x0 + ws_w, ws_y0 + ws_l, z_glass_bot - 1.6, z_glass_bot);
-    color("#0b0c10") box(cx - glass_w / 2, ws_y0 + ws_l / 2 - glass_l / 2, cx + glass_w / 2, ws_y0 + ws_l / 2 + glass_l / 2, z_glass_bot, z_top);
+    color("#0b0c10") rbox(cx - glass_w / 2, ws_y0 + ws_l / 2 - glass_l / 2, cx + glass_w / 2, ws_y0 + ws_l / 2 + glass_l / 2, z_glass_bot, z_top, glass_r);
     color("#444") box(cx - 25, 20, cx + 25, 85, z_base_top, z_base_top + 6);
 }
 

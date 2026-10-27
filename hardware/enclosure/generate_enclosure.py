@@ -36,7 +36,7 @@ P = {
     "z_top": V["WS_STACK"] + V["WS_PCB_T"] + V["WS_DISP_T"],    # glass top = body top
     "plate_t": 2.0,
     "ws_x0": G.WS_X0, "ws_y0": G.WS_Y0, "ws_w": V["WS_W"], "ws_l": V["WS_L"],
-    "glass_w": V["WS_GLASS"][0], "glass_l": V["WS_GLASS"][1],
+    "glass_w": V["WS_GLASS"][0], "glass_l": V["WS_GLASS"][1], "glass_r": V["WS_GLASS_R"],
     "z_glass_bot": V["WS_STACK"] + V["WS_PCB_T"],
     "ch_pitch": G.CH_PITCH, "ch_x0": G.CH_CENTERS[0],
     "rj_w": V["RJ45_W"] + 0.6, "rj_h": V["RJ45_H"] + 0.6,
@@ -109,7 +109,7 @@ module body() {
         // cavity, open at the bottom
         box(cav_x1, cav_y1, cav_x2, cav_y2, z_bot - 1, z_plate_bot);
         // the display glass is the top surface; the frame is open at the USB-C end
-        box(gx1, out_y1 - 1, gx2, gy2, z_plate_bot - 1, z_top + 1);
+        rbox(gx1, out_y1 - 1, gx2, gy2, z_plate_bot - 1, z_top + 1, glass_r + 0.15);   // window with the glass's R2.6 corners
         box(gx1, out_y1 - 1, gx2, cav_y1 + 1, z_glass_bot - 0.3, z_top + 1);     // end wall under the glass overhang
         openings();
         // groove inside the walls for the base hooks
@@ -168,7 +168,7 @@ module carrier_preview() {
     color("#2d6a4f") box(0, 0, pcb_w, pcb_h, z_pcb_bot, 0);
     for (i = [0:3]) color("#c0c0c0") box(ch_x0 + i * ch_pitch - 7.95, pcb_h - 21.9, ch_x0 + i * ch_pitch + 7.95, pcb_h - 0.6, 0, 13.5);
     color("#1f3b73") box(ws_x0, ws_y0, ws_x0 + ws_w, ws_y0 + ws_l, z_glass_bot - 1.6, z_glass_bot);
-    color("#0b0c10") box(cx - glass_w / 2, ws_y0 + ws_l / 2 - glass_l / 2, cx + glass_w / 2, ws_y0 + ws_l / 2 + glass_l / 2, z_glass_bot, z_top);
+    color("#0b0c10") rbox(cx - glass_w / 2, ws_y0 + ws_l / 2 - glass_l / 2, cx + glass_w / 2, ws_y0 + ws_l / 2 + glass_l / 2, z_glass_bot, z_top, glass_r);
     color("#444") box(cx - 25, 20, cx + 25, 85, z_base_top, z_base_top + 6);
 }
 
@@ -193,9 +193,28 @@ def main():
              P["z_top"] + P["pcb_t"] + P["pin_clr"] + P["bat_t"] + P["base_t"] + P["base_inset"])
     print("outer size: %.1f x %.1f x %.1f mm" % outer)
     for part, name in ((1, "body"), (2, "base")):
+        if "--no-stl" in sys.argv:
+            break
         out = os.path.join(HERE, f"{name}.stl")
         r = subprocess.run(["openscad", "-q", "-D", f"part={part}", "-o", out, src], capture_output=True, text=True)
         print(name, "stl:", "ok" if r.returncode == 0 else r.stderr[-600:])
+    if "--no-previews" in sys.argv:
+        return 0
+    # preview renders (need a display: xvfb-run); camera = eye x,y,z, centre x,y,z
+    cx, cy, cz = P["pcb_w"] / 2, P["pcb_h"] / 2, 0
+    views = {
+        "assembly": (0, f"{cx - 160},{cy - 190},{cz + 150},{cx},{cy},{cz}"),
+        "exploded": (3, f"{cx - 170},{cy - 200},{cz + 130},{cx},{cy},{cz - 15}"),
+        "body_below": (4, f"{cx - 150},{cy - 170},{cz - 170},{cx},{cy},{cz}"),
+        "base": (2, f"{cx - 150},{cy - 170},{cz + 150},{cx},{cy},{cz - 15}"),
+        "front": (1, f"{cx},{cy - 320},{cz + 40},{cx},{cy},{cz + 2}"),
+    }
+    for name, (part, cam) in views.items():
+        out = os.path.join(HERE, f"preview_{name}.png")
+        cmd = ["xvfb-run", "-a", "openscad", "-q", "-D", f"part={part}", "--camera=" + cam, "--projection=p",
+               "--imgsize=1400,1050", "--colorscheme=Tomorrow", "--preview", "-o", out, src]
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        print(name, "preview:", "ok" if r.returncode == 0 else r.stderr[-600:])
     return 0
 
 

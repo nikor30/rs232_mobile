@@ -36,30 +36,34 @@ DATE = "2026-10-27"
 # and the enclosure read from here.
 # ============================================================================
 VERIFY = {
-    # Waveshare ESP32-S3-Touch-LCD-2, portrait orientation (USB-C at the bottom)
-    "WS_W": 34.2,            # PCB width  (mm)  – photo measurement, +-0.3
-    "WS_L": 47.4,            # PCB length (mm)  – photo measurement, +-0.3
-    "WS_HDR_X": (2.2, 32.0),  # x of the two header rows (left row pins 15-28, right row pins 1-14)
-    "WS_HDR_Y0": 7.24,       # y of the first pin (pin 28 left / pin 1 right); 14 pins at 2.54 mm
-    "WS_HOLES": [(2.8, 2.7), (31.4, 2.7), (2.8, 44.7), (31.4, 44.7)],  # M2 holes
+    # Waveshare ESP32-S3-Touch-LCD-2, portrait orientation (USB-C at the bottom), from the vendor drawing
+    # (dimension sheet 2026-10-27): PCB 35.00 x 48.20, 4 x M2 on 29.00 x 42.20, 3.00 from the edges,
+    # display 37.10 x 58.80 R2.60, active area 31.00 x 41.20 (7.51 from the antenna end), side view 7.20 glass->PCB
+    # far face and 9.70 incl. the 2.50 mm header body, header columns 30.48 apart, RST/BOOT 18.90 apart.
+    "WS_W": 35.0,            # PCB width  (mm)  - drawing
+    "WS_L": 48.2,            # PCB length (mm)  - drawing
+    "WS_HDR_X": (2.26, 32.74),  # x of the two header rows (left row pins 15-28, right row pins 1-14): 30.48 apart - drawing
+    "WS_HDR_Y0": 7.3,        # y of the first pin (pin 28 left / pin 1 right); 14 pins at 2.54 mm. NOT in the drawing: +-0.3 (header body centred would be 7.59)
+    "WS_HOLES": [(3.0, 3.0), (32.0, 3.0), (3.0, 45.2), (32.0, 45.2)],  # M2 holes - drawing
     "WS_HOLE_D": 2.2,
-    "WS_USBC": (11.0, 23.0, 42.0, 49.3),   # x1 x2 y1 y2 of the USB-C shell (protrudes 1.9 mm)
-    "WS_BTN_X": ((4.0, 7.5), (26.5, 30.0)),  # RST, BOOT side-actuated buttons on the bottom edge
-    "WS_SD": (26.0, 37.0),    # y range of the micro-SD slot on the right edge
-    "WS_BAT": (23.0, 30.0, 18.5, 25.5),    # MX1.25 battery header, opening faces the top edge
-    "WS_GLASS": (35.5, 56.5), # touch glass W x L, centred on the PCB, +-0.5
-    "WS_GLASS_OVERHANG_L": 4.6,   # glass beyond the PCB at each short end
-    "WS_STACK": 11.0,         # carrier top -> Waveshare PCB underside (8.5 socket + 2.5 header body)
+    "WS_USBC": (13.05, 21.95, 42.9, 50.1),   # x1 x2 y1 y2 of the USB-C shell, centred, protrudes ~1.9 mm (protrusion from photo)
+    "WS_BTN_X": ((6.3, 9.8), (25.2, 28.7)),  # RST, BOOT side-actuated buttons on the bottom edge, 18.90 apart - drawing
+    "WS_SD": None,            # micro-SD slot is in the middle of the board, card never reaches the edge: internal
+    "WS_BAT": (23.0, 30.0, 18.5, 25.5),    # MX1.25 battery header (photo), opening faces the top edge
+    "WS_GLASS": (37.1, 58.8), # touch glass W x L - drawing (R2.6 corners)
+    "WS_GLASS_R": 2.6,
+    "WS_GLASS_OVERHANG_L": (58.8 - 48.2) / 2,   # glass beyond the PCB at each short end, assumed centred
+    "WS_STACK": 11.0,         # carrier top -> Waveshare PCB underside (8.5 socket + 2.5 header body, body confirmed by drawing)
     "WS_PCB_T": 1.6,
-    "WS_DISP_T": 3.5,         # Waveshare PCB top -> glass top
-    "WS_ANT_Y": (5.0, 13.0),  # ceramic antenna sits at the top edge, x range in portrait
+    "WS_DISP_T": 5.6,         # Waveshare PCB top -> glass top: 7.20 (drawing, glass face to PCB far face) - 1.6
+    "WS_ANT_Y": (5.0, 13.0),  # ceramic antenna at the top edge, x range in portrait (photo)
     # RJ45 jack (generic 8P8C, side entry, pegs).  Replace with the KiCad library
     # footprint of the exact part before ordering.
     "RJ45_W": 15.9, "RJ45_D": 21.3, "RJ45_H": 13.5,
     "RJ45_ROW2_DY": -2.54,    # even pins row relative to the odd pins row
     "RJ45_PEG": (5.715, -6.35, 3.25),  # +-x, y of the two pegs, diameter
     "RJ45_FRONT": -8.9,       # front face relative to the odd pins row
-    "RJ45_PROTRUDE": -0.6,    # front face 0.5 mm behind the PCB edge: the jack sits fully inside the case wall
+    "RJ45_PROTRUDE": -0.6,    # front face 0.6 mm behind the PCB edge: the jack sits fully inside the case wall
     # B0505S-1WR3 SIP-4: pins 1,2 (in) and 3,4 (out), 2.54 pitch, 7.62 gap between 2 and 3
     "SIP4_PINS": (0.0, 2.54, 10.16, 12.7), "SIP4_BODY": (19.6, 6.0, 10.2),
     # TLP2361 SO6: rows 5.9 mm apart (pads centred +-2.95), pitch 1.27
@@ -278,7 +282,7 @@ def channel_parts() -> List[Part]:
         P("C07", "C", "C_0603", "100n", {"1": "+3V3", "2": "GND"}, -2.3, 52, 90, 25.4, 76.2),
         # isolated supply
         P("PS01", "B0505S-1WR3", "SIP-4_DCDC", "B0505S-1WR3", {"2": "ISO_IN", "1": "GND", "4": "ISO5V", "3": "ISOGND"}, 7.2, 55, 270, 50.8, 96.52),
-        P("C10", "C", "C_0805", "2.2u", {"1": "ISO_IN", "2": "GND"}, 7.2, 49.6, 0, 25.4, 96.52),
+        P("C10", "C", "C_0805", "2.2u", {"1": "ISO_IN", "2": "GND"}, 7.2, 49.6, 180, 25.4, 96.52),
         P("C09", "C", "C_0603", "4.7u", {"1": "ISO5V", "2": "ISOGND"}, 3.3, 70.2, 90, 78.74, 104.14),
         P("C05", "C", "C_0603", "100n", {"1": "ISO5V", "2": "ISOGND"}, 3.3, 66.6, 90, 96.52, 91.44),
         # isolated side
@@ -334,17 +338,17 @@ def root_parts() -> List[Part]:
     ]
     for n in range(1, 5):
         parts.append(P(f"D5{n}", "D", "D_SOD-123", "1N4148W", {"2": f"EN{n}", "1": "PWR_EN"}, 7.0 + 4.0 * (n - 1), 30.0, 90, 71.12, 76.2 + 10.16 * (n - 1)))
-    rows = [7.0, 17.0, 27.0, 37.0]
+    rows = [6.0, 16.0, 26.0, 36.0]
     for n in range(1, 5):
         y = rows[n - 1]
         sy = 109.22 + 17.78 * (n - 1)
         parts += [
-            P(f"JP1{n}", "SolderJumper_3", "SolderJumper_3_Bridged12", f"EN{n} dflt", {"1": "GND", "2": f"ENP{n}", "3": "+3V3"}, 60.5, y, 0, 71.12, sy,
+            P(f"JP1{n}", "SolderJumper_3", "SolderJumper_3_Bridged12", f"EN{n} dflt", {"1": "GND", "2": f"ENP{n}", "3": "+3V3"}, 62.0, y, 0, 71.12, sy,
               props={"Note": "1-2: port off until the firmware enables it, 2-3: always on"}),
-            P(f"R6{n}", "R", "R_0603", "10k", {"1": f"EN{n}", "2": f"ENP{n}"}, 65.5, y, 0, 96.52, sy),
-            P(f"Q{n}1", "Q_NMOS", "SOT-23", "2N7002", {"1": f"EN{n}", "3": f"PG{n}", "2": "GND"}, 70.5, y, 0, 121.92, sy),
-            P(f"R7{n}", "R", "R_0603", "100k", {"1": "+5V", "2": f"PG{n}"}, 65.5, y + 4.5, 0, 147.32, sy),
-            P(f"Q{n}2", "Q_PMOS", "SOT-23", "AO3401A", {"1": f"PG{n}", "2": "+5V", "3": f"ISO_IN{n}"}, 70.5, y + 4.5, 0, 172.72, sy),
+            P(f"R6{n}", "R", "R_0603", "10k", {"1": f"EN{n}", "2": f"ENP{n}"}, 67.0, y, 0, 96.52, sy),
+            P(f"Q{n}1", "Q_NMOS", "SOT-23", "2N7002", {"1": f"EN{n}", "3": f"PG{n}", "2": "GND"}, 72.0, y, 180, 121.92, sy),
+            P(f"R7{n}", "R", "R_0603", "100k", {"1": "+5V", "2": f"PG{n}"}, 67.0, y + 4.5, 0, 147.32, sy),
+            P(f"Q{n}2", "Q_PMOS", "SOT-23", "AO3401A", {"1": f"PG{n}", "2": "+5V", "3": f"ISO_IN{n}"}, 72.0, y + 4.5, 0, 172.72, sy),
         ]
     parts.append(P("J4", "Conn_1x2", "JST_PH_2_Vertical", "BAT JST-PH", {"1": "GND", "2": "VBAT"}, 10.0, 40.0, 0, 30.48, 175.26,
                    props={"Note": "battery, bottom side (in the battery bay). VBAT reaches the module through header pin 14 - verify that pin is the cell terminal"}, side="B"))

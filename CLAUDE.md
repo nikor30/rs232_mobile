@@ -22,7 +22,7 @@ Englisch ist die Quellsprache aller Oberflächen und immer die Vorgabe; dazu Deu
 `hardware/` enthält den Entwurf einer Trägerplatine für das Waveshare-Modul mit **vier galvanisch getrennten
 RS232-Ports** (TLP2361-Optokoppler, MAX3232E, je Port ein B0505S-Wandler mit schaltbarer Versorgung über
 GPIO16/17/18/10, RJ45 in Cisco-Belegung) und ein 3D-druckbares Gehäuse aus Körper und innenliegendem Boden,
-zusammengesteckt ohne Schrauben (83 × 114 × 29 mm, Modul hochkant und mittig mit USB-C an der Stirnseite,
+zusammengesteckt ohne Schrauben (83 × 114 × 31 mm, Modul hochkant und mittig mit USB-C an der Stirnseite,
 Displayglas als Oberseite, Akku unter der Platine, Boden ab = Akku wechseln, SMA-Bohrung für eine externe Antenne). Alles wird aus `hardware/carrier/generate.py` erzeugt
 (KiCad-7-Projekt, eigener Autorouter `route.py`, DRC und Fertigungsdaten über `drc.py`,
 Gehäuse über `hardware/enclosure/generate_enclosure.py`). Stand: entworfen, geroutet, KiCad-DRC ohne
