@@ -43,6 +43,7 @@ rund 50 mm von den RJ45-Buchsen entfernt).
 | `carrier/kicad/` | KiCad-7-Projekt: `rs232_carrier.kicad_pro/.kicad_sch/.kicad_pcb`, `channel.kicad_sch` (ein Port, viermal eingebunden), `.kicad_dru` |
 | `carrier/kicad/fab/` | **Gerber + Bohrdaten als ZIP für PCBWay**, Bestückungsdaten (`-pos.csv`), Schaltplan-PDF, Platinen-PDF, DRC-Bericht |
 | `carrier/bom.csv` | Stückliste mit Vorschlägen für Bauteile |
+| `carrier/render3d.py` | Bestückte Platine als 3D-Ansicht von oben und unten (`kicad/fab/rs232_carrier-3d-*.png`), aus den Footprint-Maßen, ohne Herstellermodelle |
 | `enclosure/generate_enclosure.py` | Erzeugt `rs232_console_case.scad` aus denselben Maßen und rendert die STL-Dateien |
 | `enclosure/body.stl`, `base.stl` | Körper und Bodenplatte zum Drucken; `preview_*.png` zur Ansicht |
 
