@@ -59,7 +59,7 @@ VERIFY = {
     "RJ45_ROW2_DY": -2.54,    # even pins row relative to the odd pins row
     "RJ45_PEG": (5.715, -6.35, 3.25),  # +-x, y of the two pegs, diameter
     "RJ45_FRONT": -8.9,       # front face relative to the odd pins row
-    "RJ45_PROTRUDE": 1.0,     # how far the front face stands beyond the PCB edge
+    "RJ45_PROTRUDE": -0.6,    # front face 0.5 mm behind the PCB edge: the jack sits fully inside the case wall
     # B0505S-1WR3 SIP-4: pins 1,2 (in) and 3,4 (out), 2.54 pitch, 7.62 gap between 2 and 3
     "SIP4_PINS": (0.0, 2.54, 10.16, 12.7), "SIP4_BODY": (19.6, 6.0, 10.2),
     # TLP2361 SO6: rows 5.9 mm apart (pads centred +-2.95), pitch 1.27
@@ -72,7 +72,7 @@ BOARD_W, BOARD_H = 78.0, 107.0
 CH_PITCH = 19.0
 CH_X0 = 0.9 + CH_PITCH / 2              # centre of channel 1
 CH_CENTERS = [CH_X0 + i * CH_PITCH for i in range(4)]
-WS_X0 = 1.0                             # Waveshare (portrait, USB-C up) left edge on the carrier
+WS_X0 = (BOARD_W - V["WS_W"]) / 2       # Waveshare (portrait, USB-C up), centred on the carrier
 WS_Y0 = 1.0                             # Waveshare top edge (USB-C edge) on the carrier
 BARRIER = (58.0, 63.0)                  # y band without copper between ESP side and isolated side
 
@@ -291,7 +291,7 @@ def channel_parts() -> List[Part]:
         P("C04", "C", "C_0603", "100n", {"1": "VN", "2": "ISOGND"}, -7.6, 76.2, 270, 96.52, 78.74),
         P("U04", "74LVC1G17", "SOT-23-5", "74LVC1G17", {"2": "R1OUT", "1": "NC", "5": "ISO5V", "4": "BUF_OUT", "3": "ISOGND"}, 5.9, 75.5, 0, 134.62, 88.9),
         P("C08", "C", "C_0603", "100n", {"1": "ISO5V", "2": "ISOGND"}, 5.9, 78.5, 0, 96.52, 104.14),
-        P("R04", "R", "R_0603", "2k2", {"1": "ISO5V", "2": "LEDA"}, 5.9, 80.4, 0, 134.62, 106.68),
+        P("R04", "R", "R_0603", "2k2", {"1": "ISO5V", "2": "LEDA"}, 5.7, 80.4, 0, 134.62, 106.68),
         P("D01", "LED", "LED_0603", "LED green", {"2": "LEDA", "1": "ISOGND"}, 5.4, 82.4, 0, 154.94, 106.68),
         P("R02", "R", "R_0603", "680", {"1": "ISO5V", "2": "RXA"}, -2.0, 79.6, 0, 78.74, 71.12, props={"Note": "RX LED, ~5 mA at 5 V"}),
         P("JP01", "SolderJumper_3", "SolderJumper_3_Bridged12", "TX->3", {"1": "RJ3", "2": "T1OUT", "3": "RJ6"}, -4.6, 82.4, 0, 167.64, 45.72),
@@ -306,7 +306,7 @@ CH_LOCAL_NETS = {"TXA", "RXA", "T1IN", "R1OUT", "R1IN", "T1OUT", "BUF_OUT", "RX_
 CH_PORTS = {"ESP_TX": "input", "ESP_RX": "output", "ISO_IN": "input"}
 CH_ESP_LOCALS = {"TXA", "RX_O"}            # channel-local nets that live on the ESP side of the optocouplers
 CH_ISO_LOCALS = CH_LOCAL_NETS - CH_ESP_LOCALS
-MOUNT_HOLES = [(74.5, 3.5), (74.5, 46.0), (20.0, 83.5), (58.0, 83.5)]   # M2.5, carrier -> enclosure + bezel spacers
+MOUNT_HOLES = [(3.5, 45.0), (75.0, 45.0), (20.0, 82.0), (58.0, 82.0)]   # M2.5, carrier -> enclosure + bezel spacers
 HOLE_KEEPOUT_R = {"M2.5": 3.0, "M2": 2.6}          # no copper under the metal spacers
 GLOBAL_POWER = {"GND", "+3V3", "VBAT", "+5V"}
 
@@ -319,34 +319,34 @@ def root_parts() -> List[Part]:
         P("J2", "PinSocket_1x14_B", "PinSocket_1x14_B", "WS header 15-28", {str(k): hdr_net(v) for k, v in HDR_B.items()},
           *ws_to_carrier(V["WS_HDR_X"][0], V["WS_HDR_Y0"]), 90, 30.48, 101.6, props={"Note": "Waveshare left header (GPIO2 .. 5V)"}),
         P("J3", "Conn_1x7", "PinHeader_1x7", "EXT", {"1": "+3V3", "2": "GND", "3": "SDA", "4": "SCL", "5": "IO2", "6": "IO4", "7": "IO6"},
-          40.0, 2.0, 0, 30.48, 157.48),
+          2.5, 2.0, 0, 30.48, 157.48),
         # boost converter VBAT -> +5V
-        P("U5", "MT3608", "SOT-23-6", "MT3608", {"5": "VBAT", "4": "PWR_EN", "3": "FB", "1": "SW", "6": "NC", "2": "GND"}, 46.0, 9.0, 0, 96.52, 45.72),
-        P("L1", "L", "L_5x5", "22u", {"1": "VBAT", "2": "SW"}, 54.0, 9.0, 0, 96.52, 27.94),
-        P("D5", "D", "D_SMA", "SS14", {"2": "SW", "1": "+5V"}, 54.0, 15.0, 0, 121.92, 27.94),
-        P("C51", "C", "C_0805", "10u", {"1": "VBAT", "2": "GND"}, 40.0, 9.0, 90, 71.12, 27.94),
-        P("C52", "C", "C_0805", "22u", {"1": "+5V", "2": "GND"}, 61.0, 9.0, 90, 147.32, 27.94),
-        P("C53", "C", "C_0805", "22u", {"1": "+5V", "2": "GND"}, 61.0, 14.0, 90, 147.32, 38.1),
-        P("C54", "C", "C_0603", "100n", {"1": "VBAT", "2": "GND"}, 40.0, 14.0, 90, 71.12, 38.1),
-        P("R51", "R", "R_0603", "75k", {"1": "+5V", "2": "FB"}, 46.0, 13.0, 0, 121.92, 60.96, props={"Note": "Vout = 0.6 V * (1 + R51/R52) = 5.1 V"}),
-        P("R52", "R", "R_0603", "10k", {"1": "FB", "2": "GND"}, 46.0, 16.0, 0, 121.92, 71.12),
-        P("R53", "R", "R_0603", "100k", {"1": "PWR_EN", "2": "GND"}, 40.0, 18.5, 0, 71.12, 60.96),
+        P("U5", "MT3608", "SOT-23-6", "MT3608", {"5": "VBAT", "4": "PWR_EN", "3": "FB", "1": "SW", "6": "NC", "2": "GND"}, 10.5, 8.0, 0, 96.52, 45.72),
+        P("L1", "L", "L_5x5", "22u", {"1": "VBAT", "2": "SW"}, 6.5, 14.0, 0, 96.52, 27.94),
+        P("D5", "D", "D_SMA", "SS14", {"2": "SW", "1": "+5V"}, 14.5, 13.5, 0, 121.92, 27.94),
+        P("C51", "C", "C_0805", "10u", {"1": "VBAT", "2": "GND"}, 4.0, 8.0, 90, 71.12, 27.94),
+        P("C52", "C", "C_0805", "22u", {"1": "+5V", "2": "GND"}, 15.5, 19.5, 90, 147.32, 27.94),
+        P("C53", "C", "C_0805", "22u", {"1": "+5V", "2": "GND"}, 15.5, 24.0, 90, 147.32, 38.1),
+        P("C54", "C", "C_0603", "100n", {"1": "VBAT", "2": "GND"}, 16.5, 8.0, 90, 71.12, 38.1),
+        P("R51", "R", "R_0603", "75k", {"1": "+5V", "2": "FB"}, 4.5, 19.5, 0, 121.92, 60.96, props={"Note": "Vout = 0.6 V * (1 + R51/R52) = 5.1 V"}),
+        P("R52", "R", "R_0603", "10k", {"1": "FB", "2": "GND"}, 10.0, 19.5, 0, 121.92, 71.12),
+        P("R53", "R", "R_0603", "100k", {"1": "PWR_EN", "2": "GND"}, 4.5, 25.0, 0, 71.12, 60.96),
     ]
     for n in range(1, 5):
-        parts.append(P(f"D5{n}", "D", "D_SOD-123", "1N4148W", {"2": f"EN{n}", "1": "PWR_EN"}, 44.0 + 6.0 * (n - 1), 20.5, 0, 71.12, 76.2 + 10.16 * (n - 1)))
-    rows = [25.0, 29.5, 34.0, 38.5]
+        parts.append(P(f"D5{n}", "D", "D_SOD-123", "1N4148W", {"2": f"EN{n}", "1": "PWR_EN"}, 7.0 + 4.0 * (n - 1), 30.0, 90, 71.12, 76.2 + 10.16 * (n - 1)))
+    rows = [7.0, 17.0, 27.0, 37.0]
     for n in range(1, 5):
         y = rows[n - 1]
         sy = 109.22 + 17.78 * (n - 1)
         parts += [
-            P(f"JP1{n}", "SolderJumper_3", "SolderJumper_3_Bridged12", f"EN{n} dflt", {"1": "GND", "2": f"ENP{n}", "3": "+3V3"}, 40.5, y, 0, 71.12, sy,
+            P(f"JP1{n}", "SolderJumper_3", "SolderJumper_3_Bridged12", f"EN{n} dflt", {"1": "GND", "2": f"ENP{n}", "3": "+3V3"}, 60.5, y, 0, 71.12, sy,
               props={"Note": "1-2: port off until the firmware enables it, 2-3: always on"}),
-            P(f"R6{n}", "R", "R_0603", "10k", {"1": f"EN{n}", "2": f"ENP{n}"}, 46.5, y, 0, 96.52, sy),
-            P(f"Q{n}1", "Q_NMOS", "SOT-23", "2N7002", {"1": f"EN{n}", "3": f"PG{n}", "2": "GND"}, 52.0, y, 0, 121.92, sy),
-            P(f"R7{n}", "R", "R_0603", "100k", {"1": "+5V", "2": f"PG{n}"}, 57.5, y, 0, 147.32, sy),
-            P(f"Q{n}2", "Q_PMOS", "SOT-23", "AO3401A", {"1": f"PG{n}", "2": "+5V", "3": f"ISO_IN{n}"}, 63.0, y, 0, 172.72, sy),
+            P(f"R6{n}", "R", "R_0603", "10k", {"1": f"EN{n}", "2": f"ENP{n}"}, 65.5, y, 0, 96.52, sy),
+            P(f"Q{n}1", "Q_NMOS", "SOT-23", "2N7002", {"1": f"EN{n}", "3": f"PG{n}", "2": "GND"}, 70.5, y, 0, 121.92, sy),
+            P(f"R7{n}", "R", "R_0603", "100k", {"1": "+5V", "2": f"PG{n}"}, 65.5, y + 4.5, 0, 147.32, sy),
+            P(f"Q{n}2", "Q_PMOS", "SOT-23", "AO3401A", {"1": f"PG{n}", "2": "+5V", "3": f"ISO_IN{n}"}, 70.5, y + 4.5, 0, 172.72, sy),
         ]
-    parts.append(P("J4", "Conn_1x2", "JST_PH_2_Vertical", "BAT JST-PH", {"1": "GND", "2": "VBAT"}, 71.0, 31.0, 90, 30.48, 175.26,
+    parts.append(P("J4", "Conn_1x2", "JST_PH_2_Vertical", "BAT JST-PH", {"1": "GND", "2": "VBAT"}, 10.0, 40.0, 0, 30.48, 175.26,
                    props={"Note": "battery, bottom side (in the battery bay). VBAT reaches the module through header pin 14 - verify that pin is the cell terminal"}, side="B"))
     # mounting holes: 4 x M2 at the Waveshare positions (standoffs to the module), 5 x M2.5 to the enclosure
     for i, (hx, hy) in enumerate(ws_holes_landscape()):
@@ -581,7 +581,7 @@ def write_pcb(path: str, placed: List[Tuple[Part, Dict[str, str], str]], nets: L
         fh.write("\n".join(o))
 
 
-BAT_SLOT = (5.6, 32.0, 10.1, 42.0)   # fallback: battery pigtail from below to the module's MX1.25 header
+BAT_SLOT = (WS_X0 + 5.5, 32.0, WS_X0 + 10.0, 42.0)   # fallback: battery pigtail from below to the module's MX1.25 header
 
 
 # ---------------------------------------------------------------------------- project / rules

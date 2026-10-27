@@ -1,6 +1,6 @@
 # Hardware: Trägerplatine mit vier galvanisch getrennten RS232-Ports und Gehäuse
 
-Stand 27. Oktober 2026, Revision 0.2 (Modul hochkant, Gehäuse zum Zusammenstecken) — **entworfen und per KiCad-DRC geprüft, noch nicht gebaut.**
+Stand 27. Oktober 2026, Revision 0.3 (Modul mittig, Gehäuse aus Körper und Boden) — **entworfen und per KiCad-DRC geprüft, noch nicht gebaut.**
 Vor der Bestellung die Liste unter „Vor der Bestellung prüfen“ abarbeiten.
 
 ## Was es ist
@@ -45,7 +45,7 @@ rund 50 mm von den RJ45-Buchsen entfernt).
 | `carrier/kicad/fab/` | **Gerber + Bohrdaten als ZIP für PCBWay**, Bestückungsdaten (`-pos.csv`), Schaltplan-PDF, Platinen-PDF, DRC-Bericht |
 | `carrier/bom.csv` | Stückliste mit Vorschlägen für Bauteile |
 | `enclosure/generate_enclosure.py` | Erzeugt `rs232_console_case.scad` aus denselben Maßen und rendert die STL-Dateien |
-| `enclosure/tub.stl`, `shell.stl`, `door.stl` | Unterschale, Oberschale und Akkuklappe zum Drucken; `preview_*.png` zur Ansicht |
+| `enclosure/body.stl`, `base.stl` | Körper und Bodenplatte zum Drucken; `preview_*.png` zur Ansicht |
 
 Neu erzeugen (KiCad 7 und OpenSCAD müssen installiert sein):
 
@@ -89,37 +89,41 @@ ESP GPIO (RX) ◀─100Ω──── TLP2361 ◀─ 74LVC1G17 ◀─ R1OUT   R1
 Beide LEDs sind in Ruhe (UART-Mark) aus, also kein Ruhestrom durch die Koppler. Der Schmitt-Puffer treibt die
 RX-LED, weil der Empfängerausgang des MAX3232 dafür zu schwach ist.
 
-## Mechanik
+## Mechanik und Gestaltung
 
-- Modul **hochkant** oben links auf der Trägerplatine, 11 mm darüber (Buchsenleisten 8,5 mm + Stiftleistenkörper
-  2,5 mm): USB-C und die Tasten BOOT/RST zeigen zur kurzen oberen Stirnseite, der SD-Slot zur linken Seite, die
-  Keramikantenne nach unten zu den Ports (rund 45 mm von den Buchsen entfernt). Rechts daneben die Versorgung,
-  darunter die vier Port-Inseln, unten die RJ45-Reihe.
-- **Das Displayglas ist die Oberseite.** Es ist 4,6 mm länger als die Modulplatine; die Oberschale rahmt es mit
-  0,15 mm Spiel, und die obere Stirnwand (3,6 mm) liegt **unter** dem Glasüberstand — so braucht das Gehäuse dort
-  keine eigene Fläche. Oberseite des Glases = Oberseite des Gehäuses.
-- **Drei gedruckte Teile, keine Schraube im Gehäuse** (`enclosure/`):
-  - `tub.stl` — Unterschale: Wände 2 mm, Boden 1,6 mm, Akkufach 60 × 68 × 7 mm unter der Platine, acht Stützen
-    mit Zapfen, die durch die Bohrungen der Trägerplatine greifen (4 × M2,5-Positionen, 4 × Modulpositionen),
-    Fenster für die Haken, Nut für die Lippe der Oberschale.
-  - `shell.stl` — Oberschale: Rahmen ums Glas, Lippe (1,2 × 3 mm) in die Nut der Unterschale, **vier Rasthaken**
-    (9 mm breit, 1,5 mm dick, 6 mm lang, 1 mm Nase, 30° Einführ-, 45° Haltewinkel) an den Längsseiten, die in die
-    Wandfenster klicken und sich von außen mit dem Fingernagel lösen lassen; vier Pfosten, die die Trägerplatine
-    von oben auf die Zapfen der Unterschale drücken. Platine und Modul sind damit ohne Schrauben gehalten
-    (M2-Bolzen zwischen Trägerplatine und Modul sind weiterhin möglich).
-  - `door.stl` — Akkuklappe im Boden: zwei feste Nasen am einen Ende, eine federnde Lasche (in der Ebene der
-    Klappe gedruckt, also quer zu den Schichten belastbar) mit Daumennoppe am anderen; Akku ein-/aussteckbar an
-    J4, ohne das Gehäuse zu öffnen.
-- Öffnungen: 4 × RJ45 vorn, USB-C-Mulde (13 × 8 mm) und zwei Nadellöcher (BOOT/RST) in der oberen Stirnwand,
-  SD-Schlitz und RP-SMA-Bohrung (6,5 mm) links. Trennfuge auf 7 mm über der Platine, die RJ45- und USB-C-Öffnungen
-  laufen durch beide Schalen.
-- Außen **83 × 114 × 28 mm**. Regeln aus den Konstruktionsleitfäden für FDM (Hubs, Formlabs, Core77):
-  Spiel 0,3 mm an Rastflächen, Haken mit Wurzelradius 0,8 mm und Länge ≈ 4–5 × Dicke, Rastnasen mit flachem
-  Einführwinkel und 45° Haltewinkel für lösbare Verbindungen; Haken, die beim Druck in Z wachsen, dicker als
-  flach gedruckte (deshalb 1,5 mm). Drucken: Unterschale mit dem Boden nach unten, Oberschale mit der Oberseite
-  nach unten (Haken und Pfosten wachsen nach oben), Klappe flach; PETG oder ABS, nicht PLA (Haken brechen).
-  **Erster Druck als Probe**: die Haken- und Klappengeometrie ist nicht gedruckt worden; Spiel ggf. in
-  `generate_enclosure.py` (`clr`, `hook_catch`) anpassen.
+Leitlinie (Rams, Ive): ein ruhiger Körper mit durchlaufenden Radien, symmetrische Flächen, außen nur, was
+täglich gebraucht wird, keine sichtbaren Schrauben, Fugen nur dort, wo man sie nicht sieht.
+
+- Modul **hochkant und mittig** auf der Trägerplatine, 11 mm darüber: USB-C in der Mitte der oberen Stirnseite,
+  die Nadellöcher für BOOT/RST symmetrisch daneben, die Antenne des Moduls zeigt zu den Ports. Links vom Modul
+  der Aufwärtswandler mit den Entkoppeldioden, rechts die vier Portschalter, darunter die vier Inseln und die
+  RJ45-Reihe — die Platine ist um ihre Mittellinie symmetrisch aufgeteilt.
+- **Das Displayglas ist die Oberseite** (bündig, 0,15 mm Spiel im Rahmen; der Rahmen ist zur USB-C-Seite
+  offen, die Stirnwand liegt unter dem Glasüberstand). Über den Buchsen sind die Ziffern 1–4 in die Oberseite
+  vertieft (0,4 mm) — die einzige Beschriftung.
+- **Zwei gedruckte Teile, keine Schraube** (`enclosure/`):
+  - `body.stl` — der ganze Körper: Oberseite mit Glasrahmen und alle vier Wände bis zur Unterkante, Ecken
+    R 5, Kanten R 1,2. Öffnungen: vier geschlossene Fenster für die RJ45 (die Buchsen sitzen 0,6 mm hinter
+    der Platinenkante, also ganz in der Wand), eine Mulde für USB-C, zwei Nadellöcher (1,5 mm), die
+    RP-SMA-Bohrung rechts oben an der Seitenwand. Innen vier Pfosten, die die Trägerplatine auf die Zapfen
+    des Bodens drücken, und eine Nut, in die die Haken des Bodens greifen.
+  - `base.stl` — Bodenplatte, **liegt innen in den Wänden**, 0,6 mm zurückgesetzt: die Fuge ist nur von unten
+    zu sehen. Sechs Rasthaken (10 × 1,6 × 6 mm, 0,8 mm Nase, 30° Einführ-, 45° Haltewinkel, Wurzelradius
+    0,8 mm) klicken in die Nut; zwei Kerben in der Unterkante nehmen einen Fingernagel oder Spatel zum Öffnen.
+    Acht Zapfen tragen die Trägerplatine (Schulter 5,5 mm, Stift 2,4 bzw. 1,9 mm durch die Bohrungen),
+    ein 1,5 mm hoher Rahmen hält den Akku (bis 60 × 70 × 6 mm) an seinem Platz, vier Vertiefungen für
+    8-mm-Gummifüße, Schriftzug vertieft. Boden abziehen = Akku wechseln (Stecker J4 auf der Unterseite der
+    Trägerplatine), ohne Werkzeug.
+- Einbau: Trägerplatine mit Modul von unten in den Körper schieben (die Buchsen fahren in ihre Fenster, das
+  Glas in den Rahmen), Boden mit Akku aufsetzen, bis die sechs Haken klicken.
+- Nicht nach außen geführt: der SD-Slot (sitzt beim mittigen Modul 22 mm von der Wand; die Karte bleibt
+  eingebaut, Zugriff über den USB-Stick-Modus oder nach Abnehmen des Bodens).
+- Außen **83 × 114 × 29 mm**. Drucken: Körper mit der Oberseite nach unten (Pfosten wachsen nach oben, der
+  Glasrahmen wird glatt), Boden flach (Haken wachsen nach oben); PETG oder ABS, nicht PLA. Farbe nach Rams:
+  helles Warmgrau oder Anthrazit, matt. Regeln aus den FDM-Leitfäden (Hubs, Formlabs, Core77): Spiel 0,3 mm,
+  Hakenlänge ≈ 4 × Dicke mit Wurzelradius, in Z gedruckte Haken dicker als flach gedruckte. **Erster Druck als
+  Probe**: Haken und Nut sind nicht gedruckt worden; Spiel ggf. in `generate_enclosure.py` (`clr`,
+  `hook_catch`) anpassen.
 - Isolationsabstand auf der Platine: 5 mm kupferfreies Band zwischen ESP-Seite und Inseln (DRC-Regel 3 mm),
   1,8 mm zwischen den Inseln (DRC-Regel 1,5 mm). Unter den Zapfen/Pfosten ist das Kupfer ausgespart.
 
@@ -182,5 +186,7 @@ Längen- oder Impedanzregeln (bei 115 200 Baud belanglos). Die Silkscreen-Warnun
 - **Abstände**: 19 mm Portraster, weil 17,5/18 mm für Ladungspumpen-Kondensatoren, MAX3232 und Wandler in
   einer Spalte nicht reichten — die Platine wurde dafür von 72 auf 78 mm breiter; mit dem hochkant stehenden
   Modul (Wunsch: USB-C an der Stirnseite, Glas als Oberseite) 107 mm lang.
-- **Zusammenstecken statt Schrauben** (Wunsch): Lippe/Nut plus vier lösbare Haken; die Trägerplatine ist zwischen
-  Zapfen und Pfosten geklemmt. Akku hinter einer Klappe mit Rastlasche, Steckverbinder auf der Platinenunterseite.
+- **Zusammenstecken statt Schrauben** (Wunsch): Körper und innenliegender Boden mit sechs lösbaren Haken; die
+  Trägerplatine ist zwischen Zapfen und Pfosten geklemmt. Boden ab = Akku zugänglich (J4 auf der Platinenunterseite).
+- **Modul mittig** (Wunsch): Versorgung links und rechts aufgeteilt; dafür ist der SD-Slot nicht mehr von außen
+  erreichbar — die Karte bleibt eingebaut.
