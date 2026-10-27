@@ -11,6 +11,10 @@ namespace Bridge {
   typedef void (*MsgSink)(const String &msg);
 
   void begin(DataSink onData, MsgSink onMsg);
+// Isolated supply of a port on the carrier board (PINS_PORT_EN). begin() switches
+// the enabled ports on; powerOff() switches all of them off before deep sleep.
+void portPower(uint8_t p, bool on);
+void allPortsOff();
   void loop();
   bool busy();                                // bytes waiting to be bit-banged (skip loop delay)
 

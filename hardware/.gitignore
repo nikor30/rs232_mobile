@@ -1,0 +1,5 @@
+__pycache__/
+carrier/kicad/fab/sch_svg/
+carrier/kicad/*-backups/
+carrier/kicad/fp-info-cache
+*.kicad_prl

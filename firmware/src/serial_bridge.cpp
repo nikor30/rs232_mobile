@@ -2,6 +2,7 @@
 #include "lang.h"
 #include "xfer.h"
 #include <SoftwareSerial.h>
+#include <driver/gpio.h>
 #include <driver/uart.h>
 #include <hal/uart_ll.h>
 #include <soc/gpio_sig_map.h>
@@ -334,11 +335,32 @@ bool autobaudRunning(uint8_t p) { return ab.active && ab.port == p; }
 bool autobaudRunning() { return ab.active; }
 
 // ---------------------------------------------------------------- public
+static const int8_t PORT_EN[MAX_PORTS] = PINS_PORT_EN;
+
+// Carrier board: a high-side switch feeds the isolated DC-DC of each port. Off
+// by default (pull-down on the carrier), so an unused port costs nothing.
+void portPower(uint8_t p, bool on) {
+  if (p >= MAX_PORTS || PORT_EN[p] < 0) return;
+  pinMode(PORT_EN[p], OUTPUT);
+  digitalWrite(PORT_EN[p], on ? HIGH : LOW);
+  Serial.printf("[PORT] %u: Versorgung %s (IO%d)\n", p + 1, on ? "ein" : "aus", PORT_EN[p]);
+}
+
+void allPortsOff() {
+  for (uint8_t p = 0; p < MAX_PORTS; p++) {
+    if (PORT_EN[p] < 0) continue;
+    pinMode(PORT_EN[p], OUTPUT);
+    digitalWrite(PORT_EN[p], LOW);
+    gpio_hold_en((gpio_num_t)PORT_EN[p]);   // keep it low while asleep
+  }
+}
+
 void begin(DataSink onData, MsgSink onMsg) {
   dataSink = onData;
   msgSink = onMsg;
   for (uint8_t p = 0; p < MAX_PORTS; p++) {
     Port &pt = ports[p];
+    portPower(p, settings.port[p].enabled);
     if (!settings.port[p].enabled) continue;
     pt.hw = p < HW_PORTS;
     if (pt.hw) {

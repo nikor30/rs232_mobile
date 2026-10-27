@@ -1,0 +1,52 @@
+(version 1)
+# Galvanic isolation: isolated islands keep >= 3 mm to the ESP side and >= 1.5 mm to each other.
+(rule "iso1_vs_esp"
+  (condition "A.NetClass == 'ISO1' && B.NetName != '' && !(B.NetClass == 'ISO1' || B.NetClass == 'ISO2' || B.NetClass == 'ISO3' || B.NetClass == 'ISO4')")
+  (constraint clearance (min 3.0mm)))
+(rule "iso1_vs_iso2"
+  (condition "A.NetClass == 'ISO1' && B.NetClass == 'ISO2'")
+  (constraint clearance (min 1.5mm)))
+(rule "iso1_vs_iso3"
+  (condition "A.NetClass == 'ISO1' && B.NetClass == 'ISO3'")
+  (constraint clearance (min 1.5mm)))
+(rule "iso1_vs_iso4"
+  (condition "A.NetClass == 'ISO1' && B.NetClass == 'ISO4'")
+  (constraint clearance (min 1.5mm)))
+(rule "iso2_vs_esp"
+  (condition "A.NetClass == 'ISO2' && B.NetName != '' && !(B.NetClass == 'ISO1' || B.NetClass == 'ISO2' || B.NetClass == 'ISO3' || B.NetClass == 'ISO4')")
+  (constraint clearance (min 3.0mm)))
+(rule "iso2_vs_iso1"
+  (condition "A.NetClass == 'ISO2' && B.NetClass == 'ISO1'")
+  (constraint clearance (min 1.5mm)))
+(rule "iso2_vs_iso3"
+  (condition "A.NetClass == 'ISO2' && B.NetClass == 'ISO3'")
+  (constraint clearance (min 1.5mm)))
+(rule "iso2_vs_iso4"
+  (condition "A.NetClass == 'ISO2' && B.NetClass == 'ISO4'")
+  (constraint clearance (min 1.5mm)))
+(rule "iso3_vs_esp"
+  (condition "A.NetClass == 'ISO3' && B.NetName != '' && !(B.NetClass == 'ISO1' || B.NetClass == 'ISO2' || B.NetClass == 'ISO3' || B.NetClass == 'ISO4')")
+  (constraint clearance (min 3.0mm)))
+(rule "iso3_vs_iso1"
+  (condition "A.NetClass == 'ISO3' && B.NetClass == 'ISO1'")
+  (constraint clearance (min 1.5mm)))
+(rule "iso3_vs_iso2"
+  (condition "A.NetClass == 'ISO3' && B.NetClass == 'ISO2'")
+  (constraint clearance (min 1.5mm)))
+(rule "iso3_vs_iso4"
+  (condition "A.NetClass == 'ISO3' && B.NetClass == 'ISO4'")
+  (constraint clearance (min 1.5mm)))
+(rule "iso4_vs_esp"
+  (condition "A.NetClass == 'ISO4' && B.NetName != '' && !(B.NetClass == 'ISO1' || B.NetClass == 'ISO2' || B.NetClass == 'ISO3' || B.NetClass == 'ISO4')")
+  (constraint clearance (min 3.0mm)))
+(rule "iso4_vs_iso1"
+  (condition "A.NetClass == 'ISO4' && B.NetClass == 'ISO1'")
+  (constraint clearance (min 1.5mm)))
+(rule "iso4_vs_iso2"
+  (condition "A.NetClass == 'ISO4' && B.NetClass == 'ISO2'")
+  (constraint clearance (min 1.5mm)))
+(rule "iso4_vs_iso3"
+  (condition "A.NetClass == 'ISO4' && B.NetClass == 'ISO3'")
+  (constraint clearance (min 1.5mm)))
+(rule "edge"
+  (constraint edge_clearance (min 0.4mm)))

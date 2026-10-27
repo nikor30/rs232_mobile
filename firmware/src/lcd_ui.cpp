@@ -2573,6 +2573,10 @@ bool begin() {
   gpio_deep_sleep_hold_dis();
   gpio_hold_dis((gpio_num_t)PIN_LCD_BL);
   gpio_hold_dis((gpio_num_t)PIN_SD_CS);
+  {
+    static const int8_t portEn[MAX_PORTS] = PINS_PORT_EN;
+    for (int8_t pin : portEn) if (pin >= 0) gpio_hold_dis((gpio_num_t)pin);
+  }
   if (PIN_KEY >= 0) rtc_gpio_deinit((gpio_num_t)PIN_KEY);     // was the wake-up source
   // The card shares the LCD's SPI lines and has to be brought into SPI mode
   // before the first display traffic; main.cpp's later Sd::begin() is then a no-op.
@@ -2642,6 +2646,7 @@ void powerOff(const char *reason, uint32_t wakeAfterS) {
   gpio_hold_en((gpio_num_t)PIN_LCD_BL);
   digitalWrite(PIN_SD_CS, HIGH);
   gpio_hold_en((gpio_num_t)PIN_SD_CS);
+  Bridge::allPortsOff();                  // carrier board: isolated supplies off
   gpio_deep_sleep_hold_en();
   if (PIN_KEY >= 0) {
     rtc_gpio_pullup_en((gpio_num_t)PIN_KEY);

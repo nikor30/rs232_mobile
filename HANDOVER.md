@@ -129,7 +129,7 @@ Da kein Zugriff auf die Hardware bestand, wurde das Prüfbare auf dem Host gepr�
 
 1. **Waveshare-Board fertig prüfen**: MAX3232 anschließen und echter Konsolenzugriff, SD-Karte, Akkubetrieb — die Liste steht in `firmware/WAVESHARE.md` unter „Offen".
 2. **802.1X gegen echten RADIUS testen.** Danach PKCS#12-Upload und CSR-Erzeugung durchspielen.
-3. **Gehäuse** für das Waveshare-Board — es gibt noch keins.
+3. **Gehäuse** für das Waveshare-Board — Entwurf seit 27. Oktober 2026 in `hardware/enclosure/` (zusammen mit der Trägerplatine für vier isolierte Ports in `hardware/carrier/`, siehe `hardware/README.md`); nicht gedruckt, nicht gebaut.
 4. Die Docs-Seite (Artifact `2f26e902-4f1e-4797-bfbc-4037495d8121`) beschreibt noch das LCDwiki-Basisboard und müsste auf das Waveshare-Board umgeschrieben werden.
 
 ## 11. Arbeitsweise, die sich bewährt hat

@@ -53,12 +53,15 @@
 // Port 1 sends on IO21 instead (header pin 22): no power-up glitch, and the
 // board's 4.7k pull-up keeps the line idle while the chip is in reset. IO44 can
 // send as well (RX/TX swap); it stays an input during boot.
-// Further header pins are left out until they are tried on the board.
-#define PORT_DEFAULT_PINS {{44, 21}, {44, 21}, {44, 21}, {44, 21}}
-#define PINS_RX  {21, 44}
-#define PINS_TX  {21, 44}
+// RS232 isolation carrier (hardware/carrier): four ports on optocouplers, each
+// with its own supply switch. Pins per port (RX, TX, EN) are fixed by the
+// carrier; the whitelist below lists them. Port 1 keeps the old default.
+#define PORT_DEFAULT_PINS {{44, 21}, {15, 13}, {11, 12}, {14, 9}}
+#define PINS_RX  {9, 11, 12, 13, 14, 15, 21, 44}
+#define PINS_TX  {9, 11, 12, 13, 14, 15, 21, 44}
+#define PINS_PORT_EN {16, 17, 18, 10}   // carrier: high = isolated supply of port 1..4 on (-1 = none)
 #define PINS_ADC {5}              // battery voltage divider of the LiPo connector
-#define PIN_NAMES "44:RXD,5:BAT"
+#define PIN_NAMES "44:RXD,5:BAT,21:TX1,15:RX2,13:TX2,11:RX3,12:TX3,14:RX4,9:TX4,16:EN1,17:EN2,18:EN3,10:EN4"
 #define PIN_PREFIX "IO"
 
 #define BAT_PIN_DEFAULT   5       // BAT_ADC: divider on the board, measured against a LiPo (WAVESHARE.md)

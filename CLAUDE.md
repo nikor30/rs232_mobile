@@ -17,9 +17,22 @@ Englisch ist die Quellsprache aller Oberflächen und immer die Vorgabe; dazu Deu
 - Neue Texte: in allen drei Sprachen anlegen; die Prüfskripte lassen sonst `ui.sh` scheitern bzw. melden es. Variablen mit Namen `t` verdecken in den Skripten die Übersetzungsfunktion (im Geräteskript heißt sie deshalb `tr`).
 - `src/web_assets.h` im Repository ist der englische Stand; ein Build für `-de`/`-pt` schreibt die Datei um — nicht mit committen.
 
+## Hardware: Trägerplatine und Gehäuse (seit 27. Oktober 2026)
+
+`hardware/` enthält den Entwurf einer Trägerplatine für das Waveshare-Modul mit **vier galvanisch getrennten
+RS232-Ports** (TLP2361-Optokoppler, MAX3232E, je Port ein B0505S-Wandler mit schaltbarer Versorgung über
+GPIO16/17/18/10, RJ45 in Cisco-Belegung) und ein 3D-druckbares Gehäuse (87 × 101 × 28 mm, Akku unter der
+Platine, SMA-Bohrung für eine externe Antenne). Alles wird aus `hardware/carrier/generate.py` erzeugt
+(KiCad-7-Projekt, eigener Autorouter `route.py`, DRC und Fertigungsdaten über `drc.py`,
+Gehäuse über `hardware/enclosure/generate_enclosure.py`). Stand: entworfen, geroutet, KiCad-DRC ohne
+elektrische Fehler, **nicht gebaut**. Die Maße des Moduls sind aus Produktfotos gemessen — vor der Bestellung
+die Liste in `hardware/README.md` („Vor der Bestellung prüfen“) abarbeiten. Die Firmware hat dafür
+`PINS_PORT_EN` und `Bridge::portPower()` bekommen (ungetestet, siehe `hardware/README.md`).
+
 ## Aufbau
 
 - `firmware/` — PlatformIO-Projekt (`src/`, `web/`, `tools/`)
+- `hardware/` — Trägerplatine (KiCad 7, generiert) und Gehäuse (OpenSCAD/STL), siehe `hardware/README.md`
 - `tests/` — Host-Unittests (g++, laufen auf dem PC), Anleitung in `tests/README.md`; `tests/c2/run.sh` prüft den Protokollcode der Firmware gegen den Server
 - `server/` — Leitstelle (Command-and-Control-Server) in Go, läuft im Docker-Container. Konzept, Protokoll und Phasen: `server/KONZEPT.md`; Start und Admin-API: `server/README.md`. Test: `server/test/e2e.sh` (Go ist nicht installiert, gebaut wird im Container; erster Bau auf dem Pi rund 10 Minuten)
 - Doku: `firmware/WAVESHARE.md` (das Board, meistgebraucht), `firmware/README.md` (Weboberfläche, Netz, 802.1X/HTTPS, Diagnose)
