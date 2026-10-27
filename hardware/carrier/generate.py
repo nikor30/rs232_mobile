@@ -68,13 +68,13 @@ VERIFY = {
 V = VERIFY
 
 # ---------------------------------------------------------------------------- board geometry
-BOARD_W, BOARD_H = 78.0, 95.0
+BOARD_W, BOARD_H = 78.0, 107.0
 CH_PITCH = 19.0
 CH_X0 = 0.9 + CH_PITCH / 2              # centre of channel 1
 CH_CENTERS = [CH_X0 + i * CH_PITCH for i in range(4)]
-WS_X0 = BOARD_W - 0.5 - V["WS_L"]       # Waveshare (landscape) left edge on the carrier
-WS_Y0 = 1.0                             # Waveshare top edge on the carrier
-BARRIER = (46.0, 51.0)                  # y band without copper between ESP side and isolated side
+WS_X0 = 1.0                             # Waveshare (portrait, USB-C up) left edge on the carrier
+WS_Y0 = 1.0                             # Waveshare top edge (USB-C edge) on the carrier
+BARRIER = (58.0, 63.0)                  # y band without copper between ESP side and isolated side
 
 # GPIO assignment on the Waveshare headers (header pin -> GPIO)
 HDR_A = {1: "3V3", 2: "GND", 3: "IO43", 4: "IO44", 5: "IO47", 6: "IO48", 7: "IO15", 8: "IO13",
@@ -148,6 +148,7 @@ for s in [
     box("PinSocket_1x14", [(str(i), f"{i}", "L", "passive", i - 1) for i in range(1, 15)], prefix="J"),
     box("PinSocket_1x14_B", [(str(28 - i), f"{28 - i}", "L", "passive", i) for i in range(14)], prefix="J"),
     box("Conn_1x7", [(str(i), f"{i}", "L", "passive", i - 1) for i in range(1, 8)], prefix="J"),
+    box("Conn_1x2", [("1", "BAT-", "L", "passive", 0), ("2", "BAT+", "L", "passive", 1)], prefix="J"),
 ]:
     SYMS[s.name] = s
 
@@ -234,6 +235,9 @@ socket("PinSocket_1x14", 14, [str(i) for i in range(1, 15)])
 socket("PinSocket_1x14_B", 14, [str(28 - i) for i in range(14)])
 socket("PinHeader_1x7", 7, [str(i) for i in range(1, 8)])
 
+FPS["JST_PH_2_Vertical"] = FootprintDef("JST_PH_2_Vertical", [Pad("1", 0, 0, 1.2, 1.2, "tht", "rect", 0.7), Pad("2", 2.0, 0, 1.2, 1.2, "tht", "circle", 0.7)],
+                                        (-2.2, -2.3, 4.2, 2.3), fab=(-1.95, -1.7, 3.95, 1.7), silk_lines=rect_lines(-2.05, -1.8, 4.05, 1.8),
+                                        attr="through_hole", height=6.0, note="JST B2B-PH-K-S, top entry, mounted on the bottom side")
 FPS["SolderJumper_3_Bridged12"] = FootprintDef(
     "SolderJumper_3_Bridged12", [Pad("1", -1.3, 0, 1.0, 1.5, shape="rect"), Pad("2", 0, 0, 1.0, 1.5, shape="rect"), Pad("3", 1.3, 0, 1.0, 1.5, shape="rect")],
     (-2.1, -1.0, 2.1, 1.0), silk_lines=rect_lines(-2.0, -0.95, 2.0, 0.95),
@@ -259,6 +263,7 @@ class Part:
     sy: float = 0.0
     dnp: bool = False
     props: Dict[str, str] = field(default_factory=dict)
+    side: str = "F"
 
 
 # ----- channel template (ref suffix only; positions relative to the channel centre)
@@ -266,31 +271,31 @@ def channel_parts() -> List[Part]:
     P = Part
     return [
         # ESP side
-        P("R01", "R", "R_0603", "330", {"1": "+3V3", "2": "TXA"}, -6.0, 40.0, 90, 25.4, 38.1, props={"Note": "TX LED, ~5 mA at 3.3 V"}),
-        P("U01", "TLP2361", "SO6_Opto", "TLP2361", {"1": "TXA", "3": "ESP_TX", "6": "ISO5V", "5": "T1IN", "4": "ISOGND"}, -5.0, 48.5, 0, 50.8, 38.1),
-        P("U02", "TLP2361", "SO6_Opto", "TLP2361", {"1": "RXA", "3": "BUF_OUT", "6": "+3V3", "5": "RX_O", "4": "GND"}, 0.0, 48.5, 180, 50.8, 63.5),
-        P("R03", "R", "R_0603", "100", {"1": "RX_O", "2": "ESP_RX"}, 1.5, 40.0, 90, 25.4, 63.5),
-        P("C07", "C", "C_0603", "100n", {"1": "+3V3", "2": "GND"}, -2.3, 40.0, 90, 25.4, 76.2),
+        P("R01", "R", "R_0603", "330", {"1": "+3V3", "2": "TXA"}, -6.0, 52, 90, 25.4, 38.1, props={"Note": "TX LED, ~5 mA at 3.3 V"}),
+        P("U01", "TLP2361", "SO6_Opto", "TLP2361", {"1": "TXA", "3": "ESP_TX", "6": "ISO5V", "5": "T1IN", "4": "ISOGND"}, -5.0, 60.5, 0, 50.8, 38.1),
+        P("U02", "TLP2361", "SO6_Opto", "TLP2361", {"1": "RXA", "3": "BUF_OUT", "6": "+3V3", "5": "RX_O", "4": "GND"}, 0.0, 60.5, 180, 50.8, 63.5),
+        P("R03", "R", "R_0603", "100", {"1": "RX_O", "2": "ESP_RX"}, 1.5, 52, 90, 25.4, 63.5),
+        P("C07", "C", "C_0603", "100n", {"1": "+3V3", "2": "GND"}, -2.3, 52, 90, 25.4, 76.2),
         # isolated supply
-        P("PS01", "B0505S-1WR3", "SIP-4_DCDC", "B0505S-1WR3", {"2": "ISO_IN", "1": "GND", "4": "ISO5V", "3": "ISOGND"}, 7.2, 43.0, 270, 50.8, 96.52),
-        P("C10", "C", "C_0805", "2.2u", {"1": "ISO_IN", "2": "GND"}, 7.2, 37.6, 0, 25.4, 96.52),
-        P("C09", "C", "C_0603", "4.7u", {"1": "ISO5V", "2": "ISOGND"}, 3.3, 58.2, 90, 78.74, 104.14),
-        P("C05", "C", "C_0603", "100n", {"1": "ISO5V", "2": "ISOGND"}, 3.3, 54.6, 90, 96.52, 91.44),
+        P("PS01", "B0505S-1WR3", "SIP-4_DCDC", "B0505S-1WR3", {"2": "ISO_IN", "1": "GND", "4": "ISO5V", "3": "ISOGND"}, 7.2, 55, 270, 50.8, 96.52),
+        P("C10", "C", "C_0805", "2.2u", {"1": "ISO_IN", "2": "GND"}, 7.2, 49.6, 0, 25.4, 96.52),
+        P("C09", "C", "C_0603", "4.7u", {"1": "ISO5V", "2": "ISOGND"}, 3.3, 70.2, 90, 78.74, 104.14),
+        P("C05", "C", "C_0603", "100n", {"1": "ISO5V", "2": "ISOGND"}, 3.3, 66.6, 90, 96.52, 91.44),
         # isolated side
         P("U03", "MAX3232E", "SOIC-16", "MAX3232E", {"1": "C1P", "3": "C1N", "4": "C2P", "5": "C2N", "2": "VP", "6": "VN",
                                                       "11": "T1IN", "10": "ISO5V", "16": "ISO5V", "15": "ISOGND", "14": "T1OUT",
-                                                      "13": "R1IN", "12": "R1OUT", "7": "NC", "8": "NC", "9": "NC"}, -2.4, 61.0, 0, 134.62, 45.72),
-        P("C01", "C", "C_0603", "100n", {"1": "C1P", "2": "C1N"}, -7.6, 57.83, 270, 96.52, 40.64),
-        P("C02", "C", "C_0603", "100n", {"1": "C2P", "2": "C2N"}, -7.6, 61.0, 270, 96.52, 53.34),
-        P("C03", "C", "C_0603", "100n", {"1": "VP", "2": "ISOGND"}, -7.6, 54.8, 90, 96.52, 66.04),
-        P("C04", "C", "C_0603", "100n", {"1": "VN", "2": "ISOGND"}, -7.6, 64.2, 270, 96.52, 78.74),
-        P("U04", "74LVC1G17", "SOT-23-5", "74LVC1G17", {"2": "R1OUT", "1": "NC", "5": "ISO5V", "4": "BUF_OUT", "3": "ISOGND"}, 5.9, 63.5, 0, 134.62, 88.9),
-        P("C08", "C", "C_0603", "100n", {"1": "ISO5V", "2": "ISOGND"}, 5.9, 66.5, 0, 96.52, 104.14),
-        P("R04", "R", "R_0603", "2k2", {"1": "ISO5V", "2": "LEDA"}, 5.9, 68.4, 0, 134.62, 106.68),
-        P("D01", "LED", "LED_0603", "LED green", {"2": "LEDA", "1": "ISOGND"}, 5.4, 70.4, 0, 154.94, 106.68),
-        P("R02", "R", "R_0603", "680", {"1": "ISO5V", "2": "RXA"}, -2.0, 67.6, 0, 78.74, 71.12, props={"Note": "RX LED, ~5 mA at 5 V"}),
-        P("JP01", "SolderJumper_3", "SolderJumper_3_Bridged12", "TX->3", {"1": "RJ3", "2": "T1OUT", "3": "RJ6"}, -4.6, 70.4, 0, 167.64, 45.72),
-        P("JP02", "SolderJumper_3", "SolderJumper_3_Bridged12", "RX<-6", {"1": "RJ6", "2": "R1IN", "3": "RJ3"}, 0.8, 70.4, 0, 167.64, 60.96),
+                                                      "13": "R1IN", "12": "R1OUT", "7": "NC", "8": "NC", "9": "NC"}, -2.4, 73, 0, 134.62, 45.72),
+        P("C01", "C", "C_0603", "100n", {"1": "C1P", "2": "C1N"}, -7.6, 69.83, 270, 96.52, 40.64),
+        P("C02", "C", "C_0603", "100n", {"1": "C2P", "2": "C2N"}, -7.6, 73, 270, 96.52, 53.34),
+        P("C03", "C", "C_0603", "100n", {"1": "VP", "2": "ISOGND"}, -7.6, 66.8, 90, 96.52, 66.04),
+        P("C04", "C", "C_0603", "100n", {"1": "VN", "2": "ISOGND"}, -7.6, 76.2, 270, 96.52, 78.74),
+        P("U04", "74LVC1G17", "SOT-23-5", "74LVC1G17", {"2": "R1OUT", "1": "NC", "5": "ISO5V", "4": "BUF_OUT", "3": "ISOGND"}, 5.9, 75.5, 0, 134.62, 88.9),
+        P("C08", "C", "C_0603", "100n", {"1": "ISO5V", "2": "ISOGND"}, 5.9, 78.5, 0, 96.52, 104.14),
+        P("R04", "R", "R_0603", "2k2", {"1": "ISO5V", "2": "LEDA"}, 5.9, 80.4, 0, 134.62, 106.68),
+        P("D01", "LED", "LED_0603", "LED green", {"2": "LEDA", "1": "ISOGND"}, 5.4, 82.4, 0, 154.94, 106.68),
+        P("R02", "R", "R_0603", "680", {"1": "ISO5V", "2": "RXA"}, -2.0, 79.6, 0, 78.74, 71.12, props={"Note": "RX LED, ~5 mA at 5 V"}),
+        P("JP01", "SolderJumper_3", "SolderJumper_3_Bridged12", "TX->3", {"1": "RJ3", "2": "T1OUT", "3": "RJ6"}, -4.6, 82.4, 0, 167.64, 45.72),
+        P("JP02", "SolderJumper_3", "SolderJumper_3_Bridged12", "RX<-6", {"1": "RJ6", "2": "R1IN", "3": "RJ3"}, 0.8, 82.4, 0, 167.64, 60.96),
         P("J01", "RJ45", "RJ45_Generic", "RJ45", {"1": "NC", "2": "NC", "3": "RJ3", "4": "ISOGND", "5": "ISOGND", "6": "RJ6", "7": "NC", "8": "NC"},
           0.0, 0.0, 180, 195.58, 48.26),
     ]
@@ -301,7 +306,7 @@ CH_LOCAL_NETS = {"TXA", "RXA", "T1IN", "R1OUT", "R1IN", "T1OUT", "BUF_OUT", "RX_
 CH_PORTS = {"ESP_TX": "input", "ESP_RX": "output", "ISO_IN": "input"}
 CH_ESP_LOCALS = {"TXA", "RX_O"}            # channel-local nets that live on the ESP side of the optocouplers
 CH_ISO_LOCALS = CH_LOCAL_NETS - CH_ESP_LOCALS
-MOUNT_HOLES = [(3.5, 3.5), (3.5, 36.0), (20.0, 71.5), (58.0, 71.5)]   # M2.5, carrier -> enclosure + bezel spacers
+MOUNT_HOLES = [(74.5, 3.5), (74.5, 46.0), (20.0, 83.5), (58.0, 83.5)]   # M2.5, carrier -> enclosure + bezel spacers
 HOLE_KEEPOUT_R = {"M2.5": 3.0, "M2": 2.6}          # no copper under the metal spacers
 GLOBAL_POWER = {"GND", "+3V3", "VBAT", "+5V"}
 
@@ -310,37 +315,39 @@ def root_parts() -> List[Part]:
     P = Part
     parts = [
         P("J1", "PinSocket_1x14", "PinSocket_1x14", "WS header 1-14", {str(k): hdr_net(v) for k, v in HDR_A.items()},
-          WS_X0 + V["WS_HDR_Y0"], WS_Y0 + V["WS_W"] - V["WS_HDR_X"][1], 0, 30.48, 45.72, props={"Note": "Waveshare right header (3V3 .. VBAT)"}),
+          *ws_to_carrier(V["WS_HDR_X"][1], V["WS_HDR_Y0"]), 90, 30.48, 45.72, props={"Note": "Waveshare right header (3V3 .. VBAT)"}),
         P("J2", "PinSocket_1x14_B", "PinSocket_1x14_B", "WS header 15-28", {str(k): hdr_net(v) for k, v in HDR_B.items()},
-          WS_X0 + V["WS_HDR_Y0"], WS_Y0 + V["WS_W"] - V["WS_HDR_X"][0], 0, 30.48, 101.6, props={"Note": "Waveshare left header (GPIO2 .. 5V)"}),
+          *ws_to_carrier(V["WS_HDR_X"][0], V["WS_HDR_Y0"]), 90, 30.48, 101.6, props={"Note": "Waveshare left header (GPIO2 .. 5V)"}),
         P("J3", "Conn_1x7", "PinHeader_1x7", "EXT", {"1": "+3V3", "2": "GND", "3": "SDA", "4": "SCL", "5": "IO2", "6": "IO4", "7": "IO6"},
-          7.5, 2.0, 0, 30.48, 157.48),
+          40.0, 2.0, 0, 30.48, 157.48),
         # boost converter VBAT -> +5V
-        P("U5", "MT3608", "SOT-23-6", "MT3608", {"5": "VBAT", "4": "PWR_EN", "3": "FB", "1": "SW", "6": "NC", "2": "GND"}, 7.0, 9.0, 0, 96.52, 45.72),
-        P("L1", "L", "L_5x5", "22u", {"1": "VBAT", "2": "SW"}, 14.5, 9.0, 0, 96.52, 27.94),
-        P("D5", "D", "D_SMA", "SS14", {"2": "SW", "1": "+5V"}, 14.5, 14.5, 0, 121.92, 27.94),
-        P("C51", "C", "C_0805", "10u", {"1": "VBAT", "2": "GND"}, 2.5, 9.0, 90, 71.12, 27.94),
-        P("C52", "C", "C_0805", "22u", {"1": "+5V", "2": "GND"}, 20.5, 9.0, 90, 147.32, 27.94),
-        P("C53", "C", "C_0805", "22u", {"1": "+5V", "2": "GND"}, 20.5, 13.0, 90, 147.32, 38.1),
-        P("C54", "C", "C_0603", "100n", {"1": "VBAT", "2": "GND"}, 2.5, 12.5, 90, 71.12, 38.1),
-        P("R51", "R", "R_0603", "75k", {"1": "+5V", "2": "FB"}, 7.0, 12.5, 0, 121.92, 60.96, props={"Note": "Vout = 0.6 V * (1 + R51/R52) = 5.1 V"}),
-        P("R52", "R", "R_0603", "10k", {"1": "FB", "2": "GND"}, 7.0, 14.5, 0, 121.92, 71.12),
-        P("R53", "R", "R_0603", "100k", {"1": "PWR_EN", "2": "GND"}, 2.5, 17.0, 0, 71.12, 60.96),
+        P("U5", "MT3608", "SOT-23-6", "MT3608", {"5": "VBAT", "4": "PWR_EN", "3": "FB", "1": "SW", "6": "NC", "2": "GND"}, 46.0, 9.0, 0, 96.52, 45.72),
+        P("L1", "L", "L_5x5", "22u", {"1": "VBAT", "2": "SW"}, 54.0, 9.0, 0, 96.52, 27.94),
+        P("D5", "D", "D_SMA", "SS14", {"2": "SW", "1": "+5V"}, 54.0, 15.0, 0, 121.92, 27.94),
+        P("C51", "C", "C_0805", "10u", {"1": "VBAT", "2": "GND"}, 40.0, 9.0, 90, 71.12, 27.94),
+        P("C52", "C", "C_0805", "22u", {"1": "+5V", "2": "GND"}, 61.0, 9.0, 90, 147.32, 27.94),
+        P("C53", "C", "C_0805", "22u", {"1": "+5V", "2": "GND"}, 61.0, 14.0, 90, 147.32, 38.1),
+        P("C54", "C", "C_0603", "100n", {"1": "VBAT", "2": "GND"}, 40.0, 14.0, 90, 71.12, 38.1),
+        P("R51", "R", "R_0603", "75k", {"1": "+5V", "2": "FB"}, 46.0, 13.0, 0, 121.92, 60.96, props={"Note": "Vout = 0.6 V * (1 + R51/R52) = 5.1 V"}),
+        P("R52", "R", "R_0603", "10k", {"1": "FB", "2": "GND"}, 46.0, 16.0, 0, 121.92, 71.12),
+        P("R53", "R", "R_0603", "100k", {"1": "PWR_EN", "2": "GND"}, 40.0, 18.5, 0, 71.12, 60.96),
     ]
     for n in range(1, 5):
-        parts.append(P(f"D5{n}", "D", "D_SOD-123", "1N4148W", {"2": f"EN{n}", "1": "PWR_EN"}, 6.5 + 4.7 * (n - 1), 17.0, 0, 71.12, 76.2 + 10.16 * (n - 1)))
-    rows = [20.0, 24.0, 28.0, 32.0]
+        parts.append(P(f"D5{n}", "D", "D_SOD-123", "1N4148W", {"2": f"EN{n}", "1": "PWR_EN"}, 44.0 + 6.0 * (n - 1), 20.5, 0, 71.12, 76.2 + 10.16 * (n - 1)))
+    rows = [25.0, 29.5, 34.0, 38.5]
     for n in range(1, 5):
         y = rows[n - 1]
         sy = 109.22 + 17.78 * (n - 1)
         parts += [
-            P(f"JP1{n}", "SolderJumper_3", "SolderJumper_3_Bridged12", f"EN{n} dflt", {"1": "GND", "2": f"ENP{n}", "3": "+3V3"}, 3.5, y, 0, 71.12, sy,
+            P(f"JP1{n}", "SolderJumper_3", "SolderJumper_3_Bridged12", f"EN{n} dflt", {"1": "GND", "2": f"ENP{n}", "3": "+3V3"}, 40.5, y, 0, 71.12, sy,
               props={"Note": "1-2: port off until the firmware enables it, 2-3: always on"}),
-            P(f"R6{n}", "R", "R_0603", "10k", {"1": f"EN{n}", "2": f"ENP{n}"}, 9.0, y, 0, 96.52, sy),
-            P(f"Q{n}1", "Q_NMOS", "SOT-23", "2N7002", {"1": f"EN{n}", "3": f"PG{n}", "2": "GND"}, 14.0, y, 0, 121.92, sy),
-            P(f"R7{n}", "R", "R_0603", "100k", {"1": "+5V", "2": f"PG{n}"}, 19.5, y, 0, 147.32, sy),
-            P(f"Q{n}2", "Q_PMOS", "SOT-23", "AO3401A", {"1": f"PG{n}", "2": "+5V", "3": f"ISO_IN{n}"}, 25.0, y, 0, 172.72, sy),
+            P(f"R6{n}", "R", "R_0603", "10k", {"1": f"EN{n}", "2": f"ENP{n}"}, 46.5, y, 0, 96.52, sy),
+            P(f"Q{n}1", "Q_NMOS", "SOT-23", "2N7002", {"1": f"EN{n}", "3": f"PG{n}", "2": "GND"}, 52.0, y, 0, 121.92, sy),
+            P(f"R7{n}", "R", "R_0603", "100k", {"1": "+5V", "2": f"PG{n}"}, 57.5, y, 0, 147.32, sy),
+            P(f"Q{n}2", "Q_PMOS", "SOT-23", "AO3401A", {"1": f"PG{n}", "2": "+5V", "3": f"ISO_IN{n}"}, 63.0, y, 0, 172.72, sy),
         ]
+    parts.append(P("J4", "Conn_1x2", "JST_PH_2_Vertical", "BAT JST-PH", {"1": "GND", "2": "VBAT"}, 71.0, 31.0, 90, 30.48, 175.26,
+                   props={"Note": "battery, bottom side (in the battery bay). VBAT reaches the module through header pin 14 - verify that pin is the cell terminal"}, side="B"))
     # mounting holes: 4 x M2 at the Waveshare positions (standoffs to the module), 5 x M2.5 to the enclosure
     for i, (hx, hy) in enumerate(ws_holes_landscape()):
         parts.append(P(f"H{i + 1}", "MountingHole", "MountingHole_2.2", "M2 Waveshare", {}, hx, hy, 0, 30.48 + 12.7 * i, 185.42))
@@ -355,9 +362,10 @@ def hole_keepouts():
 
 
 def ws_to_carrier(px: float, py: float) -> Tuple[float, float]:
-    """Waveshare portrait coordinates (x right, y down, USB-C at the bottom) -> carrier coordinates.
-    The module sits in landscape, rotated 90 deg counter-clockwise: USB-C to the right, SD slot up."""
-    return (WS_X0 + py, WS_Y0 + V["WS_W"] - px)
+    """Waveshare portrait coordinates (x right, y down, USB-C at the bottom, as in the product photo)
+    -> carrier coordinates.  The module sits in portrait, rotated 180 deg: USB-C and buttons at the
+    top edge of the carrier, SD slot on the left edge, antenna end towards the ports."""
+    return (WS_X0 + V["WS_W"] - px, WS_Y0 + V["WS_L"] - py)
 
 
 def ws_holes_landscape():
@@ -503,7 +511,7 @@ def write_pcb(path: str, placed: List[Tuple[Part, Dict[str, str], str]], nets: L
     for p, pin_nets, spath in placed:
         fp = FPS[p.fp]
         nm = {k: (net_idx[v], v) for k, v in pin_nets.items() if v != "NC"}
-        o.append(fp.sexp(FPLIB, p.ref, p.value, p.x, p.y, p.rot, nm, spath, U("fp:" + spath), p.dnp, p.props))
+        o.append(fp.sexp(FPLIB, p.ref, p.value, p.x, p.y, p.rot, nm, spath, U("fp:" + spath), p.dnp, p.props, p.side))
     # board outline
     W, H = BOARD_W, BOARD_H
     for i, (x1, y1, x2, y2) in enumerate(rect_lines(0, 0, W, H)):
@@ -514,13 +522,13 @@ def write_pcb(path: str, placed: List[Tuple[Part, Dict[str, str], str]], nets: L
         o.append(f'  (gr_line (start {f(x1)} {f(y1)}) (end {f(x2)} {f(y2)}) (stroke (width 0.1) (type default)) (layer "Edge.Cuts") (tstamp {U("slot" + str(i))}))')
     # Waveshare outline + glass + keep-out height note on User.Comments
     wx1, wy1 = WS_X0, WS_Y0
-    wx2, wy2 = WS_X0 + V["WS_L"], WS_Y0 + V["WS_W"]
+    wx2, wy2 = WS_X0 + V["WS_W"], WS_Y0 + V["WS_L"]
     for i, (x1, y1, x2, y2) in enumerate(rect_lines(wx1, wy1, wx2, wy2)):
         o.append(f'  (gr_line (start {f(x1)} {f(y1)}) (end {f(x2)} {f(y2)}) (stroke (width 0.15) (type dash)) (layer "Cmts.User") (tstamp {U("ws" + str(i))}))')
-    gx1 = wx1 - V["WS_GLASS_OVERHANG_L"]
-    gx2 = wx2 + V["WS_GLASS_OVERHANG_L"]
-    gy1 = (wy1 + wy2) / 2 - V["WS_GLASS"][0] / 2
-    gy2 = (wy1 + wy2) / 2 + V["WS_GLASS"][0] / 2
+    gy1 = wy1 - V["WS_GLASS_OVERHANG_L"]
+    gy2 = wy2 + V["WS_GLASS_OVERHANG_L"]
+    gx1 = (wx1 + wx2) / 2 - V["WS_GLASS"][0] / 2
+    gx2 = (wx1 + wx2) / 2 + V["WS_GLASS"][0] / 2
     for i, (x1, y1, x2, y2) in enumerate(rect_lines(gx1, gy1, gx2, gy2)):
         o.append(f'  (gr_line (start {f(x1)} {f(y1)}) (end {f(x2)} {f(y2)}) (stroke (width 0.1) (type dot)) (layer "Cmts.User") (tstamp {U("gl" + str(i))}))')
     ux1, ux2, uy1, uy2 = V["WS_USBC"]
@@ -535,9 +543,9 @@ def write_pcb(path: str, placed: List[Tuple[Part, Dict[str, str], str]], nets: L
         o.append(f'  (gr_text "{s}" (at {f(x)} {f(y)} {rot}) (layer "{layer}") (tstamp {U("gt" + s + str(x) + str(y))})\n'
                  f"    (effects (font (size {size} {size}) (thickness {f(size * 0.15)})){jst})\n  )")
 
-    text("Waveshare ESP32-S3-Touch-LCD-2 (component side down), USB-C ->", wx1 + 1, wy1 + 3, "Cmts.User", 1.2)
-    text(f"RS232 ISO CARRIER v{REV} {DATE} nikor30/rs232_mobile", 39.0, 24.0, "B.SilkS", 1.2, 0, "center")
-    text("ISOLATION BARRIER - no copper, 1.5 kV", 39.0, 48.8, "B.SilkS", 1.0, 0, "center")
+    text("Waveshare ESP32-S3-Touch-LCD-2, USB-C up", wx1 + 1, wy1 + 20, "Cmts.User", 1.0, 90)
+    text(f"RS232 ISO CARRIER v{REV} {DATE} nikor30/rs232_mobile", 39.0, 54.5, "B.SilkS", 1.2, 0, "center")
+    text("ISOLATION BARRIER - no copper, 1.5 kV", 39.0, 60.8, "B.SilkS", 1.0, 0, "center")
     for i, xc in enumerate(CH_CENTERS):
         text(f"PORT {i + 1}", xc - 2.8, H - 21.5, "F.SilkS", 1.0)
         text("Cisco: 3=TX 6=RX 4/5=GND", xc - 7.5, H - 22.9, "F.SilkS", 0.6)
@@ -573,7 +581,7 @@ def write_pcb(path: str, placed: List[Tuple[Part, Dict[str, str], str]], nets: L
         fh.write("\n".join(o))
 
 
-BAT_SLOT = (WS_X0 + 10.0, 5.5, WS_X0 + 14.5, 15.5)   # battery cable from the module's MX1.25 header down to the battery
+BAT_SLOT = (5.6, 32.0, 10.1, 42.0)   # fallback: battery pigtail from below to the module's MX1.25 header
 
 
 # ---------------------------------------------------------------------------- project / rules
@@ -746,7 +754,7 @@ def check(placed) -> int:
                 print(f"EDGE   {p.ref:6s} {p.fp:22s} courtyard {tuple(round(v, 2) for v in b)}")
                 errs += 1
         # tall parts under the Waveshare module
-        wx1, wy1, wx2, wy2 = WS_X0, WS_Y0, WS_X0 + V["WS_L"], WS_Y0 + V["WS_W"]
+        wx1, wy1, wx2, wy2 = WS_X0, WS_Y0, WS_X0 + V["WS_W"], WS_Y0 + V["WS_L"]
         if fp.height > V["WS_STACK"] - 1.0 and not (b[2] < wx1 or b[0] > wx2 or b[3] < wy1 or b[1] > wy2) and fp.attr != "through_hole":
             print(f"HEIGHT {p.ref} {fp.height} mm under the Waveshare module")
             errs += 1
@@ -775,13 +783,13 @@ def preview(placed, path):
     fig, ax = plt.subplots(figsize=(8.5, 10.5))
     ax.add_patch(Rectangle((0, 0), BOARD_W, BOARD_H, fill=False, lw=1.5, color="k"))
     ax.add_patch(Rectangle((BAT_SLOT[0], BAT_SLOT[1]), BAT_SLOT[2] - BAT_SLOT[0], BAT_SLOT[3] - BAT_SLOT[1], fill=False, lw=1, color="k"))
-    ax.add_patch(Rectangle((WS_X0, WS_Y0), V["WS_L"], V["WS_W"], fill=True, alpha=0.08, color="tab:blue", lw=1, ls="--"))
-    ax.text(WS_X0 + 1, WS_Y0 + 10, "Waveshare ESP32-S3-Touch-LCD-2\n(stacked 11 mm above, USB-C ->)", fontsize=7, color="tab:blue")
+    ax.add_patch(Rectangle((WS_X0, WS_Y0), V["WS_W"], V["WS_L"], fill=True, alpha=0.08, color="tab:blue", lw=1, ls="--"))
+    ax.text(WS_X0 + 2, WS_Y0 + 20, "Waveshare\nESP32-S3-Touch-LCD-2\n(11 mm above, USB-C up)", fontsize=7, color="tab:blue")
     ax.add_patch(Rectangle((0.5, BARRIER[0]), BOARD_W - 1, BARRIER[1] - BARRIER[0], fill=True, alpha=0.15, color="red", lw=0))
     ax.text(BOARD_W / 2, (BARRIER[0] + BARRIER[1]) / 2, "isolation barrier (no copper)", ha="center", va="center", fontsize=7, color="red")
     for i, xc in enumerate(CH_CENTERS):
         ax.add_patch(Rectangle((xc - CH_PITCH / 2 + 0.5, BARRIER[1]), CH_PITCH - 1, BOARD_H - BARRIER[1] - 0.5, fill=True, alpha=0.06, color="tab:green", lw=0))
-        ax.text(xc, 74, f"PORT {i + 1}", ha="center", fontsize=8, color="tab:green")
+        ax.text(xc, BOARD_H - 21, f"PORT {i + 1}", ha="center", fontsize=8, color="tab:green")
     for p, _, _ in placed:
         fp = FPS[p.fp]
         b = fp.courtyard_world(p.x, p.y, p.rot)

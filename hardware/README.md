@@ -1,11 +1,11 @@
 # Hardware: Trägerplatine mit vier galvanisch getrennten RS232-Ports und Gehäuse
 
-Stand 27. Oktober 2026, Revision 0.1 — **entworfen und per KiCad-DRC geprüft, noch nicht gebaut.**
+Stand 27. Oktober 2026, Revision 0.2 (Modul hochkant, Gehäuse zum Zusammenstecken) — **entworfen und per KiCad-DRC geprüft, noch nicht gebaut.**
 Vor der Bestellung die Liste unter „Vor der Bestellung prüfen“ abarbeiten.
 
 ## Was es ist
 
-Eine Trägerplatine (78 × 95 mm, zweilagig), auf die das **Waveshare ESP32-S3-Touch-LCD-2** mit seinen
+Eine Trägerplatine (78 × 107 mm, zweilagig), auf die das **Waveshare ESP32-S3-Touch-LCD-2** mit seinen
 beiden 14-poligen Stiftleisten gesteckt wird. Das Modul bringt Display, Touch, Lagesensor (QMI8658),
 SD-Slot, LiPo-Lader und USB-C mit; die Trägerplatine ergänzt:
 
@@ -17,7 +17,9 @@ SD-Slot, LiPo-Lader und USB-C mit; die Trägerplatine ergänzt:
   ein eingeschalteter Port kostet rund 30–40 mA am Akku (Wandler im Leerlauf + MAX3232 + LED).
 - **Lötbrücken** je Port, um TX/RX an der Buchse zu tauschen (JPx01/JPx02), und je Port eine Lötbrücke,
   ob der Port ohne Firmware-Unterstützung dauerhaft versorgt wird (JP11–JP14, Brücke 2-3 = immer an).
-- Akku liegt **unter** der Trägerplatine im Gehäuse, Kabel durch einen Schlitz zum MX1.25-Anschluss des Moduls.
+- Akku liegt **unter** der Trägerplatine im Gehäuse hinter einer Klappe und steckt an einer JST-PH-Buchse (J4) auf der
+  Unterseite der Trägerplatine; BAT+ erreicht das Modul über Pin 14 (VBAT) der Stiftleiste. Falls dieser Pin nicht der
+  Zellenanschluss ist (prüfen!), bleibt der Schlitz für ein Kabel zum MX1.25-Anschluss des Moduls.
 - Stecker J3: 3V3, GND, I²C (GPIO47/48) und GPIO2/4/6 für spätere Erweiterungen.
 
 Der Lagesensor für die automatische Drehung sitzt auf dem Modul; auf der Trägerplatine ist dafür nichts nötig.
@@ -43,7 +45,7 @@ rund 50 mm von den RJ45-Buchsen entfernt).
 | `carrier/kicad/fab/` | **Gerber + Bohrdaten als ZIP für PCBWay**, Bestückungsdaten (`-pos.csv`), Schaltplan-PDF, Platinen-PDF, DRC-Bericht |
 | `carrier/bom.csv` | Stückliste mit Vorschlägen für Bauteile |
 | `enclosure/generate_enclosure.py` | Erzeugt `rs232_console_case.scad` aus denselben Maßen und rendert die STL-Dateien |
-| `enclosure/tub.stl`, `bezel.stl` | Unterschale und Blende zum Drucken; `preview_*.png` zur Ansicht |
+| `enclosure/tub.stl`, `shell.stl`, `door.stl` | Unterschale, Oberschale und Akkuklappe zum Drucken; `preview_*.png` zur Ansicht |
 
 Neu erzeugen (KiCad 7 und OpenSCAD müssen installiert sein):
 
@@ -89,22 +91,41 @@ RX-LED, weil der Empfängerausgang des MAX3232 dafür zu schwach ist.
 
 ## Mechanik
 
-- Modul in Querlage, 11 mm über der Trägerplatine (Buchsenleisten 8,5 mm + Stiftleistenkörper 2,5 mm),
-  USB-C zeigt nach rechts, SD-Slot nach oben, Keramikantenne nach links. Vier M2-Abstandsbolzen (11 mm) an den
-  Bohrungen des Moduls.
-- Trägerplatine auf acht Stützen der Unterschale (4 × M2,5 an H5–H8 mit 14-mm-Distanzbolzen bis zur Blende,
-  4 × M2 an den Modulbohrungen). Schrauben von unten (M2,5 × 16 bzw. M2 × 16), Blende von oben
-  (M2,5 × 6 in die Distanzbolzen, M2 × 8 in zwei Wandaugen).
-- Gehäuse außen **87 × 101 × 28 mm**: Unterschale (`tub.stl`, Wände 2,5 mm, Seitenwände 4 mm, Akkufach
-  60 × 55 × 6,5 mm unter der Platine), Blende (`bezel.stl`, 2,1 mm, Displayglas liegt bündig im Fenster).
-  Öffnungen: 4 × RJ45 vorn, USB-C-Mulde und zwei Nadellöcher (BOOT/RST) rechts, SD-Schlitz oben, SMA links.
-  Drucken: Unterschale mit dem Boden nach unten ohne Stützen, Blende mit der Oberseite nach unten.
+- Modul **hochkant** oben links auf der Trägerplatine, 11 mm darüber (Buchsenleisten 8,5 mm + Stiftleistenkörper
+  2,5 mm): USB-C und die Tasten BOOT/RST zeigen zur kurzen oberen Stirnseite, der SD-Slot zur linken Seite, die
+  Keramikantenne nach unten zu den Ports (rund 45 mm von den Buchsen entfernt). Rechts daneben die Versorgung,
+  darunter die vier Port-Inseln, unten die RJ45-Reihe.
+- **Das Displayglas ist die Oberseite.** Es ist 4,6 mm länger als die Modulplatine; die Oberschale rahmt es mit
+  0,15 mm Spiel, und die obere Stirnwand (3,6 mm) liegt **unter** dem Glasüberstand — so braucht das Gehäuse dort
+  keine eigene Fläche. Oberseite des Glases = Oberseite des Gehäuses.
+- **Drei gedruckte Teile, keine Schraube im Gehäuse** (`enclosure/`):
+  - `tub.stl` — Unterschale: Wände 2 mm, Boden 1,6 mm, Akkufach 60 × 68 × 7 mm unter der Platine, acht Stützen
+    mit Zapfen, die durch die Bohrungen der Trägerplatine greifen (4 × M2,5-Positionen, 4 × Modulpositionen),
+    Fenster für die Haken, Nut für die Lippe der Oberschale.
+  - `shell.stl` — Oberschale: Rahmen ums Glas, Lippe (1,2 × 3 mm) in die Nut der Unterschale, **vier Rasthaken**
+    (9 mm breit, 1,5 mm dick, 6 mm lang, 1 mm Nase, 30° Einführ-, 45° Haltewinkel) an den Längsseiten, die in die
+    Wandfenster klicken und sich von außen mit dem Fingernagel lösen lassen; vier Pfosten, die die Trägerplatine
+    von oben auf die Zapfen der Unterschale drücken. Platine und Modul sind damit ohne Schrauben gehalten
+    (M2-Bolzen zwischen Trägerplatine und Modul sind weiterhin möglich).
+  - `door.stl` — Akkuklappe im Boden: zwei feste Nasen am einen Ende, eine federnde Lasche (in der Ebene der
+    Klappe gedruckt, also quer zu den Schichten belastbar) mit Daumennoppe am anderen; Akku ein-/aussteckbar an
+    J4, ohne das Gehäuse zu öffnen.
+- Öffnungen: 4 × RJ45 vorn, USB-C-Mulde (13 × 8 mm) und zwei Nadellöcher (BOOT/RST) in der oberen Stirnwand,
+  SD-Schlitz und RP-SMA-Bohrung (6,5 mm) links. Trennfuge auf 7 mm über der Platine, die RJ45- und USB-C-Öffnungen
+  laufen durch beide Schalen.
+- Außen **83 × 114 × 28 mm**. Regeln aus den Konstruktionsleitfäden für FDM (Hubs, Formlabs, Core77):
+  Spiel 0,3 mm an Rastflächen, Haken mit Wurzelradius 0,8 mm und Länge ≈ 4–5 × Dicke, Rastnasen mit flachem
+  Einführwinkel und 45° Haltewinkel für lösbare Verbindungen; Haken, die beim Druck in Z wachsen, dicker als
+  flach gedruckte (deshalb 1,5 mm). Drucken: Unterschale mit dem Boden nach unten, Oberschale mit der Oberseite
+  nach unten (Haken und Pfosten wachsen nach oben), Klappe flach; PETG oder ABS, nicht PLA (Haken brechen).
+  **Erster Druck als Probe**: die Haken- und Klappengeometrie ist nicht gedruckt worden; Spiel ggf. in
+  `generate_enclosure.py` (`clr`, `hook_catch`) anpassen.
 - Isolationsabstand auf der Platine: 5 mm kupferfreies Band zwischen ESP-Seite und Inseln (DRC-Regel 3 mm),
-  1,8 mm zwischen den Inseln (DRC-Regel 1,5 mm). Unter den Metall-Distanzbolzen ist das Kupfer ausgespart.
+  1,8 mm zwischen den Inseln (DRC-Regel 1,5 mm). Unter den Zapfen/Pfosten ist das Kupfer ausgespart.
 
 ## Bestellen bei PCBWay
 
-Datei `carrier/kicad/fab/rs232_carrier-gerbers-pcbway.zip` hochladen. Einstellungen: 2 Lagen, 78 × 95 mm,
+Datei `carrier/kicad/fab/rs232_carrier-gerbers-pcbway.zip` hochladen. Einstellungen: 2 Lagen, 78 × 107 mm,
 FR-4 1,6 mm, 1 oz Kupfer, Lötstopplack beliebig, HASL bleifrei oder ENIG, kleinste Leiterbahn/Abstand
 0,25/0,2 mm (Mindestwerte der Platine: 0,25 mm Bahn, 0,2 mm Abstand, Via 0,7/0,3 mm). Keine besonderen
 Anforderungen. Für Bestückung durch PCBWay: `rs232_carrier-pos.csv` und `bom.csv` (Bauteile dort ergänzen).
@@ -133,6 +154,11 @@ neu laufen lassen.
 7. **MT3608**: Vout = 0,6 V · (1 + 75k/10k) = 5,1 V — innerhalb der 4,5–5,5 V des B0505S.
 8. **Spule** L1: Footprint ist ein generisches 5 × 5 mm mit zwei Pads; Bauteil mit ≥ 1 A Sättigungsstrom.
 9. **Antenne**: IPEX-Buchse am Modul vorhanden? Sonst SMA-Bohrung verschließen.
+10. **VBAT an Pin 14 der Stiftleiste**: Mit dem Multimeter prüfen, dass der Pin direkt mit BAT+ des MX1.25-Anschlusses
+    verbunden ist (0 Ω). Nur dann lädt und versorgt der Akku an J4 das Modul über die Stiftleiste. Sonst ein kurzes
+    Kabel von J4 durch den Schlitz zum MX1.25-Anschluss ziehen und J4 nicht bestücken.
+11. **Glasdicke und Höhe** über der Modulplatine (angenommen 3,5 mm): bestimmt, ob die Glasoberseite bündig mit der
+    Oberschale abschließt.
 
 Was sonst noch offen ist: Die Firmwareänderung ist ungetestet (kein PlatformIO in der Sandbox); die
 Optokoppler-Schaltung ist nach Datenblattwerten ausgelegt, nicht gemessen; der Autorouter hat keine
@@ -154,4 +180,7 @@ Längen- oder Impedanzregeln (bei 115 200 Baud belanglos). Die Silkscreen-Warnun
 - **Schaltbare Versorgung**: Die vier Wandler zögen sonst dauerhaft 30–60 mA; am 1000-mAh-Akku wären das
   Stunden. Standard ist „aus“ (Pull-down), die Firmware schaltet ein.
 - **Abstände**: 19 mm Portraster, weil 17,5/18 mm für Ladungspumpen-Kondensatoren, MAX3232 und Wandler in
-  einer Spalte nicht reichten — die Platine wurde dafür von 72 auf 78 mm breiter und von 90 auf 95 mm länger.
+  einer Spalte nicht reichten — die Platine wurde dafür von 72 auf 78 mm breiter; mit dem hochkant stehenden
+  Modul (Wunsch: USB-C an der Stirnseite, Glas als Oberseite) 107 mm lang.
+- **Zusammenstecken statt Schrauben** (Wunsch): Lippe/Nut plus vier lösbare Haken; die Trägerplatine ist zwischen
+  Zapfen und Pfosten geklemmt. Akku hinter einer Klappe mit Rastlasche, Steckverbinder auf der Platinenunterseite.

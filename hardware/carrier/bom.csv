@@ -6,6 +6,7 @@ C110 C210 C310 C410,4,2.2u,C_0805,2.2u 0805 X7R/X5R >=10 V,ceramic
 C52 C53,2,22u,C_0805,22u 0805 X7R/X5R >=10 V,ceramic
 D5,1,SS14,D_SMA,Vishay SS14,"40 V Schottky, SMA"
 D51 D52 D53 D54,4,1N4148W,D_SOD-123,Diodes Inc 1N4148W-7-F,
+J4,1,BAT JST-PH,JST_PH_2_Vertical,,
 D101 D201 D301 D401,4,LED green,LED_0603,Everlight 19-217/GHC-YR1S2/3T,"any 0603 green LED, cathode mark"
 L1,1,22u,L_5x5,Bourns SRN5040-220M,"22 uH, >=1 A sat; any 4x4..5x5 mm shielded inductor with 2 pads"
 J3,1,EXT,PinHeader_1x7,1x7 pin header 2.54 mm,optional

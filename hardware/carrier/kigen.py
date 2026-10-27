@@ -191,8 +191,9 @@ class FootprintDef:
 
     def sexp(self, lib: str, ref: str, value: str, x: float, y: float, rot: float,
              nets: Dict[str, Tuple[int, str]], path: str, uid: str, dnp: bool = False,
-             props: Optional[Dict[str, str]] = None) -> str:
-        o = [f'  (footprint "{lib}:{self.name}" (layer "F.Cu")', f"    (tstamp {uid})",
+             props: Optional[Dict[str, str]] = None, side: str = "F") -> str:
+        L = side   # "F" or "B": layer prefix for everything that belongs to one side
+        o = [f'  (footprint "{lib}:{self.name}" (layer "{L}.Cu")', f"    (tstamp {uid})",
              f"    (at {f(x)} {f(y)} {f(rot)})"]
         if self.note:
             o.append(f'    (descr "{self.note}")')
@@ -205,19 +206,19 @@ class FootprintDef:
             o.append(f'    (net_tie_pad_groups "{self.net_tie}")')
         cy = self.courtyard
         ry = cy[3] + 1.0
-        ref_layer = "F.Fab" if (len(self.pads) <= 3 and self.attr == "smd") or not self.pads or all(p.kind == "npth" for p in self.pads) else "F.SilkS"
+        ref_layer = f"{L}.Fab" if (len(self.pads) <= 3 and self.attr == "smd") or not self.pads or all(p.kind == "npth" for p in self.pads) else f"{L}.SilkS"
         o.append(f'    (fp_text reference "{ref}" (at 0 {f(cy[1]-0.7)} {f(rot)}) (layer "{ref_layer}") (tstamp {U(uid+"ref")})'
                  f" (effects (font (size 0.6 0.6) (thickness 0.1))))")
-        o.append(f'    (fp_text value "{value}" (at 0 {f(ry)} {f(rot)}) (layer "F.Fab") (tstamp {U(uid+"val")})'
+        o.append(f'    (fp_text value "{value}" (at 0 {f(ry)} {f(rot)}) (layer "{L}.Fab") (tstamp {U(uid+"val")})'
                  f" (effects (font (size 0.8 0.8) (thickness 0.12))))")
-        o.append(f"    (fp_rect (start {f(cy[0])} {f(cy[1])}) (end {f(cy[2])} {f(cy[3])}) (stroke (width 0.05) (type default)) (fill none) (layer \"F.CrtYd\") (tstamp {U(uid+'cy')}))")
+        o.append(f"    (fp_rect (start {f(cy[0])} {f(cy[1])}) (end {f(cy[2])} {f(cy[3])}) (stroke (width 0.05) (type default)) (fill none) (layer \"{L}.CrtYd\") (tstamp {U(uid+'cy')}))")
         if self.fab:
             fb = self.fab
-            o.append(f"    (fp_rect (start {f(fb[0])} {f(fb[1])}) (end {f(fb[2])} {f(fb[3])}) (stroke (width 0.1) (type default)) (fill none) (layer \"F.Fab\") (tstamp {U(uid+'fab')}))")
+            o.append(f"    (fp_rect (start {f(fb[0])} {f(fb[1])}) (end {f(fb[2])} {f(fb[3])}) (stroke (width 0.1) (type default)) (fill none) (layer \"{L}.Fab\") (tstamp {U(uid+'fab')}))")
         for i, (x1, y1, x2, y2) in enumerate(self.silk_lines):
-            o.append(f"    (fp_line (start {f(x1)} {f(y1)}) (end {f(x2)} {f(y2)}) (stroke (width 0.12) (type solid)) (layer \"F.SilkS\") (tstamp {U(uid+'sl'+str(i))}))")
+            o.append(f"    (fp_line (start {f(x1)} {f(y1)}) (end {f(x2)} {f(y2)}) (stroke (width 0.12) (type solid)) (layer \"{L}.SilkS\") (tstamp {U(uid+'sl'+str(i))}))")
         for i, (x1, y1, x2, y2) in enumerate(self.fab_lines):
-            o.append(f"    (fp_line (start {f(x1)} {f(y1)}) (end {f(x2)} {f(y2)}) (stroke (width 0.1) (type solid)) (layer \"F.Fab\") (tstamp {U(uid+'fl'+str(i))}))")
+            o.append(f"    (fp_line (start {f(x1)} {f(y1)}) (end {f(x2)} {f(y2)}) (stroke (width 0.1) (type solid)) (layer \"{L}.Fab\") (tstamp {U(uid+'fl'+str(i))}))")
         for i, (layer, pts) in enumerate(self.polys):
             p = " ".join(f"(xy {f(a)} {f(b)})" for a, b in pts)
             o.append(f"    (fp_poly (pts {p}) (stroke (width 0) (type solid)) (fill solid) (layer \"{layer}\") (tstamp {U(uid+'po'+str(i))}))")
@@ -233,7 +234,7 @@ class FootprintDef:
                 o.append(f'    (pad "{p.number}" thru_hole {shape} (at {f(p.x)} {f(p.y)} {prot}) (size {f(p.w)} {f(p.h)}) (drill {f(p.drill)}) (layers "*.Cu" "*.Mask"){nets_s} (remove_unused_layers) (tstamp {U(uid+"pad"+p.number)}))')
             else:
                 rr = " (roundrect_rratio 0.25)" if p.shape == "roundrect" else ""
-                o.append(f'    (pad "{p.number}" smd {p.shape} (at {f(p.x)} {f(p.y)} {prot}) (size {f(p.w)} {f(p.h)}) (layers "F.Cu" "F.Paste" "F.Mask"){rr}{nets_s} (tstamp {U(uid+"pad"+p.number)}))')
+                o.append(f'    (pad "{p.number}" smd {p.shape} (at {f(p.x)} {f(p.y)} {prot}) (size {f(p.w)} {f(p.h)}) (layers "{L}.Cu" "{L}.Paste" "{L}.Mask"){rr}{nets_s} (tstamp {U(uid+"pad"+p.number)}))')
         o.append("  )")
         return "\n".join(o)
 

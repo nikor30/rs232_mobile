@@ -328,7 +328,7 @@ class Router:
                 continue
             path = self.astar(net, connected, target, tc)
             if path is None:
-                victims = sorted(self.nets_near(net, tc[0], tc[1], 2.0), key=lambda n: half_width(n))[:4]
+                victims = sorted((v for v in self.nets_near(net, tc[0], tc[1], 2.0) if not self.plane_polygon(v)), key=lambda n: half_width(n))[:4]
                 for v in victims:
                     self.rip_up(v)
                     self.ripped.add(v)
@@ -378,7 +378,7 @@ class Router:
                 victims = self.nets_near(net, tx, ty)
                 for cx, cy in connected_centres[-2:]:
                     victims |= self.nets_near(net, cx, cy)
-                victims = sorted(victims, key=lambda n: half_width(n))[:6]
+                victims = sorted((v for v in victims if not self.plane_polygon(v)), key=lambda n: half_width(n))[:6]
                 for v in victims:
                     self.rip_up(v)
                     self.ripped.add(v)

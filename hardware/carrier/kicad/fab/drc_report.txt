@@ -1,15 +1,18 @@
 ** Drc report for /home/user/nikor30/rs232_mobile/hardware/carrier/kicad/rs232_carrier.kicad_pcb **
-** Created on 2026-10-27 16:36:04 **
+** Created on 2026-10-27 18:34:08 **
 
-** Found 2 DRC violations **
+** Found 3 DRC violations **
+[silk_over_copper]: Silkscreen clipped by solder mask
+    Local override; Severity: warning
+    @(39.0000 mm, 54.5000 mm): PCB Text 'RS232 ISO CARRIER v0.1 2026-10-27 ...' on B.Silkscreen
 [silk_edge_clearance]: Silkscreen clipped by board edge
     Rule: board setup constraints silk; Severity: warning
     @(0.0000 mm, 0.0000 mm): Line on Edge.Cuts
-    @(7.5000 mm, -0.3000 mm): Reference 'J3'
+    @(40.0000 mm, -0.3000 mm): Reference 'J3'
 [silk_edge_clearance]: Silkscreen clipped by board edge
     Rule: board setup constraints silk; Severity: warning
     @(78.0000 mm, 0.0000 mm): Line on Edge.Cuts
-    @(78.4000 mm, 43.0000 mm): Reference 'PS4'
+    @(78.4000 mm, 55.0000 mm): Reference 'PS4'
 
 ** Found 0 unconnected pads **
 
