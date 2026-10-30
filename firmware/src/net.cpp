@@ -321,6 +321,10 @@ static String statusJson() {
     k["sizeMb"] = st.sizeMb;
     k["retries"] = st.retries;
     k["fails"] = st.fails;
+    String cmds;                         // which other SCSI commands the host has used, as hex
+    for (int i = 0; i < 256; i++)
+      if (st.cmds[i >> 5] & 1u << (i & 31)) cmds += (cmds.length() ? " " : "") + String(i < 16 ? "0" : "") + String(i, HEX);
+    k["cmds"] = cmds;
   }
   d["boot"] = bootId;
   JsonArray ps = d["ports"].to<JsonArray>();

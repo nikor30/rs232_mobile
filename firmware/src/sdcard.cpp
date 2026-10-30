@@ -9,7 +9,7 @@
 #include <SPI.h>
 #include <Preferences.h>
 #include <USB.h>
-#include <USBMSC.h>
+#include "esp32-hal-tinyusb.h"
 #include "tusb.h"
 #include "soc/usb_serial_jtag_struct.h"
 #include "soc/rtc_cntl_struct.h"
@@ -462,9 +462,15 @@ void loop() {
 // The card stays initialised (SD keeps its drive), but the file system on it is
 // not touched from here any more: two masters over one FAT would wreck it. The
 // host's sector requests arrive in the USB task and go straight to the card.
-static USBMSC msc;
+//
+// The SCSI side is ours, not the core's USBMSC: its handler for commands that
+// TinyUSB does not know itself keeps the length in a uint16_t, so its "-1 =
+// unsupported" came out as success. Linux uses only commands TinyUSB knows; a
+// Cisco C2960CX also sends others, got "done" for writes that never happened,
+// and could not format the card ("Didn't find 55AA signature in System Sector").
 static uint8_t drive = 0xFF;
-static volatile bool stickEjected = false;
+static volatile bool stickMedia = false, stickEjected = false;
+static volatile uint32_t stickSeen[8];                       // opcodes that reached stickScsi(), one bit each
 static volatile uint32_t stickRead = 0, stickWritten = 0;    // sectors
 static volatile uint32_t stickRetries = 0, stickFails = 0;   // requests the card refused at first / for good
 
@@ -508,15 +514,6 @@ static int32_t stickOnWrite(uint32_t lba, uint32_t offset, uint8_t *buffer, uint
   return size;
 }
 
-static bool stickOnStartStop(uint8_t power, bool start, bool eject) {
-  (void)power;
-  if (eject) {
-    stickEjected = !start;
-    msc.mediaPresent(start);               // an ejected stick has no medium until the host loads it again
-  }
-  return true;
-}
-
 // Older Cisco switches keep a stick's size in bytes in 32 bits: a 32 GB card
 // looked like 1856 MB to a C2960CX, which then found its partition table
 // "unexpected" and could not even format the card. A card larger than 4 GB
@@ -525,6 +522,78 @@ static bool stickOnStartStop(uint8_t power, bool start, bool eject) {
 // it for every host.
 static const uint32_t STICK_MAX = 8386560;   // 4 GiB - 1 MiB, in sectors
 static uint32_t stickShown = 0;
+
+static uint16_t stickDescriptor(uint8_t *dst, uint8_t *itf) {
+  uint8_t str = tinyusb_add_string_descriptor("RS232 Console SD card");
+  uint8_t ep = tinyusb_get_free_duplex_endpoint();
+  TU_VERIFY(ep != 0);
+  uint8_t d[TUD_MSC_DESC_LEN] = {TUD_MSC_DESCRIPTOR(*itf, str, ep, (uint8_t)(0x80 | ep), 64)};
+  *itf += 1;
+  memcpy(dst, d, sizeof d);
+  return sizeof d;
+}
+
+static void stickText(uint8_t *dst, const char *src, size_t n) {   // SCSI strings are padded with spaces
+  memset(dst, ' ', n);
+  memcpy(dst, src, min(strlen(src), n));
+}
+
+static uint32_t be(const uint8_t *p, int n) {
+  uint32_t v = 0;
+  while (n--) v = v << 8 | *p++;
+  return v;
+}
+
+static void putBe(uint8_t *p, uint32_t v, int n) {
+  while (n--) p[n] = v, v >>= 8;
+}
+
+// Commands TinyUSB does not handle itself. A negative answer makes it fail the
+// command with the sense set here, as SCSI expects.
+static int32_t stickScsi(uint8_t lun, const uint8_t *cmd, uint8_t *buf, uint16_t size) {
+  stickSeen[cmd[0] >> 5] = stickSeen[cmd[0] >> 5] | 1u << (cmd[0] & 31);
+  switch (cmd[0]) {
+    case 0x1E:                             // PREVENT ALLOW MEDIUM REMOVAL
+    case 0x35:                             // SYNCHRONIZE CACHE (10): nothing is held back here
+      return 0;
+    case 0x2F:                             // VERIFY (10): the sectors are there; comparing is not offered
+      if (cmd[1] & 0x02) break;
+      return 0;
+    case 0x08:                             // READ (6)
+    case 0x0A: {                           // WRITE (6)
+      if (!stickMedia) {
+        tud_msc_set_sense(lun, SCSI_SENSE_NOT_READY, 0x3A, 0x00);
+        return -1;
+      }
+      uint32_t lba = be(cmd + 1, 3) & 0x1FFFFF, n = cmd[4] ? cmd[4] : 256;
+      if (n * 512 > CFG_TUD_MSC_BUFSIZE || lba + n > stickShown) break;
+      int32_t r = cmd[0] == 0x08 ? stickOnRead(lba, 0, buf, n * 512) : stickOnWrite(lba, 0, buf, n * 512);
+      if (r < 0) {
+        tud_msc_set_sense(lun, SCSI_SENSE_MEDIUM_ERROR, cmd[0] == 0x08 ? 0x11 : 0x0C, 0x00);
+        return -1;
+      }
+      return r;
+    }
+    case 0x5A: {                           // MODE SENSE (10): no pages, not write-protected
+      uint8_t r[8] = {0, 6, 0, 0, 0, 0, 0, 0};
+      uint16_t n = min<uint32_t>(min<uint32_t>(be(cmd + 7, 2), sizeof r), size);
+      memcpy(buf, r, n);
+      return n;
+    }
+    case 0x9E:                             // SERVICE ACTION IN (16): READ CAPACITY (16)
+      if ((cmd[1] & 0x1F) != 0x10) break;
+      {
+        uint8_t r[32] = {0};
+        putBe(r + 4, stickShown - 1, 4);
+        putBe(r + 8, 512, 4);
+        uint16_t n = min<uint32_t>(min<uint32_t>(be(cmd + 10, 4), sizeof r), size);
+        memcpy(buf, r, n);
+        return n;
+      }
+  }
+  tud_msc_set_sense(lun, SCSI_SENSE_ILLEGAL_REQUEST, 0x20, 0x00);
+  return -1;
+}
 
 static uint32_t stickSize(uint32_t card) {
   if (card <= STICK_MAX) return card;
@@ -564,15 +633,10 @@ const char *stickStart() {
   stickRead = stickWritten = 0;
   stickRetries = stickFails = 0;
   stickShown = sectors;
+  memset((void *)stickSeen, 0, sizeof stickSeen);
+  stickMedia = true;
   Power::forceSaver(0);                    // the USB controller wants the full clock
-  msc.vendorID("RS232");
-  msc.productID("Console SD card");
-  msc.productRevision("1.0");
-  msc.onRead(stickOnRead);
-  msc.onWrite(stickOnWrite);
-  msc.onStartStop(stickOnStartStop);
-  msc.mediaPresent(true);
-  msc.begin(sectors, 512);
+  tinyusb_enable_interface(USB_INTERFACE_MSC, TUD_MSC_DESC_LEN, stickDescriptor);
   USB.manufacturerName("RS232 Console");
   USB.productName("RS232 Console SD card");
   // A plain stick: the class is given by its one interface (0/0/0). The core's
@@ -605,7 +669,58 @@ Stick stick() {
   s.retries = stickRetries;
   s.sizeMb = stickShown / 2048;
   s.fails = stickFails;
+  for (int i = 0; i < 8; i++) s.cmds[i] = stickSeen[i];
   return s;
 }
 
 }  // namespace Sd
+
+// ---- TinyUSB's mass storage callbacks (one drive: the card in stick mode)
+extern "C" {
+
+uint8_t tud_msc_get_maxlun_cb(void) { return 1; }
+
+void tud_msc_inquiry_cb(uint8_t lun, uint8_t vendor[8], uint8_t product[16], uint8_t rev[4]) {
+  (void)lun;
+  Sd::stickText(vendor, "RS232", 8);
+  Sd::stickText(product, "Console SD card", 16);
+  Sd::stickText(rev, "1.0", 4);
+}
+
+bool tud_msc_test_unit_ready_cb(uint8_t lun) {
+  if (Sd::stickMedia) return true;
+  tud_msc_set_sense(lun, SCSI_SENSE_NOT_READY, 0x3A, 0x00);   // medium not present
+  return false;
+}
+
+void tud_msc_capacity_cb(uint8_t lun, uint32_t *count, uint16_t *size) {
+  (void)lun;
+  *count = Sd::stickMedia ? Sd::stickShown : 0;
+  *size = 512;
+}
+
+bool tud_msc_start_stop_cb(uint8_t lun, uint8_t power, bool start, bool eject) {
+  (void)lun;
+  (void)power;
+  if (eject) {                             // an ejected stick has no medium until the host loads it again
+    Sd::stickEjected = !start;
+    Sd::stickMedia = start;
+  }
+  return true;
+}
+
+int32_t tud_msc_read10_cb(uint8_t lun, uint32_t lba, uint32_t offset, void *buffer, uint32_t size) {
+  (void)lun;
+  return Sd::stickMedia ? Sd::stickOnRead(lba, offset, buffer, size) : -1;
+}
+
+int32_t tud_msc_write10_cb(uint8_t lun, uint32_t lba, uint32_t offset, uint8_t *buffer, uint32_t size) {
+  (void)lun;
+  return Sd::stickMedia ? Sd::stickOnWrite(lba, offset, buffer, size) : -1;
+}
+
+int32_t tud_msc_scsi_cb(uint8_t lun, uint8_t const cmd[16], void *buffer, uint16_t size) {
+  return Sd::stickScsi(lun, cmd, (uint8_t *)buffer, size);
+}
+
+}  // extern "C"

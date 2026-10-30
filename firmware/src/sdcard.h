@@ -52,7 +52,8 @@ namespace Sd {
     bool ejected;                     // the host has let go of the card
     uint32_t readKb, writtenKb;       // what the host has moved so far
     uint32_t sizeMb;                  // what the host is shown (at most 4 GB, see stickSize)
-    uint32_t retries, fails;          // requests the card refused at first / after every try
+    uint32_t retries, fails;
+    uint32_t cmds[8];                 // SCSI opcodes beyond what TinyUSB handles itself, one bit each          // requests the card refused at first / after every try
   };
   const char *stickStart();           // nullptr = started, otherwise why not
   Stick stick();
