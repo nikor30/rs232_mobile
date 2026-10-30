@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One more client certificate from the test authority, for another device:
-#   ./add-device.sh rs232-viewe      -> data/device/rs232-viewe.p12 (.pem), password printed and noted in data/README.txt
+#   ./add-device.sh rs232-second     -> data/device/rs232-second.p12 (.pem), password printed and noted in data/README.txt
 # The RADIUS server needs nothing for it: it accepts every certificate of its authority.
 set -euo pipefail
 cd "$(dirname "$0")"

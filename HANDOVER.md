@@ -86,7 +86,7 @@ Die `platformio.ini` löst über die PlatformIO-Registry auf (Arduino-Core 2.0.1
 | 1.8.0 | **Waveshare ESP32-S3-Touch-LCD-2**: Board-Profil, Farb-Touch-Oberfläche, Bluetooth-LE-Konsole, SD, Akkuanzeige mit Ladeerkennung, Sparmodus und Ausschalten; **Akku-Kalibrierung** (0-%-/100-%-Punkt) für alle Boards — Stand und offene Punkte: `firmware/WAVESHARE.md` |
 | — | 9. Oktober 2026, ohne Versionssprung: **Aufräumen auf ein Board.** DevKit-Mockup, T-RSS3 und VIEWE-Panel entfernt, ebenso OLED-Treiber, LVGL-GUI und Status-LED; die Einstellungen `oledFlip`/`oledBrightness` heißen in der Web-API jetzt `displayFlip`/`displayBrightness` (NVS-Schlüssel unverändert). Ebenfalls entfernt: Core-3-/mbedTLS-3-Kompatibilität und die LBO-Warnleitung (`batLbo`) |
 | 1.8.1/1.8.2 | 13.–16. Oktober 2026: das VIEWE-5″-Board (UEDX80480050) noch einmal als zweites Gerät, mit eigenem RGB-Bus (`rgb_bounce`) |
-| — | 16. Oktober 2026: **VIEWE-Board eingefroren** und wieder aus `main` entfernt — letzter Stand Tag `viewe-5inch-frozen` (Commit `f0e9d02`) |
+| — | 16. Oktober 2026: VIEWE-Board wieder aus `main` entfernt; seit 30. Oktober 2026 ganz aus dem Projekt (kein Zweig, kein Abbild, keine Pakete) |
 
 ## 8. Hartes Erfahrungswissen
 
@@ -107,13 +107,10 @@ Im Arduino-Core 2.0.17 blockiert `write()` bei vollem Socket-Puffer bis zu **10 
 ### 8.5 Telnet vs. Raw auf demselben Port
 Die Firmware unterscheidet am **allerersten Byte**: `0xFF` → Telnet-Client, dann antwortet sie wie ein Terminalserver (`WILL ECHO`, `WILL SUPPRESS-GO-AHEAD`), was das lokale Echo des Clients abschaltet. Alles andere → reiner Raw-Durchgang, kein Byte wird angefasst. In PuTTY entsprechend „Telnet" **oder** „Raw" wählen; beides geht. Achtung, klassische PuTTY-Falle: Beim Umschalten des Verbindungstyps setzt PuTTY das Port-Feld auf den Standard zurück.
 
-### 8.6 Das VIEWE-Panel hat zwei freie GPIOs (Board entfernt)
-Nach Abzug von RGB-Panel (≈20 Pins), SD-Karte und Touch bleiben **IO17 und IO18**, dazu das UART-Paar IO43/44 (= USB-Debug-Konsole). Vier native RS232-Ports sind damit ausgeschlossen. Der Touch-I²C auf **IO19/20** ist mitbenutzbar: GT911 liegt auf 0x5D/0x14, die SC16IS752 auf 0x48–0x57, kein Adresskonflikt. Das ist die eigentliche Begründung für die I²C-Tochterplatine.
-
-### 8.7 Lade-/Boost-Board (DevKit-Mockup, entfernt)
+### 8.6 Lade-/Boost-Board (DevKit-Mockup, entfernt)
 PowerBoost 1000C ist **ausdrücklich 1-zellig** (3,7/4,2 V) — ein 7,4-V-Pack zerstört den Laderegler. 5Vo geht auf **VIN**, nie auf 3V3. Eine Schottky (1N5817, Ring zum DevKit) zwischen 5Vo und VIN macht den Aufbau USB-sicher, sodass Flashen mit angeklemmtem Akku geht. `LBO` ist offener Kollektor und braucht keinen externen Widerstand (die Auswertung in der Firmware gibt es nicht mehr). Der Schaltplan (`diagramme/powerboost_schaltplan.png`) liegt nur noch in der Git-Historie.
 
-### 8.8 Tochterplatine: beide Kanäle nutzen (Entwurf entfernt)
+### 8.7 Tochterplatine: beide Kanäle nutzen (Entwurf entfernt)
 Erste Fassung war 4× SC16IS750 + 4× MAX3232 — je ein Chippaar pro Port. Beide Bausteinfamilien sind aber zweikanalig: der SC16IS**752** ist der I²C-fähige Doppel-UART, und der MAX3232 hat ohnehin zwei Transceiver, die sich dieselben vier Ladepumpen-Kondensatoren teilen. Jetzt **2× SC16IS752 + 2× MAX3232** für vier Ports. Halbe Chipzahl, Platine von 112,5 auf **107 × 110 mm**, Materialkosten von geschätzt ~58 € auf **~20 €**. Pinbelegungen wurden gegen KiCads eigene Symbolbibliothek geprüft, nicht aus Datenblatt-PDFs abgetippt — das hatte sich vorher als unzuverlässig erwiesen.
 
 ## 9. Wie geprüft wurde

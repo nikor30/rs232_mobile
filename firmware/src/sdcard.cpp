@@ -526,7 +526,13 @@ const char *stickStart() {
   msc.begin(sectors, 512);
   USB.manufacturerName("RS232 Console");
   USB.productName("RS232 Console SD card");
-  USB.begin();                             // takes the port away from the USB serial/JTAG unit
+  // A plain stick: the class is given by its one interface (0/0/0). The core's
+  // default is a composite device (0xEF/2/1, IAD), and a Cisco C2960CX refuses
+  // that with "USB_ENUM_UNSUPPORTED_DEVICE" before it looks at the interface.
+  USB.usbClass(0);
+  USB.usbSubClass(0);
+  USB.usbProtocol(0);
+  USB.begin();                            // takes the port away from the USB serial/JTAG unit
   return nullptr;
 }
 

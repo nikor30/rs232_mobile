@@ -194,6 +194,8 @@ Die Karte lässt sich an den USB-Port verleihen: Was dort steckt — ein Switch,
 
 Geprüft am Board gegen einen Linux-Rechner: Einschalten per Tipp, per Weboberfläche und per Debug-Konsole; 4 MB geschrieben und Byte für Byte zurückgelesen; eine im Stick-Modus geschriebene Datei nach Neustart und erneutem Stick-Modus wieder gelesen; Auswerfen wird angezeigt; nach dem Neustart ist die Debug-Konsole wieder da und die Karte eingebunden. **Nicht geprüft:** an einem echten Switch oder einer Firewall, an Windows/macOS, mit großen Dateien, im Akkubetrieb (das Board wird dann aus dem USB-Port des Switches versorgt).
 
+**An einem echten Switch gescheitert** (28. Oktober 2026, Cisco WS-C2960CX-8PC-L, IOS 15.2(7)E5): Der Switch meldet bei jedem Einstecken `%USB_HOST_STACK-5-USB_ENUM_UNSUPPORTED_DEVICE: Unsupported device inserted. Host id 3, Device Addr N` und legt kein `usbflash0:` an. Er weist das Board also schon bei der Aufzählung ab, bevor eine Datei gelesen wird. Vermutete Ursache (30. Oktober 2026, mit `lsusb -v` am Laptop): Das Board meldete sich als zusammengesetztes Gerät (`bDeviceClass` 0xEF/2/1, IAD — die Vorgabe des Arduino-Cores), obwohl es nur die eine Massenspeicher-Schnittstelle hat (8/6/80, SCSI, Bulk-Only); ein gewöhnlicher Stick meldet 0/0/0. Seitdem setzt `stickStart()` in `sdcard.cpp` die Klasse auf 0/0/0 — am Laptop geprüft (Deskriptor 0/0/0, Karte wird eingebunden und gelesen), **am Switch noch nicht**. Bleibt der Switch dabei, ist der nächste Verdacht die Geschwindigkeit: Der ESP32-S3 kann nur Full Speed (12 Mbit/s, Pakete 64 Byte), ein Stick ist High Speed.
+
 ## Das SD-Karten-Problem (nur mit der alten Karte)
 
 Mit einer 32-GB-SDHC-Karte tritt es nicht auf: über 50 Starts nach einem Reset in Folge eingebunden (`R+`), in zwei Stunden Betrieb kein Ausfall (Stand 12. Oktober 2026). Der Fehler gehört damit zu der alten Karte, nicht zum Aufbau.
@@ -218,7 +220,7 @@ Weitere Regeln, die dabei entstanden sind: Die Karte wird **vor** dem LCD gestar
 
 ## Offen
 
-1. USB-Stick-Modus an einem echten Switch oder einer Firewall ausprobieren; Dateien über die Weboberfläche auf die Karte laden (gibt es noch nicht — gefüllt wird sie im Stick-Modus am Rechner).
+1. USB-Stick-Modus: Der C2960CX lehnte das Board ab („Unsupported device“, siehe oben) — mit der Geräteklasse 0/0/0 am Switch neu probieren, dann an einer Firewall; Dateien über die Weboberfläche auf die Karte laden (gibt es noch nicht — gefüllt wird sie im Stick-Modus am Rechner).
 2. Der Fix für das Blockieren ohne USB-Leser ist aus dem Code der USB-Klasse hergeleitet und im Betrieb ohne geöffneten Port geprüft, aber nicht mit einem echten Aus- und Einstecken.
 3. WLAN-Beitritt: Suchen, Tastatur, Nachfrage, Speichern und Wieder-Ausschalten sind geprüft; ein erfolgreicher Verbindungsaufbau mit einem echten Schlüssel nicht.
 4. Skripte: Ablauf geprüft, aber ohne angeschlossenes Gerät (jede Zeile wartet dann 2 s auf eine Antwort).

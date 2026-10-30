@@ -1454,8 +1454,8 @@ void begin() {
 
 // The core reconnects only after some reasons. "Network not found" is not one
 // of them: when the access point switched the SSID off for a moment, the
-// client stopped trying and stayed away until a restart (seen on the VIEWE
-// board on 14 October 2026). So: if the driver has said nothing for 15 s and
+// client stopped trying and stayed away until a restart (seen on
+// 14 October 2026). So: if the driver has said nothing for 15 s and
 // the client is still not connected, try again - forever, every 15 s.
 static void staWatch() {
   uint32_t down = staDownAt;

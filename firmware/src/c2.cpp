@@ -151,7 +151,7 @@ static void connClose();
 // 19.3, 19.6 and 13.1 kB), more than any task here has. They run in a short
 // task of their own on this one block, reserved at start-up. Taking it from the
 // heap each time failed sooner or later: inside an 802.1X network the largest
-// free piece shrank to 21 kB on the VIEWE board, and the device never got a
+// free piece shrank to 21 kB on a board with little internal RAM, and the device never got a
 // session again. Reserved, it costs the same at the peak and cannot be missing.
 static const uint32_t BIG_STACK = 22 * 1024;
 static StackType_t bigStack[BIG_STACK / sizeof(StackType_t)] __attribute__((aligned(16)));
