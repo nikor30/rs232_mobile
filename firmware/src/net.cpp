@@ -318,6 +318,8 @@ static String statusJson() {
     k["ejected"] = st.ejected;
     k["readKb"] = st.readKb;
     k["writtenKb"] = st.writtenKb;
+    k["retries"] = st.retries;
+    k["fails"] = st.fails;
   }
   d["boot"] = bootId;
   JsonArray ps = d["ports"].to<JsonArray>();

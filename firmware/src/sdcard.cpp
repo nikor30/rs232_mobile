@@ -466,24 +466,44 @@ static USBMSC msc;
 static uint8_t drive = 0xFF;
 static volatile bool stickEjected = false;
 static volatile uint32_t stickRead = 0, stickWritten = 0;    // sectors
+static volatile uint32_t stickRetries = 0, stickFails = 0;   // requests the card refused at first / for good
 
 // SD keeps the number of its drive to itself.
 struct DriveOf : fs::SDFS {
   static uint8_t get(fs::SDFS &s) { return s.*(&DriveOf::_pdrv); }
 };
 
+// The card refuses a transfer now and then (errno 5 on the shared bus, see
+// putWrite). A refused write handed to the host as an error is lost for good:
+// Linux drops the page ("lost async page write"), and a 25 MB file never came
+// across intact. So every request gets a few more tries, with the bus let go
+// in between; the same sectors written twice do no harm.
+static const int STICK_TRIES = 5;
+
+static bool stickIo(bool write, uint8_t *buffer, uint32_t lba, uint32_t count) {
+  for (int i = 0; i < STICK_TRIES; i++) {
+    if (i) {
+      stickRetries = stickRetries + 1;
+      vTaskDelay(pdMS_TO_TICKS(5 * i));
+    }
+    BusGuard guard;
+    DRESULT r = write ? disk_write(drive, buffer, lba, count) : disk_read(drive, buffer, lba, count);
+    if (r == RES_OK) return true;
+  }
+  stickFails = stickFails + 1;
+  return false;
+}
+
 static int32_t stickOnRead(uint32_t lba, uint32_t offset, void *buffer, uint32_t size) {
   if (offset || size % 512) return -1;
-  BusGuard guard;
-  if (disk_read(drive, (uint8_t *)buffer, lba, size / 512) != RES_OK) return -1;
+  if (!stickIo(false, (uint8_t *)buffer, lba, size / 512)) return -1;
   stickRead = stickRead + size / 512;
   return size;
 }
 
 static int32_t stickOnWrite(uint32_t lba, uint32_t offset, uint8_t *buffer, uint32_t size) {
   if (offset || size % 512) return -1;
-  BusGuard guard;
-  if (disk_write(drive, buffer, lba, size / 512) != RES_OK) return -1;
+  if (!stickIo(true, buffer, lba, size / 512)) return -1;
   stickWritten = stickWritten + size / 512;
   return size;
 }
@@ -515,6 +535,7 @@ const char *stickStart() {
   lent = true;
   stickEjected = false;
   stickRead = stickWritten = 0;
+  stickRetries = stickFails = 0;
   Power::forceSaver(0);                    // the USB controller wants the full clock
   msc.vendorID("RS232");
   msc.productID("Console SD card");
@@ -553,6 +574,8 @@ Stick stick() {
   s.ejected = stickEjected;
   s.readKb = stickRead / 2;
   s.writtenKb = stickWritten / 2;
+  s.retries = stickRetries;
+  s.fails = stickFails;
   return s;
 }
 
