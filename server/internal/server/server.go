@@ -38,7 +38,6 @@ type Config struct {
 	// TrustProxy takes the client's address from X-Forwarded-For. Only behind
 	// a reverse proxy that sets it; otherwise anybody could choose an address.
 	TrustProxy bool
-	Entra      *EntraConfig // sign-in with Microsoft Entra ID, if set
 	// FirmwareDir keeps the signed firmware packages an administrator has
 	// uploaded. Empty: no firmware update through this server.
 	FirmwareDir string
@@ -241,7 +240,6 @@ type Server struct {
 	web       map[[32]byte]*webSession // signed-in browsers, by the hash of their cookie
 	fails     map[string]*failCount    // wrong sign-ins, by account name
 	dummySalt []byte
-	entra     *entra
 	// Requests per client address. A handshake costs the server a key
 	// exchange, a sign-in a password hash; neither is free for the asking.
 	limHandshake, limAuth, limFail *limiter
@@ -269,9 +267,6 @@ func New(cfg Config, st *store.Store) *Server {
 	sv.fw = newShelf(cfg.FirmwareDir)
 	sv.img = newImageShelf(cfg.ImageDir, cfg.ImageMax, cfg.ImageTotal)
 	sv.started = time.Now()
-	if cfg.Entra != nil {
-		sv.entra = newEntra(*cfg.Entra, cfg.PublicURL)
-	}
 	return sv
 }
 
@@ -291,8 +286,6 @@ func (sv *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /auth/logout", sv.logout)
 	mux.HandleFunc("POST /auth/setup", sv.setup)
 	mux.HandleFunc("POST /auth/setup/confirm", sv.setupConfirm)
-	mux.HandleFunc("GET /auth/entra/login", sv.entraLogin)
-	mux.HandleFunc("GET /auth/entra/callback", sv.entraCallback)
 	mux.HandleFunc("GET /admin/v1/me", sv.signed(sv.me))
 	mux.HandleFunc("GET /admin/v1/users", sv.admin(sv.listUsers))
 	mux.HandleFunc("POST /admin/v1/users/{name}/role", sv.admin(sv.roleUser))

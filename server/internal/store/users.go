@@ -11,7 +11,7 @@ import (
 
 const (
 	UserLocal = "local" // password and one-time codes (TOTP), both kept here
-	UserEntra = "entra" // signs in at Microsoft Entra ID; nothing secret is kept here
+	UserEntra = "entra" // Microsoft Entra ID; sign-in is on hold, such an account cannot sign in
 
 	maxAudit = 5000
 )
@@ -36,8 +36,8 @@ type User struct {
 	SetupHash    []byte     `json:"setup_hash,omitempty"`
 	SetupExpires *time.Time `json:"setup_expires,omitempty"`
 
-	// Entra accounts: who may use this one. The object ID is what counts; an
-	// account made for a sign-in name is tied to the object ID at first login.
+	// Entra accounts (sign-in on hold, kept so the columns and the data stay
+	// as they are until it comes back).
 	EntraName string `json:"entra_name,omitempty"`
 	EntraOID  string `json:"entra_oid,omitempty"`
 

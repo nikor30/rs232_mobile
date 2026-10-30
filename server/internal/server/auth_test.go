@@ -353,8 +353,8 @@ func TestAuditAndTokenOff(t *testing.T) {
 	if code := b.do("GET", "/admin/v1/devices", nil, nil); code != 200 {
 		t.Fatalf("account while the token is off: HTTP %d", code)
 	}
-	var m struct{ Token, Entra bool }
-	if (&browser{e: e}).do("GET", "/auth/methods", nil, &m); m.Token || m.Entra {
+	var m struct{ Token bool }
+	if (&browser{e: e}).do("GET", "/auth/methods", nil, &m); m.Token {
 		t.Fatalf("methods: %+v", m)
 	}
 }

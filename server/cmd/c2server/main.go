@@ -176,12 +176,8 @@ func main() {
 		ImageDir: filepath.Join(dataDir, "images"), ImageMax: mb("C2_IMAGE_MAX_MB", 2048), ImageTotal: mb("C2_IMAGE_TOTAL_MB", 20480),
 		RecordDir:     filepath.Join(dataDir, "recordings"),
 		SecureCookies: strings.HasPrefix(publicURL, "https://"), TrustProxy: os.Getenv("C2_TRUST_PROXY") == "1"}
-	if tenant := os.Getenv("C2_ENTRA_TENANT"); tenant != "" {
-		cfg.Entra = &server.EntraConfig{Tenant: strings.ToLower(tenant), ClientID: os.Getenv("C2_ENTRA_CLIENT_ID"), ClientSecret: os.Getenv("C2_ENTRA_CLIENT_SECRET")}
-		if cfg.Entra.ClientID == "" || cfg.Entra.ClientSecret == "" {
-			log.Fatal("C2_ENTRA_TENANT is set: C2_ENTRA_CLIENT_ID and C2_ENTRA_CLIENT_SECRET are needed too")
-		}
-		log.Printf("sign-in with Microsoft Entra ID is on (tenant %s); redirect URI %s/auth/entra/callback", cfg.Entra.Tenant, strings.TrimRight(publicURL, "/"))
+	if os.Getenv("C2_ENTRA_TENANT") != "" {
+		log.Print("C2_ENTRA_TENANT is ignored: sign-in with Microsoft Entra ID is on hold")
 	}
 	if admin == "" {
 		log.Print("no admin token: accounts only")

@@ -24,7 +24,7 @@
   const APP = t('RS232 Control Center');
 
   let token = sessionStorage.getItem('c2admin') || '';   // admin token, if that is how this tab got in
-  let signedIn = false, me = '', admin = false, methods = { token: false, entra: false };
+  let signedIn = false, me = '', admin = false, methods = { token: false };
   let devices = [], groups = [], users = [], selected = '', timer = 0, expTimer = 0, libAt = 0;
   let view = 'fleet', tab = '', server = null, status = null, loaded = false;
   // what the side and the bar above the cards have narrowed the fleet down to
@@ -168,8 +168,6 @@
     $('#app').hidden = true;
     document.body.classList.remove('admin', 'can-manage', 'one');
     document.title = APP;
-    $('#entraLogin').hidden = !methods.entra;
-    if (methods.entra) $('#entraLogin').href = '/auth/entra/login';   // no address while it is off: browsers fetch links ahead
     $('#tokenBox').hidden = !methods.token;
     $('#loginLang').append($('#lang'));              // the language can be chosen before signing in, too
     $('#login').hidden = false;
@@ -1783,9 +1781,9 @@
   $('#inviteDlg').addEventListener('close', () => { clearInterval(expTimer); $('#tokenText').value = ''; refresh(); });
 
   // ---- accounts and the audit record
-  const KINDS = { local: t('Password + app'), entra: 'Microsoft Entra ID' };
+  const KINDS = { local: t('Password + app') };
   const ACTIONS = {
-    login: t('Sign-in'), 'login entra': t('Sign-in with Microsoft'), logout: t('Sign-out'), setup: t('Account set up'),
+    login: t('Sign-in'), logout: t('Sign-out'), setup: t('Account set up'),
     'POST /users': t('User added'), 'POST /users/{name}/reset': t('Account reset'), 'POST /users/{name}/disable': t('Account disabled or enabled'),
     'DELETE /users/{name}': t('User deleted'), 'POST /enroll-tokens': t('Invitation created'), 'POST /devices/{id}/approve': t('Device confirmed'),
     'POST /devices/{id}/revoke': t('Device revoked'), 'POST /devices/{id}/commands': t('Command'), 'POST /devices/{id}/console/{sess}/close': t('Remote console ended'),
@@ -1816,7 +1814,7 @@
     ub.textContent = '';
     for (const u of users) {
       const state = u.disabled ? t('disabled') : u.ready ? t('active') : u.setup_expires ? t('waiting to be set up (code valid until {until})', { until: when(u.setup_expires) }) : t('not set up, code expired');
-      const how = KINDS[u.kind] + (u.kind === 'entra' ? ` (${u.entra_name || u.entra_oid}${u.entra_name && !u.entra_oid ? ', ' + t('never signed in') : ''})` : '');
+      const how = KINDS[u.kind] || u.kind;
       const acts = el('td', { className: 'acts' });
       const name = encodeURIComponent(u.name);
       const role = el('select', { ariaLabel: t('May'), disabled: u.name === me && !token });
@@ -2008,10 +2006,8 @@
   $('#addUser').addEventListener('click', () => {
     $('#userForm').reset();
     $('#userErr').hidden = true;
-    $('#userEntraRow').hidden = true;
     $('#userDlg').showModal();
   });
-  $('#userKind').addEventListener('change', () => { $('#userEntraRow').hidden = $('#userKind').value !== 'entra'; $('#userPassHint').hidden = $('#userKind').value === 'entra'; });
   $('#userCancel').addEventListener('click', () => $('#userDlg').close());
   $('#codeClose').addEventListener('click', () => { $('#codeText').textContent = ''; $('#codeDlg').close(); });
   // The administrator's own account: straight to the form that sets the password.
@@ -2029,7 +2025,7 @@
   $('#userForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     try {
-      const r = await api('POST', '/users', { name: $('#userName').value, kind: $('#userKind').value, entra: $('#userEntra').value, role: $('#userRole').value });
+      const r = await api('POST', '/users', { name: $('#userName').value, kind: 'local', role: $('#userRole').value });
       $('#userDlg').close();
       if (r.setup) showCode(r.name, r.setup); else toast(t('Added'));
       loadAccess();
@@ -2051,10 +2047,6 @@
     } catch (e) { /* the login page says what is wrong once somebody tries */ }
     if (token) return start();
     showLogin();
-    if (location.hash === '#entra=refused') {
-      history.replaceState(null, '', '/');
-      loginError(t('The sign-in with Microsoft was not accepted: there is no enabled account here for this Microsoft account, or the answer was invalid.'));
-    }
   })();
 })();
 

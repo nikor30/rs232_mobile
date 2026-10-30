@@ -74,7 +74,6 @@ with sync_playwright() as p:
         return "%06d" % ((struct.unpack(">I", mac[mac[-1] & 15:][:4])[0] & 0x7fffffff) % 1000000)
 
     page.goto(base + "/")
-    expect(page.locator("#entraLogin")).to_be_hidden()   # not configured here
     # the product's mark: large over the sign-in form, and a real picture
     expect(page.locator(".hero")).to_contain_text("RS232 Control Center")
     assert page.evaluate("document.querySelector('.hero img').naturalWidth") > 0, "the logo did not load"

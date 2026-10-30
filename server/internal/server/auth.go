@@ -29,7 +29,6 @@ import (
 //
 //   - an account with a password and one-time codes from an authenticator app
 //     (TOTP, RFC 6238), signed in through the web interface;
-//   - an account that signs in at Microsoft Entra ID (entra.go);
 //   - the admin token from the environment, if one is set: for the first
 //     account, for scripts and as a way in when nothing else works.
 //
@@ -60,13 +59,12 @@ var passIter = 600000
 var (
 	errLogin  = errors.New("sign-in failed")
 	userNames = regexp.MustCompile(`^[a-z0-9][a-z0-9._@-]{1,63}$`)
-	guid      = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 	b32       = base32.StdEncoding.WithPadding(base32.NoPadding)
 )
 
 type principal struct {
 	Name string
-	Kind string // kindToken, store.UserLocal, store.UserEntra
+	Kind string // kindToken or store.UserLocal
 	Role string // store.RoleAdmin or store.RoleMember; looked up anew for every request
 }
 
@@ -412,7 +410,7 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 
 // methods tells the login page what it can offer, and who is signed in.
 func (sv *Server) methods(w http.ResponseWriter, r *http.Request) {
-	out := map[string]any{"token": sv.cfg.AdminToken != "", "entra": sv.entra != nil, "user": "", "kind": ""}
+	out := map[string]any{"token": sv.cfg.AdminToken != "", "user": "", "kind": ""}
 	if p, ok := sv.authenticate(r); ok {
 		out["user"], out["kind"] = p.Name, p.Kind
 	}
@@ -548,8 +546,6 @@ type userView struct {
 	Disabled  bool       `json:"disabled"`
 	Ready     bool       `json:"ready"`         // can sign in
 	Setup     *time.Time `json:"setup_expires"` // a setup code is out until then
-	EntraName string     `json:"entra_name,omitempty"`
-	EntraOID  string     `json:"entra_oid,omitempty"`
 	Created   time.Time  `json:"created"`
 	LastLogin *time.Time `json:"last_login,omitempty"`
 	Role      string     `json:"role"` // "admin" or "member"
@@ -566,9 +562,9 @@ func (sv *Server) listUsers(w http.ResponseWriter, _ *http.Request) {
 	out := []userView{}
 	now := sv.now()
 	for _, u := range sv.st.Users() {
-		v := userView{Name: u.Name, Kind: u.Kind, Disabled: u.Disabled, EntraName: u.EntraName, EntraOID: u.EntraOID,
+		v := userView{Name: u.Name, Kind: u.Kind, Disabled: u.Disabled,
 			Created: u.Created, LastLogin: u.LastLogin, Role: roleName(u.Role)}
-		v.Ready = !u.Disabled && (u.Kind == store.UserEntra || u.TOTPOk)
+		v.Ready = !u.Disabled && u.Kind == store.UserLocal && u.TOTPOk
 		if u.SetupExpires != nil && now.Before(*u.SetupExpires) {
 			v.Setup = u.SetupExpires
 		}
@@ -589,7 +585,7 @@ func newSetupCode() (code string, hash []byte) {
 }
 
 func (sv *Server) addUser(w http.ResponseWriter, r *http.Request) {
-	var in struct{ Name, Kind, Entra, Role string }
+	var in struct{ Name, Kind, Role string }
 	if !decode(w, r, &in) {
 		return
 	}
@@ -610,19 +606,8 @@ func (sv *Server) addUser(w http.ResponseWriter, r *http.Request) {
 		exp := sv.now().Add(setupTTL)
 		u.SetupHash, u.SetupExpires = hash, &exp
 		out["setup"], out["setup_expires"] = code, exp
-	case store.UserEntra:
-		e := normName(in.Entra)
-		switch {
-		case guid.MatchString(e):
-			u.EntraOID = e
-		case strings.Contains(e, "@") && len(e) <= 256:
-			u.EntraName = e
-		default:
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Entra: give the user's sign-in name (name@company.com) or object ID"})
-			return
-		}
 	default:
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "kind: local or entra"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "kind: local"})
 		return
 	}
 	if err := sv.st.AddUser(u); err != nil {

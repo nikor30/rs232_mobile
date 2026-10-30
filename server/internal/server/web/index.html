@@ -30,7 +30,6 @@
     <p id="loginErr" class="err" hidden></p>
     <div class="row left wrap">
       <button class="btn primary" type="submit">Sign in</button>
-      <a id="entraLogin" class="btn" hidden>Sign in with Microsoft</a>
     </div>
   </form>
 
@@ -679,20 +678,11 @@
     <label>Name
       <input id="userName" autocomplete="off" autocapitalize="none" required>
     </label>
-    <label>Sign-in
-      <select id="userKind">
-        <option value="local">Password and authenticator app</option>
-        <option value="entra">Microsoft Entra ID</option>
-      </select>
-    </label>
     <label>May
       <select id="userRole">
         <option value="admin">do everything (administrator)</option>
         <option value="member">work with the devices of their groups only</option>
       </select>
-    </label>
-    <label id="userEntraRow" hidden>Microsoft sign-in name (name@company.com) or object ID
-      <input id="userEntra" autocomplete="off" autocapitalize="none">
     </label>
     <p id="userPassHint" class="dim">No password is set here. You get a setup code next; with it the person chooses the password and connects an authenticator app.</p>
     <p id="userErr" class="err" hidden></p>

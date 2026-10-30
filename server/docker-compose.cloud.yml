@@ -34,9 +34,6 @@ services:
       C2_LISTEN: ":8080"
       C2_TRUST_PROXY: "1"        # the sender's address comes from Caddy
       C2_ADMIN_TOKEN: ${C2_ADMIN_TOKEN:-}
-      C2_ENTRA_TENANT: ${C2_ENTRA_TENANT:-}
-      C2_ENTRA_CLIENT_ID: ${C2_ENTRA_CLIENT_ID:-}
-      C2_ENTRA_CLIENT_SECRET: ${C2_ENTRA_CLIENT_SECRET:-}
       C2_POLL_S: ${C2_POLL_S:-30}
       C2_IMAGE_MAX_MB: ${C2_IMAGE_MAX_MB:-2048}        # other images in the library: one file, and all together
       C2_IMAGE_TOTAL_MB: ${C2_IMAGE_TOTAL_MB:-20480}

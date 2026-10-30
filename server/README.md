@@ -250,7 +250,7 @@ Alle Aufrufe mit `Authorization: Bearer <C2_ADMIN_TOKEN>` oder mit dem Cookie ei
 | `POST /admin/v1/devices/{id}/console/{sitzung}/transcript` `{"d":"<base64>","at":N}` | Klartext für die Kopie des Servers, vom Browser (nur der kann eine Ende-zu-Ende-Sitzung lesen); `at` = Stelle in der Datei, Wiederholtes wird einmal geschrieben; 409 bei ausgeschalteter Aufzeichnung, 413 über 32 MB |
 | `GET /admin/v1/devices/{id}/recordings`, `GET …/recordings/{name}`, `POST …/recordings/{name}/delete` | Aufzeichnungen des Servers auflisten, herunterladen, löschen (Löschen braucht `manage`) |
 | `GET /admin/v1/users` | Konten: Art, Zustand, letzte Anmeldung — keine Geheimnisse |
-| `POST /admin/v1/users` `{"name":"anna","kind":"local"}` oder `{"name":"ben","kind":"entra","entra":"ben@firma.de"}` | Konto anlegen; für `local` kommt der Einrichtungscode zurück, einmal |
+| `POST /admin/v1/users` `{"name":"anna","kind":"local"}` | Konto anlegen; für `local` kommt der Einrichtungscode zurück, einmal |
 | `POST /admin/v1/users/{name}/reset` | Passwort und Authenticator-App verwerfen, neuer Einrichtungscode |
 | `POST /admin/v1/users/{name}/disable` `{"disabled":true}` | sperren oder freigeben; Sperren beendet die Sitzungen |
 | `DELETE /admin/v1/users/{name}` | Konto löschen (nicht das eigene) |
@@ -261,21 +261,15 @@ Alle Aufrufe mit `Authorization: Bearer <C2_ADMIN_TOKEN>` oder mit dem Cookie ei
 | `GET /admin/v1/status` | Überwachung: Laufzeit, ob der Zustand gespeichert werden kann (sonst Fehler und seit wann), Geräte je Zustand und wie viele aktive still sind, offene Fernkonsolen, angemeldete Browser, abgewiesene Anfragen (429) seit dem Start |
 | `GET /admin/v1/devices/{id}/commands` | Aufträge mit Zustand (`queued`, `sent`, `done`, `failed`, `expired`) und Ergebnis |
 
-## Anmeldung über Microsoft Entra ID
+## Anmeldung über Microsoft Entra ID — zurückgestellt
 
-1. Im Entra Admin Center eine **App-Registrierung** anlegen, „Nur Konten in diesem Organisationsverzeichnis“. Als Umleitungs-URI (Plattform „Web“) `<C2_PUBLIC_URL>/auth/entra/callback` eintragen.
-2. Unter „Zertifikate & Geheimnisse“ einen **geheimen Clientschlüssel** erzeugen.
-3. Dem Server mitgeben: `C2_ENTRA_TENANT` (Verzeichnis-ID, die GUID — nicht der Domainname), `C2_ENTRA_CLIENT_ID` (Anwendungs-ID), `C2_ENTRA_CLIENT_SECRET`.
-4. In der Weboberfläche unter „Benutzer“ für jede Person ein Konto der Art „Microsoft Entra ID“ anlegen, mit ihrem Anmeldenamen (`name@firma.de`) oder ihrer Objekt-ID. Ohne ein solches Konto kommt niemand herein, auch nicht aus dem eigenen Mandanten.
-
-Auf der Anmeldeseite erscheint dann „Mit Microsoft anmelden“. Den zweiten Faktor verlangt Entra (Conditional Access), nicht dieser Server. **Stand:** nur gegen einen nachgebauten Identitätsanbieter getestet, nicht gegen ein echtes Entra (KONZEPT.md §7).
+Seit 30. Oktober 2026 nicht mehr im Server (Entscheidung des Besitzers; kommt später wieder). Der letzte Stand mit Entra ist Commit `411c0ee` (`internal/server/entra.go`, `entra_test.go`, Anleitung in diesem Abschnitt). Konten der Art `entra` und ihre Spalten in der Datenbank bleiben erhalten, können sich aber nicht anmelden; `C2_ENTRA_TENANT` wird nur noch mit einem Hinweis im Log übergangen.
 
 ## Einstellungen (Umgebung)
 
 | Variable | Vorgabe | Bedeutung |
 |---|---|---|
 | `C2_ADMIN_TOKEN` | leer | Token der Admin-Schnittstelle, mindestens 16 Zeichen. Nötig, bis es ein Konto gibt; leer heißt: nur Konten |
-| `C2_ENTRA_TENANT`, `C2_ENTRA_CLIENT_ID`, `C2_ENTRA_CLIENT_SECRET` | leer | Anmeldung über Microsoft Entra ID (siehe oben); alle drei oder keine |
 | `C2_DATABASE_URL` | leer | `postgres://benutzer:passwort@host:5432/datenbank?sslmode=…`: Zustand in PostgreSQL statt in `state.json`. Die Cloud-Compose-Datei setzt das selbst aus `C2_DB_PASSWORD` |
 | `C2_DOMAIN`, `C2_CADDY_TLS`, `C2_DB_PASSWORD` | – | nur `docker-compose.cloud.yml` (siehe oben); dort auch `C2_HTTP_PORT`, `C2_HTTPS_PORT` (Vorgabe 80, 443) |
 | `C2_BACKUP_EVERY_H`, `C2_BACKUP_KEEP` | `24`, `14` | nur `docker-compose.cloud.yml`: Abstand der Sicherungen in Stunden und wie viele bleiben |
@@ -315,7 +309,7 @@ internal/proto/      Protokoll: Handshake, Nachrichten, Einladungs-Token  ← Vo
 internal/device/     Geräteseite über HTTP (Simulator, Tests)
 internal/server/     HTTP: Geräte-Endpunkte und Admin-Schnittstelle
 internal/server/console.go   Fernkonsole: Zeichenströme zwischen Gerät und Browser
-internal/server/auth.go      Konten, Sitzungen, TOTP, Protokoll;  entra.go: Anmeldung über Microsoft Entra ID;
+internal/server/auth.go      Konten, Sitzungen, TOTP, Protokoll;
                              ratelimit.go: Anfragerate je Absenderadresse
 internal/server/web/ Weboberfläche (eingebettet); qrcode.js ist qrcode-generator von Kazuhiko Arase, MIT, Commit 83b7e8f;
                      xterm.js, xterm.css und addon-fit.js sind unverändert übernommen (LICENSE-xterm.txt),
