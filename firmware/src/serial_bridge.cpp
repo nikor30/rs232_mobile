@@ -7,6 +7,11 @@
 #include <soc/gpio_sig_map.h>
 #include <soc/gpio_struct.h>
 #include <soc/uart_periph.h>
+#include <soc/rtc_cntl_reg.h>
+#include <soc/io_mux_reg.h>
+#include <soc/gpio_periph.h>
+#include <soc/rtc_io_periph.h>
+#include <esp_attr.h>
 
 namespace Bridge {
 
@@ -50,6 +55,117 @@ struct Port {
 static Port ports[MAX_PORTS];
 
 static HardwareSerial *const HW_UART[HW_PORTS] = {&Serial1, &Serial2};
+
+// ---------------------------------------------------------------- TX at rest
+// Whatever hangs on a port must never notice this board restarting. Between
+// the UART letting go of the TX pin and taking it again the pad floats; a
+// floating TX reads as low, the transceiver turns that into an RS232 "space",
+// and a space held longer than a character is a BREAK. A Cisco switch with
+// break enabled (config register 0xF) drops into its boot loader on one - the
+// C2960CX at the bench restarted after firmware updates of this board.
+//
+// So whenever the UART lets go - a restart of any kind (__wrap_esp_restart_noos
+// below: updates, "reboot", settings, crashes, watchdogs), switching off,
+// reopening a port - the pad is first turned into a GPIO output at idle level
+// (high, an RS232 "mark") and latched there with the pad hold; openPort() lets
+// go once the UART drives the pin again.
+//
+// The latch does not last through a restart: at the start of the next run the
+// hold registers are empty (measured 30 Oct 2026, txHold in /api/status). From
+// the reset on, the pad's reset state carries the line - GPIO44 (U0RXD) comes
+// up as an input with pull-up, GPIO21 has a 4.7 kOhm pull-up on the board,
+// both read high at start. A TX pin without a pull-up at reset needs one on the
+// board (firmware/WAVESHARE.md); so does power-on, before any code runs.
+struct TxHold {
+  int pin;
+  uint32_t reg, mask;
+};
+static DRAM_ATTR TxHold txHold[MAX_PORTS];
+static RTC_NOINIT_ATTR uint32_t heldMagic;
+static RTC_NOINIT_ATTR uint64_t heldPins;            // pads this firmware has latched
+static const uint32_t HELD_MAGIC = 0x54584844;
+
+// What the pads of the two possible port-1 TX pins looked like when this run
+// started, before setup() - as ROM and bootloader left them. Together with the
+// hold registers: for /api/status (txHold), to judge what a restart does to a
+// TX line.
+static uint32_t bootDig, bootRtc, bootMagic, bootMux[2], bootOut[2];
+static int bootLvl[2];
+static uint64_t bootPins;
+static const int BOOT_PADS[2] = {21, 44};
+__attribute__((constructor(101))) static void holdAtStart() {
+  bootDig = READ_PERI_REG(RTC_CNTL_DIG_PAD_HOLD_REG);
+  bootRtc = READ_PERI_REG(RTC_CNTL_PAD_HOLD_REG);
+  bootMagic = heldMagic;
+  bootPins = heldPins;
+  for (int i = 0; i < 2; i++) {
+    int pin = BOOT_PADS[i];
+    bootMux[i] = READ_PERI_REG(GPIO_PIN_MUX_REG[pin]);
+    bootOut[i] = pin < 32 ? GPIO.enable >> pin & 1 : GPIO.enable1.val >> (pin - 32) & 1;
+    bootLvl[i] = pin < 32 ? GPIO.in >> pin & 1 : GPIO.in1.val >> (pin - 32) & 1;
+  }
+}
+
+String holdReport() {
+  String out = String("frozen before restart: ") + (bootMagic == HELD_MAGIC ? "yes" : "no") + ", hold at start: " +
+               ((bootDig | bootRtc) ? "yes" : "no");
+  for (int i = 0; i < 2; i++) {
+    uint32_t m = bootMux[i];
+    char b[96];
+    snprintf(b, sizeof b, " | GPIO%d at start: func %lu, %s, pull %s, input %s, level %d", BOOT_PADS[i],
+             (unsigned long)(m >> MCU_SEL_S & MCU_SEL), bootOut[i] ? "output" : "no output",
+             (m & FUN_PU) ? "up" : (m & FUN_PD) ? "down" : "none", (m & FUN_IE) ? "on" : "off", bootLvl[i]);
+    out += b;
+  }
+  return out;
+}
+
+static TxHold holdOf(int pin) {
+  TxHold h = {pin, 0, 0};
+  if (pin < 0 || pin >= SOC_GPIO_PIN_COUNT) return {-1, 0, 0};
+  int rtc = rtc_io_num_map[pin];
+  if (rtc >= 0) {
+    h.reg = RTC_CNTL_PAD_HOLD_REG;
+    h.mask = rtc_io_desc[rtc].hold_force;
+  } else {
+    h.reg = RTC_CNTL_DIG_PAD_HOLD_REG;
+    h.mask = GPIO_HOLD_MASK[pin];
+  }
+  return h;
+}
+
+static bool held(const TxHold &h) { return h.mask && (READ_PERI_REG(h.reg) & h.mask); }
+
+// Register writes only: this also runs on the way into a restart after a
+// crash, when the flash cache may be off.
+static void IRAM_ATTR freeze(const TxHold &h) {
+  int pin = h.pin;
+  if (pin < 0 || !h.mask) return;
+  if (pin < 32) {
+    GPIO.out_w1ts = 1u << pin;
+    GPIO.enable_w1ts = 1u << pin;
+  } else {
+    GPIO.out1_w1ts.val = 1u << (pin - 32);
+    GPIO.enable1_w1ts.val = 1u << (pin - 32);
+  }
+  GPIO.func_out_sel_cfg[pin].val = SIG_GPIO_OUT_IDX | 1u << 10;   // plain GPIO output; oen_sel: enabled by GPIO_ENABLE
+  SET_PERI_REG_MASK(h.reg, h.mask);
+  if (heldMagic != HELD_MAGIC) {
+    heldMagic = HELD_MAGIC;
+    heldPins = 0;
+  }
+  heldPins |= 1ULL << pin;
+}
+
+static void release(const TxHold &h) {
+  if (!h.mask) return;
+  CLEAR_PERI_REG_MASK(h.reg, h.mask);
+  if (heldMagic == HELD_MAGIC) heldPins &= ~(1ULL << h.pin);
+}
+
+void IRAM_ATTR freezeTx() {
+  for (uint8_t p = 0; p < MAX_PORTS; p++) freeze(txHold[p]);
+}
 static const int HW_UART_NUM[HW_PORTS] = {1, 2};
 
 // ---------------------------------------------------------------- helpers
@@ -137,10 +253,17 @@ static void flushPending(uint8_t p) {
 // ---------------------------------------------------------------- low level I/O
 static void openPort(uint8_t p, const SerialCfg &c) {
   Port &pt = ports[p];
+  TxHold old = txHold[p];
+  if (old.pin >= 0) {                             // open already: let the last byte out, then latch the line at rest
+    if (pt.hw) uart_wait_tx_done((uart_port_t)pt.uartNum, pdMS_TO_TICKS(100));
+    freeze(old);
+  }
   pt.cfg = c;
   bool swap = c.swap && swapOk(p);                // never make an input-only GPIO the TX pin
   pt.rx = swap ? settings.port[p].tx : settings.port[p].rx;
   pt.tx = swap ? settings.port[p].rx : settings.port[p].tx;
+  TxHold in = holdOf(pt.rx);                      // a pad latched as output that is now the input would drive against the line
+  if (held(in)) release(in);
   pt.charUs = (1 + c.bits + (c.parity != 'N' ? 1 : 0) + c.stop) * 1000000UL / (c.baud ? c.baud : 9600);
   pt.txHead = pt.txTail = 0;
   pt.busyUntilUs = micros();
@@ -154,6 +277,11 @@ static void openPort(uint8_t p, const SerialCfg &c) {
     pt.ss->end();
     pt.ss->begin(c.baud, swConfig(c), pt.rx, pt.tx, false, SW_RX_BUF, SW_ISR_BUF);
   }
+  // The UART drives the TX pin at rest now; only here may the latch go.
+  TxHold h = holdOf(pt.tx);
+  if (old.pin >= 0 && old.pin != pt.tx && old.pin != pt.rx) release(old);
+  if (held(h)) release(h);
+  txHold[p] = h;
 }
 
 static int portAvailable(Port &pt) { return pt.hw ? pt.hs->available() : pt.ss->available(); }
@@ -335,6 +463,7 @@ bool autobaudRunning() { return ab.active; }
 
 // ---------------------------------------------------------------- public
 void begin(DataSink onData, MsgSink onMsg) {
+  for (TxHold &h : txHold) h = {-1, 0, 0};
   dataSink = onData;
   msgSink = onMsg;
   for (uint8_t p = 0; p < MAX_PORTS; p++) {
@@ -357,7 +486,18 @@ void begin(DataSink onData, MsgSink onMsg) {
     pt.on = true;
     openPort(p, settings.port[p].serial);
   }
+  // Pads latched by an earlier run (after switching off the latch outlasts deep
+  // sleep) that are no port's TX any more go free.
+  if (heldMagic == HELD_MAGIC) {
+    for (int pin = 0; pin < SOC_GPIO_PIN_COUNT; pin++) {
+      if (!(heldPins >> pin & 1)) continue;
+      bool tx = false;
+      for (uint8_t p = 0; p < MAX_PORTS; p++) tx |= ports[p].on && ports[p].tx == pin;
+      if (!tx) release(holdOf(pin));
+    }
+  }
 }
+
 
 void apply(uint8_t p, const SerialCfg &cfg) {
   if (!enabled(p) || Xfer::on(p)) return;
@@ -558,3 +698,12 @@ void loop() {
 }
 
 }  // namespace Bridge
+
+// Every restart - esp_restart() and the one after a panic or watchdog - ends
+// in esp_restart_noos(); the linker sends it here first (-Wl,--wrap in
+// platformio.ini). The TX lines are latched at rest until the chip resets.
+extern "C" void __real_esp_restart_noos(void) __attribute__((noreturn));
+extern "C" void IRAM_ATTR __attribute__((noreturn)) __wrap_esp_restart_noos(void) {
+  Bridge::freezeTx();
+  __real_esp_restart_noos();
+}

@@ -325,7 +325,9 @@ static String statusJson() {
     for (int i = 0; i < 256; i++)
       if (st.cmds[i >> 5] & 1u << (i & 31)) cmds += (cmds.length() ? " " : "") + String(i < 16 ? "0" : "") + String(i, HEX);
     k["cmds"] = cmds;
+    k["trace"] = Sd::stickTrace();
   }
+  d["txHold"] = Bridge::holdReport();
   d["boot"] = bootId;
   JsonArray ps = d["ports"].to<JsonArray>();
   for (uint8_t p = 0; p < MAX_PORTS; p++) {
@@ -954,6 +956,7 @@ static void setupHttp() {
     sendJson(200, "{\"ok\":true}");
   });
   // The SD card as a USB memory stick at the USB port. Ends with a restart.
+  http.on("/api/stick/sectors", HTTP_GET, []() { sendJson(200, Sd::stickSectors()); });
   http.on("/api/stick", HTTP_POST, []() {
     if (!guard()) return;
     const char *err = Sd::stickStart();

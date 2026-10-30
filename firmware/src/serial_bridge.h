@@ -29,6 +29,8 @@ namespace Bridge {
   uint32_t maxBaud(uint8_t port);
   void sendBreak(uint8_t port, uint16_t ms = 300);
   void startAutobaud(uint8_t port);
+  void freezeTx();                            // latch every TX pin at rest (before a restart or switching off)
+  String holdReport();                        // TX pads as this run found them: hold, pull, level (diagnosis)
   void requestPinProbe(uint8_t port);         // debug console "pins": levels and a DC loop test, in loop()
   bool autobaudRunning(uint8_t port);
   bool autobaudRunning();                     // any port

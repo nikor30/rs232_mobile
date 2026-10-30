@@ -15,6 +15,7 @@
 #include "soc/rtc_cntl_struct.h"
 #include "ff.h"
 #include "diskio.h"
+#include "sd_diskio.h"
 #include "display.h"
 #include "power.h"
 
@@ -500,16 +501,55 @@ static bool stickIo(bool write, uint8_t *buffer, uint32_t lba, uint32_t count) {
   return false;
 }
 
-static int32_t stickOnRead(uint32_t lba, uint32_t offset, void *buffer, uint32_t size) {
-  if (offset || size % 512) return -1;
-  if (!stickIo(false, (uint8_t *)buffer, lba, size / 512)) return -1;
+// The last requests of the host, for /api/status: which sectors a host reads
+// and writes, and what the last two bytes of the first one were (55aa marks a
+// partition table or boot sector). Written in the USB task only.
+struct StickReq {
+  char op;                                 // R/W = READ/WRITE (10), r/w = (6), C capacity, S start/stop, X other
+  bool ok;
+  uint16_t sig;
+  uint32_t lba, off, size;
+};
+static const int STICK_LOG = 48;
+static StickReq stickLog[STICK_LOG];
+static volatile uint32_t stickLogN = 0;
+
+static void stickNote(char op, uint32_t lba, uint32_t off, uint32_t size, const uint8_t *buf, bool ok) {
+  StickReq &r = stickLog[stickLogN % STICK_LOG];
+  r.op = op;
+  r.ok = ok;
+  r.sig = buf && size >= 512 ? buf[510] << 8 | buf[511] : 0;
+  r.lba = lba;
+  r.off = off;
+  r.size = size;
+  stickLogN = stickLogN + 1;
+}
+
+static int32_t stickOnRead(uint32_t lba, uint32_t offset, void *buffer, uint32_t size, char op = 'R') {
+  bool ok = !offset && !(size % 512) && stickIo(false, (uint8_t *)buffer, lba, size / 512);
+  stickNote(op, lba, offset, size, (uint8_t *)buffer, ok);
+  if (!ok) return -1;
   stickRead = stickRead + size / 512;
   return size;
 }
 
-static int32_t stickOnWrite(uint32_t lba, uint32_t offset, uint8_t *buffer, uint32_t size) {
-  if (offset || size % 512) return -1;
-  if (!stickIo(true, buffer, lba, size / 512)) return -1;
+// Copies of the last single-sector writes, as the host's data arrived here:
+// a C2960CX writes partition table and boot sector one sector at a time, and
+// their 55aa did not come across (GET /api/stick/sectors).
+static uint8_t stickCopy[4][512];
+static uint32_t stickCopyLba[4];
+static volatile uint32_t stickCopyN = 0;
+
+static int32_t stickOnWrite(uint32_t lba, uint32_t offset, uint8_t *buffer, uint32_t size, char op = 'W') {
+  if (size == 512) {
+    uint32_t k = stickCopyN % 4;
+    memcpy(stickCopy[k], buffer, 512);
+    stickCopyLba[k] = lba;
+    stickCopyN = stickCopyN + 1;
+  }
+  bool ok = !offset && !(size % 512) && stickIo(true, buffer, lba, size / 512);
+  stickNote(op, lba, offset, size, buffer, ok);
+  if (!ok) return -1;
   stickWritten = stickWritten + size / 512;
   return size;
 }
@@ -517,9 +557,9 @@ static int32_t stickOnWrite(uint32_t lba, uint32_t offset, uint8_t *buffer, uint
 // Older Cisco switches keep a stick's size in bytes in 32 bits: a 32 GB card
 // looked like 1856 MB to a C2960CX, which then found its partition table
 // "unexpected" and could not even format the card. A card larger than 4 GB
-// whose partitions all end within the first 4 GB is therefore shown as a 4 GB
-// stick. Otherwise the whole card is shown: cutting off a partition would wreck
-// it for every host.
+// whose partitions all end within the first 4 GB, or that has no partition
+// table at all, is therefore shown as a 4 GB stick. Otherwise the whole card is
+// shown: cutting off a partition would wreck it for every host.
 static const uint32_t STICK_MAX = 8386560;   // 4 GiB - 1 MiB, in sectors
 static uint32_t stickShown = 0;
 
@@ -552,6 +592,7 @@ static void putBe(uint8_t *p, uint32_t v, int n) {
 // command with the sense set here, as SCSI expects.
 static int32_t stickScsi(uint8_t lun, const uint8_t *cmd, uint8_t *buf, uint16_t size) {
   stickSeen[cmd[0] >> 5] = stickSeen[cmd[0] >> 5] | 1u << (cmd[0] & 31);
+  if (cmd[0] != 0x08 && cmd[0] != 0x0A) stickNote('X', cmd[0], 0, size, nullptr, true);
   switch (cmd[0]) {
     case 0x1E:                             // PREVENT ALLOW MEDIUM REMOVAL
     case 0x35:                             // SYNCHRONIZE CACHE (10): nothing is held back here
@@ -567,7 +608,7 @@ static int32_t stickScsi(uint8_t lun, const uint8_t *cmd, uint8_t *buf, uint16_t
       }
       uint32_t lba = be(cmd + 1, 3) & 0x1FFFFF, n = cmd[4] ? cmd[4] : 256;
       if (n * 512 > CFG_TUD_MSC_BUFSIZE || lba + n > stickShown) break;
-      int32_t r = cmd[0] == 0x08 ? stickOnRead(lba, 0, buf, n * 512) : stickOnWrite(lba, 0, buf, n * 512);
+      int32_t r = cmd[0] == 0x08 ? stickOnRead(lba, 0, buf, n * 512, 'r') : stickOnWrite(lba, 0, buf, n * 512, 'w');
       if (r < 0) {
         tud_msc_set_sense(lun, SCSI_SENSE_MEDIUM_ERROR, cmd[0] == 0x08 ? 0x11 : 0x0C, 0x00);
         return -1;
@@ -598,7 +639,8 @@ static int32_t stickScsi(uint8_t lun, const uint8_t *cmd, uint8_t *buf, uint16_t
 static uint32_t stickSize(uint32_t card) {
   if (card <= STICK_MAX) return card;
   static uint8_t mbr[512];
-  if (disk_read(drive, mbr, 0, 1) != RES_OK || mbr[510] != 0x55 || mbr[511] != 0xAA) return card;
+  if (disk_read(drive, mbr, 0, 1) != RES_OK) return card;
+  if (mbr[510] != 0x55 || mbr[511] != 0xAA) return STICK_MAX;   // no partition table: blank, whoever formats it gets 4 GB
   if (!memcmp(mbr + 54, "FAT", 3) || !memcmp(mbr + 82, "FAT", 3)) return card;   // a file system without a partition table
   uint32_t end = 0;
   for (int i = 0; i < 4; i++) {
@@ -614,18 +656,41 @@ static uint32_t stickSize(uint32_t card) {
 
 const char *stickStart() {
   if (lent) return nullptr;
-  if (!ok) return TR("no SD card", "keine SD-Karte", "sem cartão SD");
   for (uint8_t p = 0; p < MAX_PORTS; p++) logStop(p);
-  uint32_t sectors;
+  uint32_t sectors = 0;
+  bool raw = false;
   {
     BusGuard guard;
-    drive = DriveOf::get(SD);
-    sectors = SD.numSectors();
-    if (SD.sectorSize() != 512) sectors = 0;
+    if (ok) {
+      drive = DriveOf::get(SD);
+      sectors = SD.numSectors();
+      if (SD.sectorSize() != 512) sectors = 0;
+    } else {
+      // No file system the board can use - a host is about to format the card,
+      // or just failed to. The card itself may well be fine: lend it as it is,
+      // without mounting anything.
+      // sdcard_init() only registers the driver; the card itself is started
+      // by disk_initialize(), which a mount would call.
+      SD.end();
+      drive = 0xFF;
+      for (int hz : {10000000, 4000000}) {
+        uint8_t d = sdcard_init(PIN_SD_CS, &spi, hz);
+        if (d == 0xFF) continue;
+        if (!(disk_initialize(d) & STA_NOINIT) && sdcard_sector_size(d) == 512) {
+          drive = d;
+          sectors = sdcard_num_sectors(d);
+          break;
+        }
+        sdcard_uninit(d);
+      }
+      if (drive == 0xFF) return TR("no SD card", "keine SD-Karte", "sem cartão SD");
+      raw = true;
+    }
     if (sectors) sectors = stickSize(sectors);
   }
   if (drive == 0xFF || !sectors) return TR("the card cannot be read", "die Karte lässt sich nicht lesen", "o cartão não pode ser lido");
-  Serial.printf("[SD]   USB-Stick-Modus: %lu Sektoren, die Debug-Konsole am USB endet hier\n", (unsigned long)sectors);
+  Serial.printf("[SD]   USB-Stick-Modus: %lu Sektoren%s, die Debug-Konsole am USB endet hier\n", (unsigned long)sectors,
+                raw ? " (ohne Dateisystem)" : "");
   Serial.flush();
   ok = false;
   lent = true;
@@ -634,6 +699,7 @@ const char *stickStart() {
   stickRetries = stickFails = 0;
   stickShown = sectors;
   memset((void *)stickSeen, 0, sizeof stickSeen);
+  stickLogN = 0;
   stickMedia = true;
   Power::forceSaver(0);                    // the USB controller wants the full clock
   tinyusb_enable_interface(USB_INTERFACE_MSC, TUD_MSC_DESC_LEN, stickDescriptor);
@@ -673,6 +739,34 @@ Stick stick() {
   return s;
 }
 
+String stickSectors() {
+  String out = "[";
+  uint32_t n = stickCopyN, first = n > 4 ? n - 4 : 0;
+  char hex[3];
+  for (uint32_t i = first; i < n; i++) {
+    out += (i > first ? ",{\"lba\":" : "{\"lba\":") + String(stickCopyLba[i % 4]) + ",\"hex\":\"";
+    for (int b = 0; b < 512; b++) {
+      snprintf(hex, sizeof hex, "%02x", stickCopy[i % 4][b]);
+      out += hex;
+    }
+    out += "\"}";
+  }
+  return out + "]";
+}
+
+String stickTrace() {
+  String out;
+  uint32_t n = stickLogN, first = n > STICK_LOG ? n - STICK_LOG : 0;
+  char line[48];
+  for (uint32_t i = first; i < n; i++) {
+    const StickReq &r = stickLog[i % STICK_LOG];
+    snprintf(line, sizeof line, "%c %lu+%lu %lu %s %04x\n", r.op, (unsigned long)r.lba, (unsigned long)r.off,
+             (unsigned long)r.size, r.ok ? "ok" : "FAIL", r.sig);
+    out += line;
+  }
+  return out;
+}
+
 }  // namespace Sd
 
 // ---- TinyUSB's mass storage callbacks (one drive: the card in stick mode)
@@ -695,6 +789,7 @@ bool tud_msc_test_unit_ready_cb(uint8_t lun) {
 
 void tud_msc_capacity_cb(uint8_t lun, uint32_t *count, uint16_t *size) {
   (void)lun;
+  Sd::stickNote('C', Sd::stickShown, 0, 0, nullptr, Sd::stickMedia);
   *count = Sd::stickMedia ? Sd::stickShown : 0;
   *size = 512;
 }
@@ -702,6 +797,7 @@ void tud_msc_capacity_cb(uint8_t lun, uint32_t *count, uint16_t *size) {
 bool tud_msc_start_stop_cb(uint8_t lun, uint8_t power, bool start, bool eject) {
   (void)lun;
   (void)power;
+  Sd::stickNote('S', start, eject, power, nullptr, true);
   if (eject) {                             // an ejected stick has no medium until the host loads it again
     Sd::stickEjected = !start;
     Sd::stickMedia = start;

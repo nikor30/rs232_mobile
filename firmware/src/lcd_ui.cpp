@@ -2642,6 +2642,7 @@ void powerOff(const char *reason, uint32_t wakeAfterS) {
   gpio_hold_en((gpio_num_t)PIN_LCD_BL);
   digitalWrite(PIN_SD_CS, HIGH);
   gpio_hold_en((gpio_num_t)PIN_SD_CS);
+  Bridge::freezeTx();                    // and the serial lines stay at rest: no BREAK to what hangs on them
   gpio_deep_sleep_hold_en();
   if (PIN_KEY >= 0) {
     rtc_gpio_pullup_en((gpio_num_t)PIN_KEY);

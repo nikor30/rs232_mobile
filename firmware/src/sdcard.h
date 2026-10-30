@@ -57,5 +57,7 @@ namespace Sd {
   };
   const char *stickStart();           // nullptr = started, otherwise why not
   Stick stick();
+  String stickSectors();              // JSON: the last single-sector writes, in hex
+  String stickTrace();                // the host's last requests, one per line (sdcard.cpp: StickReq)
   void usbRestore();                  // first thing after a start: the USB port is the debug console again
 }
