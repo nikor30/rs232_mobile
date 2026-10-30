@@ -517,6 +517,32 @@ static bool stickOnStartStop(uint8_t power, bool start, bool eject) {
   return true;
 }
 
+// Older Cisco switches keep a stick's size in bytes in 32 bits: a 32 GB card
+// looked like 1856 MB to a C2960CX, which then found its partition table
+// "unexpected" and could not even format the card. A card larger than 4 GB
+// whose partitions all end within the first 4 GB is therefore shown as a 4 GB
+// stick. Otherwise the whole card is shown: cutting off a partition would wreck
+// it for every host.
+static const uint32_t STICK_MAX = 8386560;   // 4 GiB - 1 MiB, in sectors
+static uint32_t stickShown = 0;
+
+static uint32_t stickSize(uint32_t card) {
+  if (card <= STICK_MAX) return card;
+  static uint8_t mbr[512];
+  if (disk_read(drive, mbr, 0, 1) != RES_OK || mbr[510] != 0x55 || mbr[511] != 0xAA) return card;
+  if (!memcmp(mbr + 54, "FAT", 3) || !memcmp(mbr + 82, "FAT", 3)) return card;   // a file system without a partition table
+  uint32_t end = 0;
+  for (int i = 0; i < 4; i++) {
+    const uint8_t *e = mbr + 446 + 16 * i;
+    if (!e[4]) continue;                     // empty entry
+    if (e[4] == 0xEE) return card;           // GPT
+    uint32_t start = e[8] | e[9] << 8 | e[10] << 16 | (uint32_t)e[11] << 24;
+    uint32_t len = e[12] | e[13] << 8 | e[14] << 16 | (uint32_t)e[15] << 24;
+    if (start + len > end) end = start + len;
+  }
+  return end && end <= STICK_MAX ? STICK_MAX : card;
+}
+
 const char *stickStart() {
   if (lent) return nullptr;
   if (!ok) return TR("no SD card", "keine SD-Karte", "sem cartão SD");
@@ -527,6 +553,7 @@ const char *stickStart() {
     drive = DriveOf::get(SD);
     sectors = SD.numSectors();
     if (SD.sectorSize() != 512) sectors = 0;
+    if (sectors) sectors = stickSize(sectors);
   }
   if (drive == 0xFF || !sectors) return TR("the card cannot be read", "die Karte lässt sich nicht lesen", "o cartão não pode ser lido");
   Serial.printf("[SD]   USB-Stick-Modus: %lu Sektoren, die Debug-Konsole am USB endet hier\n", (unsigned long)sectors);
@@ -536,6 +563,7 @@ const char *stickStart() {
   stickEjected = false;
   stickRead = stickWritten = 0;
   stickRetries = stickFails = 0;
+  stickShown = sectors;
   Power::forceSaver(0);                    // the USB controller wants the full clock
   msc.vendorID("RS232");
   msc.productID("Console SD card");
@@ -575,6 +603,7 @@ Stick stick() {
   s.readKb = stickRead / 2;
   s.writtenKb = stickWritten / 2;
   s.retries = stickRetries;
+  s.sizeMb = stickShown / 2048;
   s.fails = stickFails;
   return s;
 }

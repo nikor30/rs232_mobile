@@ -51,6 +51,7 @@ namespace Sd {
     bool host;                        // a host has taken the device
     bool ejected;                     // the host has let go of the card
     uint32_t readKb, writtenKb;       // what the host has moved so far
+    uint32_t sizeMb;                  // what the host is shown (at most 4 GB, see stickSize)
     uint32_t retries, fails;          // requests the card refused at first / after every try
   };
   const char *stickStart();           // nullptr = started, otherwise why not

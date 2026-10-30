@@ -318,6 +318,7 @@ static String statusJson() {
     k["ejected"] = st.ejected;
     k["readKb"] = st.readKb;
     k["writtenKb"] = st.writtenKb;
+    k["sizeMb"] = st.sizeMb;
     k["retries"] = st.retries;
     k["fails"] = st.fails;
   }
