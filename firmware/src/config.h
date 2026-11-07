@@ -55,10 +55,10 @@
 // send as well (RX/TX swap); it stays an input during boot.
 // Further header pins are left out until they are tried on the board.
 #define PORT_DEFAULT_PINS {{44, 21}, {44, 21}, {44, 21}, {44, 21}}
-#define PINS_RX  {21, 44}
-#define PINS_TX  {21, 44}
+#define PINS_RX  {21, 44, 15, 13}   // 15/13 added for the HAT's Port 2 (J3 RX2/TX2)
+#define PINS_TX  {21, 44, 13, 15}
 #define PINS_ADC {5}              // battery voltage divider of the LiPo connector
-#define PIN_NAMES "44:RXD,5:BAT"
+#define PIN_NAMES "44:RXD,21:TXD,15:P2-RX,13:P2-TX,5:BAT"
 #define PIN_PREFIX "IO"
 
 #define BAT_PIN_DEFAULT   5       // BAT_ADC: divider on the board, measured against a LiPo (WAVESHARE.md)
