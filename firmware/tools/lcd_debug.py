@@ -11,6 +11,7 @@ Talks to the firmware over the USB serial port without resetting the board:
                                         what the screen shows during a gesture; "lift" lets go
     lcd_debug.py screen 1               0 Status, 1 Netz, 2 Terminal, 3 Skripte, 4 Bluetooth,
                                         5 Info, 6 System, 7 Setup
+    lcd_debug.py conui 1 10             show the remote console's dialog for 10 s (1 = it asks, 2 = it is open)
     lcd_debug.py splash 5               show the start-up picture (mark and name) again for 5 seconds
     lcd_debug.py cfgtest                store a small configuration "Demo" to try the Skripte page
     lcd_debug.py rot 0                  force a rotation (0..3); "rot auto" hands it back to the sensor
@@ -166,6 +167,9 @@ def main(argv):
         elif c == "lift":
             s.write(b"lift\n")
             sys.stdout.write(read_until(s, lambda b: False, 1.2).decode("utf8", "replace"))
+        elif c == "conui":                           # the remote console's dialog alone: 1 asked, 2 open
+            s.write(f"conui {argv[i + 1]} {argv[i + 2]}\n".encode()); i += 2
+            time.sleep(0.5)
         elif c == "stickui":                         # the stick dialog alone, to look at it
             s.write(f"stickui {argv[i + 1]}\n".encode()); i += 1
             time.sleep(0.5)

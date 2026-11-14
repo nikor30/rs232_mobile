@@ -5,18 +5,18 @@
    motion or transparency for people who asked for that. */
 :root {
   --bg: #000;                 /* the terminal: nothing competes with it */
-  --bar: #111318;             /* bars around it */
-  --panel: #0b0c10;           /* the settings sheet: grouped cards on the brand's near-black */
-  --card: #17191f;
-  --line: rgba(120, 124, 136, .3);
+  --bar: #0f0f10;             /* bars around it */
+  --panel: #000;              /* the settings sheet: grouped cards on black, as on the display */
+  --card: #1c1c1e;
+  --line: #38383a;
   --text: #f5f5f7;
   --muted: #98989d;
   --accent: #0a84ff;
   --ok: #30d158;
   --warn: #ff9f0a;
   --bad: #ff453a;
-  --key: rgba(118, 118, 128, .24);
-  --key-down: rgba(118, 118, 128, .48);
+  --key: #2c2c2e;             /* what can be pressed, and under the finger: the display's two greys */
+  --key-down: #3a3a3c;
   --key-on: #0a84ff;
   --ease: cubic-bezier(.2, .8, .2, 1);        /* quick to answer, soft to settle */
   --sheet: cubic-bezier(.32, .72, 0, 1);      /* a sheet coming to rest */
@@ -335,7 +335,10 @@ input:focus, select:focus, textarea:focus { outline: none; box-shadow: 0 0 0 3px
 .btn.warn { color: var(--warn); }
 .btn.danger { color: var(--bad); }
 .val { min-width: 56px; text-align: center; font-variant-numeric: tabular-nums; }
-progress { width: 100%; height: 10px; accent-color: var(--accent); }
+progress { appearance: none; -webkit-appearance: none; width: 100%; height: 6px; border: 0; border-radius: 3px; background: var(--key); overflow: hidden; }   /* the thin bar of the display */
+progress::-webkit-progress-bar { background: var(--key); }
+progress::-webkit-progress-value { background: var(--accent); border-radius: 3px; }
+progress::-moz-progress-bar { background: var(--accent); border-radius: 3px; }
 
 table.kv { width: 100%; border-collapse: collapse; font-size: 14px; }
 table.kv th { text-align: left; color: var(--muted); font-weight: 400; padding: 8px 12px 8px 0; width: 42%; vertical-align: top; }
@@ -374,7 +377,7 @@ table.kv tr + tr > * { border-top: 1px solid var(--line); }
 .filebtn input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 textarea#cfgText { margin-top: 8px; min-height: 180px; }
 
-.pcard { border: 0; border-radius: 14px; padding: 12px 16px 8px; margin: 12px 0; background: var(--card); }
+.pcard { border: 0; border-radius: 12px; padding: 12px 16px 8px; margin: 12px 0; background: var(--card); }
 .pcard.off { opacity: .55; }
 .pcard-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .pcard-head label.check { margin: 4px 0; font-weight: 600; }

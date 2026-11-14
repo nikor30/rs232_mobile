@@ -45,7 +45,7 @@
     fontSize: store.get('fontSize', window.innerWidth < 500 ? 12 : 14),
     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", "DejaVu Sans Mono", monospace',
     scrollback: 10000,
-    theme: { background: '#000000', foreground: '#e5e5ea', cursor: '#30d158', selectionBackground: '#0a4a8f' },
+    theme: { background: '#000000', foreground: '#30d158', cursor: '#30d158', selectionBackground: '#0a4a8f' },
   };
   const ports = [];               // by port id: {id, name, info, term, fit, el, seq, log, logBytes, welcomed, unread, tail, outCount}
   const dec = new TextDecoder('latin1');

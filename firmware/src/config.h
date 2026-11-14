@@ -24,7 +24,7 @@
 // up to 25 MHz. A card that stopped answering until its next power cycle is the
 // open problem here (WAVESHARE.md); staying inside its limit costs nothing now
 // that only changed parts of the picture are sent.
-#define LCD_SPI_HZ      20000000
+#define LCD_SPI_HZ      80000000
 #define PIN_SD_CS       41  // SD slot on the LCD's SPI lines
 #define PIN_SD_MOSI     PIN_LCD_MOSI
 #define PIN_SD_SCLK     PIN_LCD_SCLK

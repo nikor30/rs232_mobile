@@ -1,0 +1,523 @@
+<title>RS232 Console Display</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: the device is the one bright thing; the page around it is a quiet bench note beside it. */
+:root {
+  --bg: #f3f4f7; --surface: #ffffff; --line: #e3e6ec; --text: #14161a; --dim: #5b6474; --accent: #0071e3; --sunk: #e9ecf1;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #0b0c10; --surface: #17191f; --line: #282c36; --text: #f2f3f5; --dim: #98a1b0; --accent: #0a84ff; --sunk: #1f222a; color-scheme: dark } }
+:root[data-theme="dark"] { --bg: #0b0c10; --surface: #17191f; --line: #282c36; --text: #f2f3f5; --dim: #98a1b0; --accent: #0a84ff; --sunk: #1f222a; color-scheme: dark }
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--text); font: 15px/1.5 var(--sans); padding-block: 24px 48px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.wrap { max-width: 1120px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 640px) minmax(0, 1fr); gap: 32px 40px; align-items: start; }
+@media (max-width: 900px) { .wrap { grid-template-columns: minmax(0, 1fr); } }
+header { grid-column: 1 / -1; }
+h1 { font-size: 28px; line-height: 1.15; letter-spacing: -.02em; font-weight: 600; margin: 0 0 4px; text-wrap: balance; }
+header p { margin: 0; color: var(--dim); max-width: 60ch; }
+h2 { font-size: 15px; font-weight: 600; margin: 0 0 8px; }
+.stage { position: sticky; top: calc(16px + env(safe-area-inset-top, 0px)); display: grid; gap: 16px; }
+@media (max-width: 900px) { .stage { position: static; } }
+.bezel { background: #050506; border-radius: 22px; padding: 14px; box-shadow: 0 0 0 1px #2a2d35, 0 12px 32px rgba(0, 0, 0, .28); }
+canvas { display: block; width: 100%; max-width: 100%; aspect-ratio: 4 / 3; border-radius: 6px; touch-action: none; cursor: pointer; user-select: none; -webkit-user-select: none; }
+.try { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+button.b { font: inherit; font-weight: 500; color: var(--text); background: var(--sunk); border: 0; border-radius: 10px; min-height: 44px; padding: 8px 16px; cursor: pointer; }
+button.b:active { filter: brightness(.92); transform: scale(.97); }
+button.b:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+label.c { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; color: var(--text); }
+label.c input { width: 20px; height: 20px; accent-color: var(--accent); }
+.notes { display: grid; gap: 28px; min-width: 0; }
+.notes ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.notes li { display: grid; grid-template-columns: 148px minmax(0, 1fr); gap: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.notes li b { font-weight: 600; }
+.notes li span { color: var(--dim); }
+@media (max-width: 480px) { .notes li { grid-template-columns: minmax(0, 1fr); gap: 0; } }
+.notes p { margin: 0 0 8px; color: var(--dim); max-width: 62ch; }
+.notes p b { color: var(--text); font-weight: 600; }
+code { font-family: var(--mono); font-size: 13px; }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>RS232 Console display</h1>
+    <p>A new start for the 2-inch touch display. Touch it: the screen below is drawn at the display's real 320 × 240 size, with data that behaves like a switch on the port.</p>
+  </header>
+
+  <div class="stage">
+    <div class="bezel"><canvas id="lcd" aria-label="Interactive prototype of the device's touch display"></canvas></div>
+    <div class="try">
+      <button class="b" id="bRemote" type="button">Remote console request</button>
+      <button class="b" id="bBurst" type="button">Send a burst of data</button>
+      <label class="c" for="fps"><input id="fps" type="checkbox"> Draw at 15 frames per second, like the device</label>
+    </div>
+  </div>
+
+  <div class="notes">
+    <section>
+      <h2>Four moves</h2>
+      <ul>
+        <li><b>Swipe sideways</b><span>The next port. Each port is its own screen, and the dots count them.</span></li>
+        <li><b>Pull up</b><span>Do something: baud, auto-baud, BREAK, record, scripts, USB stick, settings. Tapping the handle does the same.</span></li>
+        <li><b>Pull down</b><span>Get a phone connected: QR code for the hotspot, addresses, Bluetooth PIN. Tapping the top line does the same.</span></li>
+        <li><b>Tap the trace</b><span>The terminal, with the keys you need when a switch is waiting for one.</span></li>
+      </ul>
+    </section>
+    <section>
+      <h2>Decisions in it</h2>
+      <p><b>The trace is the screen.</b> Received bytes rise in green, sent bytes fall in blue, one bar per tenth of a second. It moves in steps, so it reads the same at 10 frames per second as at 60. A flat line is an answer too: nothing is coming.</p>
+      <p><b>What you cannot take back is held, not tapped.</b> BREAK, ending a remote console and ending stick mode fill while the finger stays down. Letting go early cancels.</p>
+      <p><b>Baud is a ruler.</b> Drag it, flick it, or tap beside the marker. Auto-baud runs along the same ruler while it listens, and says so when it hears nothing.</p>
+      <p><b>Every gesture has a tap.</b> Nothing can only be reached by knowing a swipe.</p>
+    </section>
+    <section>
+      <h2>What it asks of the ESP32</h2>
+      <p><b>One canvas in external RAM, as today.</b> Sheets and dialogs are flat fills with rounded corners and a single dimming layer. No blur, no shadows.</p>
+      <p><b>The trace is a strip.</b> 320 × 96 pixels, ten times a second: about 61 kB per update instead of 154 kB for a whole frame.</p>
+      <p><b>Motion is computed for the time that passed.</b> A slow frame makes a bigger step, not a slower animation. Tick the box under the display to see it at 15 frames per second.</p>
+      <p><b>Open.</b> A full frame takes about 86 ms on the board today. Whether a sheet can follow a finger at 15 frames per second or better has to be measured there.</p>
+    </section>
+  </div>
+</div>
+
+<script>
+(() => {
+'use strict';
+const W = 320, H = 240, S = 3;
+const cv = document.getElementById('lcd'); cv.width = W * S; cv.height = H * S;
+const g = cv.getContext('2d');
+const fpsBox = document.getElementById('fps');
+const RM = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// the display's own palette: always dark, whatever theme the page has
+const C = { bg: '#000000', s1: '#17191f', s2: '#23262e', s3: '#343842', text: '#f2f3f5', dim: '#98a1b0', mute: '#667085',
+            acc: '#0a84ff', ok: '#30d158', warn: '#ff9f0a', bad: '#ff453a' };
+const SANS = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif', MONO = 'ui-monospace, "SF Mono", Menlo, Consolas, monospace';
+
+function text(s, x, y, px, col, o = {}) {
+  g.font = `${o.w || 500} ${px}px ${o.mono ? MONO : SANS}`;
+  g.fillStyle = col; g.textAlign = o.a || 'left'; g.textBaseline = 'alphabetic';
+  if ('letterSpacing' in g) g.letterSpacing = px >= 24 ? '-0.5px' : '0px';
+  g.fillText(s, x, y);
+}
+function rr(x, y, w, h, r, col) { g.beginPath(); g.roundRect(x, y, w, h, r); g.fillStyle = col; g.fill(); }
+function disc(x, y, r, col) { g.beginPath(); g.arc(x, y, r, 0, 7); g.fillStyle = col; g.fill(); }
+const lerp = (a, b, t) => a + (b - a) * t, clamp = (x, a, b) => Math.min(b, Math.max(a, x));
+const inR = (x, y, r) => x >= r[0] && x < r[0] + r[2] && y >= r[1] && y < r[1] + r[3];
+
+// ---- springs, exact for whatever time has passed (the device draws few frames)
+function spring(x) { return { x, v: 0, to: x, z: 1, r: 0.34 }; }
+function go(s, to, v = 0, z = 1) { s.to = to; s.v = v; s.z = z; if (RM) { s.x = to; s.v = 0; } }
+function step(s, dt) {
+  const w = 2 * Math.PI / s.r, d = s.x - s.to;
+  if (Math.abs(d) < 5e-4 && Math.abs(s.v) < 5e-3) { s.x = s.to; s.v = 0; return; }
+  if (s.z >= 1) { const c2 = s.v + w * d, e = Math.exp(-w * dt); s.x = s.to + (d + c2 * dt) * e; s.v = (c2 - w * (d + c2 * dt)) * e; }
+  else {
+    const wd = w * Math.sqrt(1 - s.z * s.z), b = (s.v + s.z * w * d) / wd, e = Math.exp(-s.z * w * dt), co = Math.cos(wd * dt), si = Math.sin(wd * dt);
+    s.x = s.to + e * (d * co + b * si); s.v = e * ((b * wd - s.z * w * d) * co - (d * wd + s.z * w * b) * si);
+  }
+}
+const project = (v, d = 0.99) => v / 1000 * d / (1 - d);          // where a flick would come to rest
+const rb = (o, dim) => o * dim * 0.55 / (dim + 0.55 * o);
+const rubber = (x, lo, hi, dim) => x < lo ? lo - rb(lo - x, dim) : x > hi ? hi + rb(x - hi, dim) : x;
+
+// ---- what the ports do
+const RATES = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200];
+const LOG = ['%LINK-3-UPDOWN: Interface Gi1/0/4, changed state to up', '%LINEPROTO-5-UPDOWN: Line protocol on Gi1/0/4, up',
+  '%SYS-5-CONFIG_I: Configured from console by console', '%SPANTREE-5-TOPOTRAP: Topology change, vlan 20',
+  '%ILPOWER-5-POWER_GRANTED: Interface Gi1/0/2: granted', '%LINK-3-UPDOWN: Interface Gi1/0/2, changed state to up',
+  '%DOT1X-5-SUCCESS: Authentication successful, Gi1/0/2'];
+const RESP = ['Port      Name     Status      Vlan  Speed', 'Gi1/0/1            connected   1     a-1000', 'Gi1/0/2            connected   1     a-100',
+  'Gi1/0/3            notconnect  1     auto', 'Gi1/0/4   uplink   connected   20    a-1000'];
+const mkPort = (name, prompt, baud, busy) => ({ name, prompt, baud, busy, rx: 0, tx: 0, burst: 0, amp: 0, txq: 0, brk: 0, rec: 0, li: 0, cl: '', pend: [],
+  trace: Array.from({ length: 80 }, () => ({ r: 0, t: 0, b: 0 })), lines: [] });
+const ports = [mkPort('Core-SW', 'Switch>', 9600, 0.07), mkPort('Router', 'Router>', 115200, 0)];
+function feed(p, s) { for (let i = 0; i < s.length; i += 51) p.lines.push(s.slice(i, i + 51)); while (p.lines.length > 40) p.lines.shift(); }
+feed(ports[0], 'Press RETURN to get started.'); feed(ports[0], LOG[0]); feed(ports[0], LOG[1]);
+
+const SCRIPTS = [{ n: 'Base config', s: '1.8 kB' }, { n: 'VLAN 20 uplink', s: '412 B' }, { n: 'Factory defaults', s: '96 B' }];
+const TILES = [{ id: 'auto', l: 'Auto-baud' }, { id: 'break', l: 'BREAK', hold: 1 }, { id: 'rec', l: 'Record' },
+               { id: 'scripts', l: 'Scripts' }, { id: 'stick', l: 'USB stick' }, { id: 'more', l: 'Settings' }];
+const KEYS = ['Enter', 'Ctrl-C', 'Tab', '↑', 'Space'];
+
+const st = { cur: 0, page: spring(0), act: spring(0), con: spring(0), term: spring(0), modal: spring(0), sub: spring(0), ruler: spring(3),
+  subView: null, modalKind: null, bright: 1, press: null, listen: null, play: null, remote: null, stick: null, splash: 0, note: null,
+  holds: { break: { p: 0, on: false }, end: { p: 0, on: false } } };
+[st.act, st.con, st.term].forEach((s) => { s.r = 0.32; });
+st.ruler.r = 0.3; st.modal.r = 0.26; st.sub.r = 0.3;
+const port = () => ports[st.cur];
+const fmtB = (n) => n < 1000 ? n + ' B' : n < 1e6 ? (n / 1000).toFixed(1) + ' kB' : (n / 1e6).toFixed(2) + ' MB';
+const mmss = (s) => Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
+
+// ten times a second, like the trace on the device
+function tick() {
+  ports.forEach((p, i) => {
+    let r = 0, t = 0;
+    const quiet = st.listen && i === st.cur;
+    if (p.burst > 0) { p.burst--; r = p.amp * (0.45 + Math.random() * 0.55); if (Math.random() < 0.3 && !p.pend.length) feed(p, LOG[p.li = (p.li + 1) % LOG.length]); }
+    else if (!quiet && Math.random() < p.busy) { p.burst = 4 + (Math.random() * 14 | 0); p.amp = 0.3 + Math.random() * 0.7; }
+    if (p.pend.length) { feed(p, p.pend.shift()); r = Math.max(r, 0.8); }
+    if (p.txq > 0) { t = Math.min(1, p.txq); p.txq = Math.max(0, p.txq - 1); }
+    if (st.play && st.play.port === i) t = Math.max(t, 0.35 + Math.random() * 0.4);
+    p.rx += Math.round(r * 96); p.tx += Math.round(t * 28);
+    p.trace.push({ r, t, b: p.brk }); p.trace.shift(); p.brk = 0;
+    if (p.rec) p.rec += 0.1;
+  });
+  if (st.play) { st.play.t += 0.1; if (st.play.t >= st.play.d) st.play = null; }
+  if (st.remote) { st.remote.left -= 0.1; if (st.remote.left <= 0) st.remote = null; }
+  if (st.stick) { st.stick.r += Math.random() < 0.6 ? 38 + Math.random() * 30 : 0; }
+  if (st.listen) {
+    const L = st.listen; L.t += 0.1;
+    if (L.t >= 0.3) {
+      L.t = 0; L.i--;
+      const p = port();
+      if (L.lock != null && L.i === L.lock) { p.baud = RATES[L.i]; go(st.ruler, L.i, 0, 0.75); st.listen = null; p.burst = 14; p.amp = 0.9; }
+      else if (L.i < 0) { go(st.ruler, RATES.indexOf(p.baud), 0, 1); st.listen = null; st.note = { s: 'No data heard', t: 2.2 }; }
+      else go(st.ruler, L.i, 0, 1);
+    }
+  }
+}
+
+function state(p, i) {
+  if (st.remote && st.remote.port === i) return { w: 'Remote', c: C.warn, s: `${st.remote.who} · ${mmss(st.remote.left)} left` };
+  if (st.listen && i === st.cur) return { w: 'Listening', c: C.warn, s: `trying ${RATES[clamp(st.listen.i, 0, 7)]}` };
+  if (st.play && st.play.port === i) return { w: 'Playing', c: C.warn, s: st.play.name };
+  return { w: 'Ready', c: C.ok, s: `${p.baud} 8N1` };
+}
+
+// ---- drawing
+const TY = 104, TH = 96, AX = 152;
+function icon(id, x, y, col, on) {
+  g.save(); g.translate(x, y); g.strokeStyle = col; g.fillStyle = col; g.lineWidth = 1.5; g.lineCap = 'round'; g.lineJoin = 'round'; g.beginPath();
+  if (id === 'auto') { g.arc(9, 10, 7, Math.PI * 0.8, Math.PI * 2.2); g.moveTo(9, 10); g.lineTo(13, 5); g.stroke(); }
+  else if (id === 'break') { g.moveTo(1, 9); g.lineTo(6, 9); g.moveTo(12, 9); g.lineTo(17, 9); g.moveTo(6, 5); g.lineTo(6, 13); g.moveTo(12, 5); g.lineTo(12, 13); g.stroke(); }
+  else if (id === 'rec') { g.arc(9, 9, 6, 0, 7); if (on) g.fill(); else g.stroke(); }
+  else if (id === 'scripts') { g.moveTo(5, 3); g.lineTo(15, 9); g.lineTo(5, 15); g.closePath(); g.stroke(); }
+  else if (id === 'stick') { g.roundRect(1, 5, 11, 8, 2); g.rect(12, 7, 5, 4); g.stroke(); }
+  else if (id === 'more') { g.moveTo(1, 5); g.lineTo(17, 5); g.moveTo(1, 13); g.lineTo(17, 13); g.stroke(); disc(12, 5, 2.5, col); disc(6, 13, 2.5, col); }
+  else if (id === 'back') { g.moveTo(11, 3); g.lineTo(5, 9); g.lineTo(11, 15); g.stroke(); }
+  g.restore();
+}
+
+function topBar(p, sc) {
+  disc(16, 14, 4, sc.c);
+  text(p.name, 28, 19, 13, C.text, { w: 600 });
+  if (p.rec) { disc(196, 14, 4, C.bad); text(mmss(p.rec), 204, 18, 11, C.dim); }
+  g.strokeStyle = C.dim; g.lineWidth = 1.5; g.lineCap = 'round';
+  for (const r of [3.5, 7]) { g.beginPath(); g.arc(240, 19, r, Math.PI * 1.25, Math.PI * 1.75); g.stroke(); }
+  disc(240, 19, 1.2, C.dim);
+  text('87%', 278, 18, 11, C.dim, { a: 'right' });
+  g.lineWidth = 1; g.beginPath(); g.roundRect(283.5, 9.5, 19, 9, 2.5); g.stroke();
+  g.fillStyle = C.dim; g.fillRect(303.5, 12, 1.5, 4); g.fillStyle = C.text; g.fillRect(285.5, 11.5, 13, 5);
+}
+
+function drawTrace(p) {
+  for (let k = 0; k < 80; k++) {
+    const e = p.trace[k], x = k * 4, r = Math.round(e.r * 42), t = Math.round(e.t * 42);
+    if (e.b) { g.fillStyle = C.warn; g.fillRect(x + 1, AX - 44, 1, 88); }
+    g.fillStyle = r ? C.ok : C.s3; g.fillRect(x, AX - 1 - r, 3, r + 1);
+    if (t) { g.fillStyle = C.acc; g.fillRect(x, AX + 1, 3, t); }
+  }
+  const gr = g.createLinearGradient(0, 0, 56, 0); gr.addColorStop(0, '#000'); gr.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = gr; g.fillRect(0, TY, 56, TH);
+}
+
+function home(p, i, ox) {
+  g.save(); g.translate(Math.round(ox), 0);
+  const sc = state(p, i);
+  topBar(p, sc);
+  text(sc.w, 15, 66, 34, sc.c, { w: 600 });
+  text(sc.s, 16, 90, 17, C.text);
+  if (st.play && st.play.port === i) { rr(16, 96, 120, 3, 1.5, C.s3); rr(16, 96, 120 * clamp(st.play.t / st.play.d, 0, 1), 3, 1.5, C.warn); }
+  if (st.note && i === st.cur) text(st.note.s, 16, 101, 11, C.warn);
+  const last = p.trace[79];
+  disc(232, 49, 3, last.r ? C.ok : C.s3); text('RX', 240, 53, 11, C.mute); text(fmtB(p.rx), 304, 53, 13, C.text, { a: 'right', mono: 1 });
+  disc(232, 71, 3, last.t ? C.acc : C.s3); text('TX', 240, 75, 11, C.mute); text(fmtB(p.tx), 304, 75, 13, C.text, { a: 'right', mono: 1 });
+  drawTrace(p);
+  g.restore();
+}
+
+function terminal() {
+  const v = clamp(st.term.x, 0, 1.05), p = port(), y0 = lerp(TY, 0, Math.min(1, v)), h = lerp(TH, H, Math.min(1, v));
+  g.save(); g.beginPath(); g.rect(0, y0, W, h); g.clip();
+  g.globalAlpha = clamp(v * 1.4, 0, 1); g.fillStyle = C.bg; g.fillRect(0, 0, W, H);
+  g.globalAlpha = clamp((v - 0.25) / 0.75, 0, 1);
+  icon('back', 6, 5, C.acc); text(p.name, 28, 19, 13, C.text, { w: 600 }); text(`${p.baud} 8N1`, 308, 18, 11, C.dim, { a: 'right' });
+  const rows = p.lines.slice(-11).concat([p.prompt + p.cl]);
+  rows.forEach((s, k) => text(s, 6, 44 + k * 12, 10, k === rows.length - 1 ? C.ok : '#27b34e', { mono: 1 }));   // terminal green, the line being typed a step brighter
+  if (Math.floor(performance.now() / 500) % 2 === 0) { g.font = `500 10px ${MONO}`; g.fillStyle = C.ok; g.fillRect(7 + g.measureText(rows[rows.length - 1]).width, 35 + (rows.length - 1) * 12, 6, 11); }
+  KEYS.forEach((k, i) => { rr(4 + i * 64, 188, 56, 48, 10, st.press === 'k' + i ? C.s3 : C.s2); text(k, 32 + i * 64, 217, 13, C.text, { a: 'center' }); });
+  g.restore();
+}
+
+function sheetMain() {
+  const p = port(), x = st.ruler.x, near = clamp(Math.round(x), 0, 7);
+  text(String(RATES[near]), 160, 36, 24, C.text, { a: 'center', w: 600 });
+  text(st.listen ? 'listening' : 'baud', 160 + 52, 36, 11, st.listen ? C.warn : C.mute);
+  g.save(); g.beginPath(); g.rect(0, 40, W, 34); g.clip();
+  for (let i = 0; i < RATES.length; i++) {
+    const tx = 160 + (i - x) * 56;
+    if (tx < -30 || tx > 350) continue;
+    g.fillStyle = i === near ? C.text : C.mute; g.fillRect(Math.round(tx), 44, 1, 8);
+    if (i < RATES.length - 1) for (let m = 1; m < 4; m++) { g.fillStyle = C.s3; g.fillRect(Math.round(tx + m * 14), 46, 1, 4); }
+    text(String(RATES[i]), tx, 67, 11, i === near ? C.text : C.mute, { a: 'center' });
+  }
+  g.restore();
+  for (const [x0, x1] of [[0, 44], [320, 276]]) { const gr = g.createLinearGradient(x0, 0, x1, 0); gr.addColorStop(0, C.s1); gr.addColorStop(1, 'rgba(23,25,31,0)'); g.fillStyle = gr; g.fillRect(Math.min(x0, x1), 40, 44, 34); }
+  g.fillStyle = C.acc; g.beginPath(); g.moveTo(155, 40); g.lineTo(165, 40); g.lineTo(160, 45); g.fill();
+  TILES.forEach((t, k) => {
+    const tx = 14 + (k % 3) * 100, ty = 80 + (k / 3 | 0) * 64, on = t.id === 'rec' && p.rec, busy = t.id === 'auto' && st.listen;
+    rr(tx, ty, 92, 56, 12, st.press === 't' + k ? C.s3 : C.s2);
+    if (t.hold && st.holds.break.p > 0) { g.save(); g.beginPath(); g.roundRect(tx, ty, 92, 56, 12); g.clip(); g.fillStyle = 'rgba(255,159,10,.4)'; g.fillRect(tx, ty, 92 * st.holds.break.p, 56); g.restore(); }
+    const col = on ? C.bad : busy || t.hold ? C.warn : C.dim;
+    icon(t.id, tx + 12, ty + 9, col, on);
+    text(on ? mmss(p.rec) : t.l, tx + 12, ty + 45, 13, t.hold ? C.warn : C.text);
+    if (t.hold) text('hold', tx + 80, ty + 22, 11, C.mute, { a: 'right' });
+  });
+}
+
+function sheetSub() {
+  icon('back', 10, 12, C.acc); text(st.subView === 'scripts' ? 'Scripts' : 'Settings', 32, 26, 15, C.text, { w: 600 });
+  if (st.subView === 'scripts') SCRIPTS.forEach((s, k) => {
+    const y = 44 + k * 52; rr(12, y, 296, 44, 10, st.press === 'r' + k ? C.s3 : C.s2);
+    text(s.n, 24, y + 27, 14, C.text); text(s.s, 268, y + 27, 12, C.mute, { a: 'right', mono: 1 }); icon('scripts', 278, y + 13, C.acc);
+  });
+  else {
+    rr(12, 44, 296, 44, 10, C.s2); text('Brightness', 24, 71, 14, C.text);
+    rr(124, 64, 168, 4, 2, C.s3); rr(124, 64, 168 * st.bright, 4, 2, C.acc); disc(124 + 168 * st.bright, 66, 9, C.text);
+    [['Display off', 'never'], ['Language', 'English']].forEach(([a, b], k) => { const y = 96 + k * 52; rr(12, y, 296, 44, 10, C.s2); text(a, 24, y + 27, 14, C.text); text(b, 296, y + 27, 14, C.dim, { a: 'right' }); });
+  }
+}
+
+function actions() {
+  const a = st.act.x, top = lerp(H, 28, a);
+  g.fillStyle = `rgba(0,0,0,${0.6 * clamp(a, 0, 1)})`; g.fillRect(0, 0, W, H);
+  rr(0, top, W, H - top + 40, 16, C.s1); rr(142, top + 4, 36, 4, 2, C.s3);
+  g.save(); g.beginPath(); g.rect(0, top, W, H); g.clip(); g.translate(0, top);
+  const s = clamp(st.sub.x, 0, 1);
+  if (s < 0.99) { g.save(); g.globalAlpha = 1 - s; g.translate(-s * 80, 0); sheetMain(); g.restore(); }
+  if (s > 0.01) { g.save(); g.globalAlpha = s; g.translate((1 - st.sub.x) * W, 0); sheetSub(); g.restore(); }
+  g.restore();
+}
+
+// stands in for the real QR code of the hotspot
+const QR = (() => { let s = 232; const rnd = () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff; const n = 25, m = [];
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) m.push(rnd() < 0.48);
+  const fp = (ox, oy) => { for (let y = -1; y < 8; y++) for (let x = -1; x < 8; x++) { const X = ox + x, Y = oy + y; if (X < 0 || Y < 0 || X >= n || Y >= n) continue;
+    m[Y * n + X] = x >= 0 && x < 7 && y >= 0 && y < 7 && (x === 0 || x === 6 || y === 0 || y === 6 || (x > 1 && x < 5 && y > 1 && y < 5)); } };
+  fp(0, 0); fp(n - 7, 0); fp(0, n - 7); return m; })();
+
+function connect() {
+  const c = st.con.x, bot = lerp(0, 212, c);
+  g.fillStyle = `rgba(0,0,0,${0.6 * clamp(c, 0, 1)})`; g.fillRect(0, 0, W, H);
+  g.save(); g.translate(0, bot - 212);
+  rr(0, -40, W, 252, 16, C.s1); rr(142, 204, 36, 4, 2, C.s3);
+  rr(16, 14, 128, 128, 10, '#fff'); g.fillStyle = '#000';
+  for (let y = 0; y < 25; y++) for (let x = 0; x < 25; x++) if (QR[y * 25 + x]) g.fillRect(30 + x * 4, 28 + y * 4, 4, 4);
+  text('Hotspot', 160, 30, 11, C.mute); text('RS232-FE0C', 160, 48, 15, C.text, { w: 600 });
+  text('Password', 160, 72, 11, C.mute); text('rs232mockup', 160, 90, 13, C.text, { mono: 1 });
+  text('Then open', 160, 114, 11, C.mute); text('192.168.4.1', 160, 132, 13, C.text, { mono: 1 });
+  [['LAN', '192.168.10.190', C.ok], ['Bluetooth', 'PIN 783 050', C.acc], ['Control center', 'connected', C.ok]].forEach(([a, b, col], k) => {
+    const y = 162 + k * 16; disc(20, y - 4, 3, col); text(a, 30, y, 12, C.dim); text(b, 304, y, 12, C.text, { a: 'right', mono: k < 2 });
+  });
+  g.restore();
+}
+
+const BTN = { l: [24, 160, 132, 56], r: [164, 160, 132, 56], w: [24, 160, 272, 56] };
+function button(r, label, col, fg, id, hold) {
+  rr(r[0], r[1], r[2], r[3], 12, st.press === id ? C.s3 : col);
+  if (hold && hold.p > 0) { g.save(); g.beginPath(); g.roundRect(r[0], r[1], r[2], r[3], 12); g.clip(); g.fillStyle = 'rgba(255,69,58,.55)'; g.fillRect(r[0], r[1], r[2] * hold.p, r[3]); g.restore(); }
+  text(label, r[0] + r[2] / 2, r[1] + 33, 15, fg, { a: 'center', w: 600 });
+}
+function modal() {
+  const m = clamp(st.modal.x, 0, 1), k = st.modalKind;
+  g.fillStyle = `rgba(0,0,0,${0.7 * m})`; g.fillRect(0, 0, W, H);
+  g.save(); g.globalAlpha = m; g.translate(160, 120); g.scale(0.94 + 0.06 * m, 0.94 + 0.06 * m); g.translate(-160, -120);
+  rr(12, 12, 296, 216, 16, C.s1);
+  if (k === 'stick') {
+    text('USB stick', 160, 42, 15, C.text, { a: 'center', w: 600 });
+    text('Connected', 160, 74, 22, C.acc, { a: 'center', w: 600 });
+    text(`read ${fmtB(Math.round(st.stick.r * 1000))} · written 48.0 kB`, 160, 96, 12, C.dim, { a: 'center', mono: 1 });
+    text('The card belongs to the USB port now.', 160, 122, 11, C.mute, { a: 'center' }); text('Eject it there before you end.', 160, 137, 11, C.mute, { a: 'center' });
+    button(BTN.w, 'Hold to end · restarts', C.s2, C.text, 'bw', st.holds.end);
+  } else {
+    const ask = k === 'remote', R = st.remote;
+    text('Remote console', 160, 42, 15, C.text, { a: 'center', w: 600 });
+    text(ask ? `niko asks for port ${st.cur + 1} · 15 min` : `niko · port ${R ? R.port + 1 : 1} · ${R ? mmss(R.left) : ''} left`, 160, 62, 12, C.dim, { a: 'center' });
+    text('482 913', 160, 116, 40, C.text, { a: 'center', w: 600, mono: 1 });
+    text(ask ? 'The same code in their browser?' : 'Their browser shows the same code.', 160, 140, 11, C.mute, { a: 'center' });
+    if (ask) { button(BTN.l, 'Refuse', C.s2, C.text, 'bl'); button(BTN.r, 'Allow', C.acc, '#fff', 'br'); }
+    else { button(BTN.l, 'Keep', C.s2, C.text, 'bl'); button(BTN.r, 'Hold to end', C.s2, C.bad, 'br', st.holds.end); }
+  }
+  g.restore();
+}
+
+function splash() {
+  g.globalAlpha = clamp(st.splash / 0.25, 0, 1); g.fillStyle = C.bg; g.fillRect(0, 0, W, H);
+  rr(132, 68, 56, 56, 13, C.acc);
+  g.strokeStyle = '#fff'; g.lineWidth = 2.5; g.lineJoin = 'round'; g.lineCap = 'round';
+  g.beginPath(); g.moveTo(142, 85); g.lineTo(178, 85); g.lineTo(174, 107); g.lineTo(146, 107); g.closePath(); g.stroke();
+  g.lineWidth = 2; g.beginPath(); g.moveTo(152, 91); g.lineTo(157, 96); g.lineTo(152, 101); g.moveTo(160, 101); g.lineTo(168, 101); g.stroke();
+  text('RS232 Console', 160, 150, 15, C.text, { a: 'center', w: 600 }); g.globalAlpha = 1;
+}
+
+function draw() {
+  g.setTransform(S, 0, 0, S, 0, 0); g.globalAlpha = 1; g.fillStyle = C.bg; g.fillRect(0, 0, W, H);
+  ports.forEach((p, i) => { const ox = (i - st.page.x) * W; if (Math.abs(ox) < W) home(p, i, ox); });
+  ports.forEach((_, i) => disc(160 + (i - (ports.length - 1) / 2) * 12, 214, i === Math.round(st.page.x) ? 3 : 2.5, i === Math.round(st.page.x) ? C.text : C.mute));
+  rr(142, 226, 36, 4, 2, C.s3);
+  if (st.term.x > 0.002) terminal();
+  if (st.con.x > 0.002) connect();
+  if (st.act.x > 0.002) actions();
+  if (st.modalKind) modal();
+  if (st.splash > 0) splash();
+  if (st.bright < 1) { g.fillStyle = `rgba(0,0,0,${(1 - st.bright) * 0.75})`; g.fillRect(0, 0, W, H); }
+}
+
+// ---- what happens
+function openSheet(v = 0) { st.ruler.x = st.ruler.to = RATES.indexOf(port().baud); st.ruler.v = 0; go(st.act, 1, v, v ? 0.85 : 1); }
+function openModal(k) { st.modalKind = k; st.press = null; st.holds.end.p = 0; go(st.modal, 1); }
+function closeModal() { go(st.modal, 0); }
+function tile(id) {
+  const p = port();
+  if (id === 'auto' && !st.listen) { st.listen = { i: 8, t: 0.2, lock: p.busy > 0 ? 3 : null }; st.note = null; }
+  else if (id === 'rec') p.rec = p.rec ? 0 : 0.01;
+  else if (id === 'scripts' || id === 'more') { st.subView = id; go(st.sub, 1); }
+  else if (id === 'stick') { go(st.act, 0); st.stick = { r: 0 }; openModal('stick'); }
+}
+function key(i) {
+  const p = port(); p.txq += 1.5;
+  if (i === 0) { feed(p, p.prompt + p.cl); if (p.cl.trim()) p.pend.push(...RESP); p.cl = ''; }
+  else if (i === 1) { feed(p, p.prompt + p.cl + '^C'); p.cl = ''; }
+  else if (i === 2) p.cl = p.cl ? p.cl : 'show ';
+  else if (i === 3) p.cl = 'show interfaces status';
+  else if (p.cl.length < 40) p.cl += ' ';
+}
+const fire = { break() { const p = port(); p.brk = 1; p.txq += 3; }, end() { if (st.modalKind === 'stick') { st.stick = null; closeModal(); st.splash = 1.5; } else { st.remote = null; closeModal(); } } };
+
+function update(dt) {
+  [st.page, st.act, st.con, st.term, st.modal, st.sub, st.ruler].forEach((s) => step(s, dt));
+  for (const k in st.holds) { const h = st.holds[k]; if (h.on) { h.p += dt / 0.7; if (h.p >= 1) { h.p = 1; h.on = false; fire[k](); } } else if (h.p > 0) h.p = Math.max(0, h.p - dt / 0.2); }
+  if (st.modalKind && st.modal.to === 0 && st.modal.x < 0.02) st.modalKind = null;
+  if (st.act.to === 0 && st.act.x < 0.02) { st.sub.x = st.sub.to = 0; st.subView = null; }
+  if (st.sub.to === 0 && st.sub.x < 0.01) st.subView = null;
+  if (st.splash > 0) st.splash = Math.max(0, st.splash - dt);
+  if (st.note) { st.note.t -= dt; if (st.note.t <= 0) st.note = null; }
+}
+
+// ---- the finger
+let P = null;
+const layer = () => st.splash > 0 ? 'none' : st.modalKind && st.modal.to === 1 ? 'modal' : st.act.to === 1 ? 'act' : st.con.to === 1 ? 'con' : st.term.to === 1 ? 'term' : 'home';
+function pt(e) { const r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left) * W / r.width, y: (e.clientY - r.top) * H / r.height }; }
+function vel() { const h = P.hist, a = h[0], b = h[h.length - 1], dt = (b.t - a.t) / 1000; return dt > 0.005 ? { x: (b.x - a.x) / dt, y: (b.y - a.y) / dt } : { x: 0, y: 0 }; }
+
+function down() {
+  const { x, y, layer: L } = P;
+  if (L === 'act') {
+    const ly = y - 28;
+    if (y < 28) P.t = 'out';
+    else if (st.subView) {
+      if (ly < 40) P.t = 'back';
+      else if (st.subView === 'more' && ly >= 44 && ly < 88 && x >= 104) { P.t = 'slider'; P.mode = 'slider'; st.bright = clamp((x - 124) / 168, 0.15, 1); }
+      else if (st.subView === 'scripts') { const k = Math.floor((ly - 44) / 52); if (k >= 0 && k < 3 && (ly - 44) % 52 < 44) { P.t = 'r' + k; st.press = P.t; } }
+    } else if (ly >= 12 && ly < 76) { P.t = 'ruler'; P.r0 = st.ruler.x; st.ruler.to = st.ruler.x; st.ruler.v = 0; }
+    else { const c = Math.floor((x - 14) / 100), r = Math.floor((ly - 80) / 64), k = r * 3 + c;
+      if (c >= 0 && c < 3 && r >= 0 && r < 2 && (x - 14) % 100 < 92 && (ly - 80) % 64 < 56) { P.t = 't' + k; st.press = P.t; if (TILES[k].hold) st.holds.break.on = true; } }
+  } else if (L === 'term') {
+    if (y >= 188) { const k = Math.floor((x - 4) / 64); if (k >= 0 && k < 5) { P.t = 'k' + k; st.press = P.t; } }
+    else if (y < 32 && x < 110) P.t = 'back';
+  } else if (L === 'modal') {
+    const k = st.modalKind;
+    if (k === 'stick') { if (inR(x, y, BTN.w)) { P.t = 'bw'; st.press = 'bw'; st.holds.end.on = true; } }
+    else if (inR(x, y, BTN.l)) { P.t = 'bl'; st.press = 'bl'; }
+    else if (inR(x, y, BTN.r)) { P.t = 'br'; st.press = 'br'; if (k === 'remoteEnd') st.holds.end.on = true; }
+  } else if (L === 'home') { P.p0 = st.page.x; st.page.to = st.page.x; st.page.v = 0; }
+}
+
+function decide(dx, dy) {
+  const hor = Math.abs(dx) > Math.abs(dy), L = P.layer;
+  st.press = null; st.holds.break.on = false; st.holds.end.on = false;
+  if (L === 'home') P.mode = hor ? 'page' : dy < 0 ? 'act' : 'con';
+  else if (L === 'act') P.mode = P.t === 'ruler' && hor ? 'ruler' : !hor && dy > 0 ? 'sheet' : 'none';
+  else if (L === 'con') P.mode = !hor && dy < 0 ? 'sheet' : 'none';
+  else if (L === 'term') P.mode = !hor && dy > 0 && P.y0 < 188 ? 'sheet' : 'none';
+  else P.mode = 'none';
+  if (P.mode === 'act') { st.ruler.x = st.ruler.to = RATES.indexOf(port().baud); }
+}
+
+function drag(dx, dy) {
+  const m = P.mode, L = P.layer;
+  if (m === 'page') { st.page.x = st.page.to = rubber(P.p0 - dx / W, 0, ports.length - 1, 1); }
+  else if (m === 'act') st.act.x = st.act.to = rubber(-dy / 212, 0, 1, 1);
+  else if (m === 'con') st.con.x = st.con.to = rubber(dy / 212, 0, 1, 1);
+  else if (m === 'ruler') st.ruler.x = st.ruler.to = rubber(P.r0 - dx / 56, 0, 7, 3);
+  else if (m === 'slider') st.bright = clamp((P.x - 124) / 168, 0.15, 1);
+  else if (m === 'sheet') { const s = L === 'act' ? st.act : L === 'con' ? st.con : st.term, d = L === 'con' ? -dy : dy; s.x = s.to = rubber(1 - d / 212, 0, 1, 1); }
+}
+
+function release() {
+  const v = vel(), m = P.mode, L = P.layer, { x, y } = P;
+  st.holds.break.on = false; st.holds.end.on = false;
+  const settle = (s, pos, vn, onOpen) => { const open = pos + project(vn) > 0.5; if (open && onOpen) onOpen(vn); else go(s, open ? 1 : 0, vn, 0.85); };
+  if (m === 'page') { const to = clamp(Math.round(st.page.x + project(-v.x / W)), Math.max(0, st.cur - 1), Math.min(ports.length - 1, st.cur + 1)); st.cur = to; st.note = null; go(st.page, to, -v.x / W, 0.85); }
+  else if (m === 'act') settle(st.act, st.act.x, -v.y / 212);
+  else if (m === 'con') settle(st.con, st.con.x, v.y / 212);
+  else if (m === 'ruler') { const to = clamp(Math.round(st.ruler.x + project(-v.x / 56)), 0, 7); port().baud = RATES[to]; go(st.ruler, to, -v.x / 56, 0.8); }
+  else if (m === 'sheet') { const s = L === 'act' ? st.act : L === 'con' ? st.con : st.term; settle(s, s.x, L === 'con' ? v.y / 212 : -v.y / 212); }
+  else if (!m) tap(x, y, L);
+  st.press = null;
+}
+
+function tap(x, y, L) {
+  const t = P.t;
+  if (L === 'home') {
+    if (y < 28) go(st.con, 1);
+    else if (y >= 204) openSheet();
+    else if (y >= TY) go(st.term, 1);
+    else if (st.remote && st.remote.port === st.cur) openModal('remoteEnd');
+  } else if (L === 'act') {
+    if (t === 'out') go(st.act, 0);
+    else if (t === 'back') go(st.sub, 0);
+    else if (t === 'ruler') { const to = clamp(Math.round(st.ruler.to) + (x < 132 ? -1 : x > 188 ? 1 : 0), 0, 7); port().baud = RATES[to]; go(st.ruler, to); }
+    else if (t && t[0] === 't') { const T = TILES[+t.slice(1)]; if (!T.hold) tile(T.id); }
+    else if (t && t[0] === 'r') { const s = SCRIPTS[+t.slice(1)]; st.play = { port: st.cur, name: s.n, t: 0, d: 4 }; go(st.act, 0); }
+  } else if (L === 'con') { if (y > 212) go(st.con, 0); }
+  else if (L === 'term') { if (t === 'back') go(st.term, 0); else if (t && t[0] === 'k') key(+t.slice(1)); }
+  else if (L === 'modal') {
+    const k = st.modalKind;
+    if (k === 'remote' && t === 'br') { st.remote = { port: st.cur, who: 'niko', left: 900 }; closeModal(); }
+    else if (t === 'bl') closeModal();
+  }
+}
+
+cv.addEventListener('pointerdown', (e) => {
+  if (P) return;
+  cv.setPointerCapture(e.pointerId); const p = pt(e);
+  P = { id: e.pointerId, x0: p.x, y0: p.y, x: p.x, y: p.y, hist: [{ x: p.x, y: p.y, t: e.timeStamp }], mode: null, t: null, layer: layer() };
+  down(); e.preventDefault();
+});
+cv.addEventListener('pointermove', (e) => {
+  if (!P || e.pointerId !== P.id) return;
+  const p = pt(e); P.x = p.x; P.y = p.y; P.hist.push({ x: p.x, y: p.y, t: e.timeStamp }); while (P.hist.length > 5) P.hist.shift();
+  const dx = P.x - P.x0, dy = P.y - P.y0;
+  if (!P.mode && Math.hypot(dx, dy) > 10) decide(dx, dy);
+  if (P.mode) drag(dx, dy);
+});
+const up = (e) => { if (!P || e.pointerId !== P.id) return; release(); P = null; };
+cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+
+document.getElementById('bRemote').addEventListener('click', () => { if (!st.modalKind && !st.splash) { go(st.act, 0); go(st.con, 0); openModal(st.remote ? 'remoteEnd' : 'remote'); } });
+document.getElementById('bBurst').addEventListener('click', () => { const p = port(); p.burst = 22; p.amp = 1; });
+
+let lastDraw = performance.now(), acc = 0;
+function frame(t) {
+  requestAnimationFrame(frame);
+  if (fpsBox.checked && t - lastDraw < 1000 / 15 - 2) return;
+  const dt = clamp((t - lastDraw) / 1000, 0, 0.25); lastDraw = t;
+  acc += dt; while (acc >= 0.1) { acc -= 0.1; tick(); }
+  update(dt); draw();
+}
+for (let i = 0; i < 60; i++) tick();          // a little history, so the first frame is not empty
+draw(); requestAnimationFrame(frame);
+})();
+</script>

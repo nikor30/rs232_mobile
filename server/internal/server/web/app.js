@@ -434,6 +434,8 @@
       : t('Somebody at the device has to allow every console. Granted only at the device.'), st.unatt ? 'attn' : '');
     tile('#oCtl', st.ctl == null ? '–' : st.ctl ? t('allowed') : t('read only'), st.ctl ? t('Commands, settings and templates are taken.') : t('Allowed only at the device itself.'));
     tile('#oBat', st.bat_pct != null ? `${st.bat_pct} %` : '–', st.bat_mv ? `${(st.bat_mv / 1000).toFixed(2)} V` : '');
+    $('#oBatBar').hidden = st.bat_pct == null;
+    $('#oBatBar').value = st.bat_pct || 0;
     tile('#oSig', st.rssi != null ? el('span', {}, bars(st.rssi), ` ${st.rssi} dBm`) : '–', st.rssi == null ? '' : st.rssi >= -67 ? t('good') : st.rssi >= -78 ? t('fair') : t('weak – large transfers take long'));
     tile('#oFw', st.fw || (d.info && d.info.fw) || '–', [LANGS[st.lang] || st.lang, st.hw || (d.info && d.info.hw)].filter(Boolean).join(' · '));
     const sd = st.sd || {};
@@ -1371,7 +1373,9 @@
   function conAttach(dev, id, left, devKey) {
     conDetach();
     $('#conBox').hidden = false;
-    const term = new Terminal({ cursorBlink: true, scrollback: 5000, fontSize: 14, convertEol: false, rightClickSelectsWord: false });
+    // green on black, as the device shows the port on its own display and web page
+    const term = new Terminal({ cursorBlink: true, scrollback: 5000, fontSize: 14, convertEol: false, rightClickSelectsWord: false,
+      theme: { background: '#000000', foreground: '#30d158', cursor: '#30d158', selectionBackground: '#0a4a8f' } });
     const fit = new FitAddon.FitAddon();
     term.loadAddon(fit);
     term.open($('#term'));
@@ -1387,7 +1391,7 @@
         c.e2e = s;
         delete conKeys[id];
         e2e.className = 'chip ok';
-        e2e.textContent = '🔒 ' + t('end to end · code {code}', { code: s.code });
+        e2e.textContent = t('end to end · code {code}', { code: String(s.code).replace(/^(\d{3})(\d{3})$/, '$1 $2') });   // three and three, as the display shows it
         e2e.title = t('Encrypted between this browser and the device. The device shows the same code - if it does, nobody sits in between, not even the server.');
       });
     } else c.ready = Promise.resolve();

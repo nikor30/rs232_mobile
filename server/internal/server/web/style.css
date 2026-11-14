@@ -1,21 +1,23 @@
-/* Administrator's interface of the control center. One accent colour for
-   everything that leads somewhere; green, orange and red only for states, and
-   never without a word beside them. No inline styles anywhere: the page runs
-   under style-src 'self'. */
+/* Administrator's interface of the control center. The same language as the
+   device's display and its web page: black ground with grey surfaces in steps
+   (#1c1c1e, #2c2c2e, #3a3a3c), one accent colour for everything that leads
+   somewhere, green, orange and red only for states and never without a word
+   beside them, 12 px corners, thin meters, numbers to compare set large. No
+   inline styles anywhere: the page runs under style-src 'self'. */
 :root {
-  --bg: #f3f4f7; --surface: #fff; --side: #fafbfc; --sunk: #eef0f4; --line: #e3e6ec;
-  --text: #14161a; --dim: #667085; --accent: #0071e3; --accent-soft: #e5f1fe;
+  --bg: #f2f2f7; --surface: #fff; --side: #f9f9fb; --sunk: #e9e9ee; --line: #dedee3;
+  --text: #1c1c1e; --dim: #636366; --accent: #0071e3; --accent-soft: #e5f1fe;
   --ok: #16803c; --ok-soft: #e3f6e9; --warn: #b25e00; --warn-soft: #fdf0dc; --bad: #c8261a; --bad-soft: #fde8e6;
   --shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 1px 3px rgba(16, 24, 40, .08);
   --lift: 0 8px 24px rgba(16, 24, 40, .12);
-  --r: 14px;
+  --r: 12px;
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0b0c10; --surface: #17191f; --side: #111318; --sunk: #1f222a; --line: #282c36;
-    --text: #f2f3f5; --dim: #98a1b0; --accent: #0a84ff; --accent-soft: #10294a;
-    --ok: #3ccf6e; --ok-soft: #11301c; --warn: #ffa733; --warn-soft: #3a2a0c; --bad: #ff6257; --bad-soft: #3b1512;
+    --bg: #000; --surface: #1c1c1e; --side: #0f0f10; --sunk: #2c2c2e; --line: #38383a;
+    --text: #f5f5f7; --dim: #98989d; --accent: #0a84ff; --accent-soft: #0a2a4d;
+    --ok: #30d158; --ok-soft: #0f2e17; --warn: #ff9f0a; --warn-soft: #3a2a0a; --bad: #ff453a; --bad-soft: #3b1512;
     --shadow: 0 0 0 1px var(--line); --lift: 0 12px 32px rgba(0, 0, 0, .5);
   }
 }
@@ -32,7 +34,13 @@ a { color: var(--accent); text-decoration: none; }
 .err { color: var(--bad); }
 .pre { white-space: pre-line; }
 .mono, code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .8125rem; word-break: break-all; }
-code.big { font-size: 1.25rem; letter-spacing: .05em; }
+code.big { font-size: 2rem; font-weight: 600; letter-spacing: .04em; font-variant-numeric: tabular-nums; }   /* a code to compare or type: large, as on the display */
+/* how full something is: one thin bar everywhere */
+progress { appearance: none; -webkit-appearance: none; width: 100%; height: 6px; border: 0; border-radius: 3px; background: var(--sunk); overflow: hidden; display: block; }
+progress::-webkit-progress-bar { background: var(--sunk); }
+progress::-webkit-progress-value { background: var(--accent); border-radius: 3px; }
+progress::-moz-progress-bar { background: var(--accent); border-radius: 3px; }
+.tiles progress { margin-top: .4rem; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* ---- controls */
