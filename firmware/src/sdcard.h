@@ -15,7 +15,7 @@ namespace Sd {
   uint64_t totalMb();
   uint64_t usedMb();
   const char *typeName();
-  String history();                   // diagnostic trail of mounts and failures (debug console)
+  String history();                   // diagnostic trail of mounts and failures (debug console, /api/status sdLog)
 
   // ---- session log ----
   bool logStart(uint8_t port);        // opens the next free file for that port

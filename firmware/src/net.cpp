@@ -313,6 +313,7 @@ static String statusJson() {
   d["usbDebug"] = settings.usbDebug;
   d["sd"] = Sd::mounted();
   d["sdRaw"] = Sd::unreadable();
+  d["sdLog"] = Sd::history();          // how the last starts went with the card (sdcard.cpp: note): K/R start, + mounted, -xx answer to CMD0
   d["reset"] = (int)esp_reset_reason();   // why the last run ended (esp_reset_reason_t: 3 software, 4 panic, 5-7 watchdogs)
   Sd::Stick st = Sd::stick();
   if (st.on) {                           // the card is lent to the USB port
