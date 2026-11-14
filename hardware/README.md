@@ -73,6 +73,8 @@ eine externe Antenne ginge nur mit Umbau am Modul. Das Gehäuse hat deshalb kein
 | `enclosure/module_sheet.py` | Maßblatt des Moduls |
 | `enclosure/out/` | `body.step/.stl`, `base.step/.stl`, `key.step/.stl`, `rs232_console_assembly.step`, Bilder |
 | `vendor/` | Hinweis, woher das Herstellermodell kommt (die Dateien selbst nicht) |
+| `hat/` | **Zwei-Port-Prototyp** „RS232 CONSOLE HAT v3.0“: Fertigungsdaten, `board.py`, Beschreibung des Gehäuses dazu (`hat/README.md`) |
+| `enclosure/out_hat/` | Gehäuse für den Zwei-Port-Prototyp (`case.py --hat`): `body`, `base`, `key`, `rest` als STEP und STL, Zusammenbau, Bilder |
 
 Neu erzeugen (KiCad 7, POV-Ray und `pip install cadquery`):
 
@@ -198,6 +200,18 @@ Körper und Boden gegen Trägerplatine, Modul beim Einsetzen von oben, Trägerpl
 beim Eindrücken (nur die fünf Nasen dürfen berühren), Tasten in Ruhe und 0,6 mm gedrückt, Tasten beim
 Einschieben, Modul beim Einsetzen an den Tasten vorbei, USB-C-Stecker mit dem größten erlaubten Griff
 eingesteckt und auf dem Weg hinein. Dazu: Die Tastennase trifft den Stößel des Herstellermodells.
+
+### Variante für den Zwei-Port-Prototyp
+
+`case.py --hat` baut dasselbe Gehäuse um die vorhandene Zwei-Port-Platine (50 × 50 mm, nicht isoliert, per
+Draht am Modul): außen 56,8 × 81,0 × 32,8 mm, Oberseite und USB-C-Ende unverändert. Weil das Modul dort in
+keiner Buchsenleiste steckt, tragen es Pfosten des Bodens und ein Steg auf der Platine an seinen
+M2-Abstandsbolzen. Alles Weitere: `hat/README.md`.
+
+### Akku sichern
+
+Unter beiden Platinen stehen Lötstifte. Den Akku mit doppelseitigem Klebeband auf den Boden kleben, damit er
+nicht dagegen wandert.
 
 ## Bestellen bei PCBWay
 

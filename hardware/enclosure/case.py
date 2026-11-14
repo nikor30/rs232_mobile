@@ -3,6 +3,7 @@
 
     <venv>/bin/python case.py            # STEP + STL of every part, assembly STEP, checks
     <venv>/bin/python case.py --no-vendor   # skip the checks against the vendor STEP
+    <venv>/bin/python case.py --hat      # the same case around the two-port prototype board (hardware/hat), into out_hat/
 
 Needs CadQuery (pip install cadquery).  All numbers of the Waveshare module come from the vendor's
 own 3D model (carrier/generate.py: WS), the board outline and the part positions from the same
@@ -33,7 +34,11 @@ sys.path.insert(0, os.path.join(HERE, "..", "carrier"))
 import generate as G   # noqa: E402
 
 WS = G.WS
-OUT = os.path.join(HERE, "out")
+VARIANT = "hat" if "--hat" in sys.argv else "carrier"
+if VARIANT == "hat":
+    sys.path.insert(0, os.path.join(HERE, "..", "hat"))
+    import board as HB   # noqa: E402
+OUT = os.path.join(HERE, "out_hat" if VARIANT == "hat" else "out")
 VENDOR_STEP = os.path.join(HERE, "..", "vendor", "esp32-s3-touch-lcd-2_20241108.stp")
 
 # ----------------------------------------------------------------------------- parameters
@@ -65,9 +70,38 @@ P = dict(
     key_shoulder=1.0,                    # the key's body is taller than its cap: it cannot leave outwards
     key_nose_h=1.9, key_stroke=0.6,
     rj_clr=0.3, foot_d=10.4, foot_depth=0.5,
+    rest_gap=0.15,       # play between the module's standoffs and what they rest on (two-port variant)
 )
-H = G.BOARD_H
-W = G.BOARD_W
+if VARIANT == "hat":
+    # Two-port prototype board: 50 x 50 mm with square corners, held by its four mounting holes.  The module
+    # is wired to it, not plugged in, so it rests on posts under its own M2 standoffs instead of on sockets.
+    P.update(gap=1.0, gap_rj=1.0, r_out=5.0,      # room for the board's square corners inside the rounded cavity
+             bot_clr=4.0)                         # solder tails of the jacks (up to 3.3 mm) stay above the battery bay
+    W, H, BOARD_R = HB.W, HB.H, 0.0
+    WS_XC, WS_YC = HB.WS_XC, HB.ws_yc(WS)
+
+    def ws_xy(xv, yv):
+        return WS_XC - xv, WS_YC + yv
+    MODULE_Z = 14.0                               # vendor z -> device z: leaves 1.0 between jack top and top plate
+    JACKS, JACK_W, JACK_H = HB.JACK_X, HB.JACK_W, HB.JACK_H
+    JACK_FRONT = H - HB.JACK_FRONT                # the jack fronts sit this far inside the board edge
+    POST_XY, POST_PIN, POST_ROOT = HB.HOLES, HB.HOLE_D - 0.3, 1.4
+    ARM_STARTS = [("L", 12.0), ("L", 52.0), ("R", 12.0), ("R", 52.0), ("U", W / 2 - 11.0)]
+    PRY_Y = 41.0
+    BATTERY = (35.0, 52.0)                        # largest cell: width x length (7 thick)
+    STANDOFF_POSTS = sorted(WS["standoffs"], key=lambda s: s[1])[:2]     # the two at the USB-C end; the other two rest on the board
+    LABEL = (3.4, 43.0)
+else:
+    W, H, BOARD_R = G.BOARD_W, G.BOARD_H, G.BOARD_R
+    WS_XC, ws_xy = G.WS_XC, G.ws_xy
+    MODULE_Z = G.WS_Z0 + P["plug_gap"]
+    JACKS, JACK_W, JACK_H, JACK_FRONT = G.CH_CENTERS, G.V["RJ45_W"], G.V["RJ45_H"], 0.0
+    POST_XY, POST_PIN, POST_ROOT = G.POSTS, None, 2.0
+    ARM_STARTS = [("L", 22.0), ("L", 80.0), ("R", 22.0), ("R", 80.0), ("U", W / 2 - P["arm_l"] / 2)]
+    PRY_Y = 55.0
+    BATTERY = (40.0, 60.0)
+    STANDOFF_POSTS = []
+    LABEL = (4.5, 30.0)
 
 
 def dev(xk, yk):
@@ -77,10 +111,10 @@ def dev(xk, yk):
 
 def ws_dev(xv, yv):
     """Vendor module coordinates -> device X, Y."""
-    return dev(*G.ws_xy(xv, yv))
+    return dev(*ws_xy(xv, yv))
 
 
-ZM = G.WS_Z0 + P["plug_gap"]                 # vendor z -> device z
+ZM = MODULE_Z                                # vendor z -> device z
 Z_TOP = WS["glass_z"][1] + ZM                # glass front = top face of the body
 Z_GLASS = WS["glass_z"][0] + ZM              # glass underside = ledge
 Z_PLATE = Z_TOP - P["top_t"]
@@ -100,9 +134,12 @@ OX1, OX2 = CX1 - P["wall"], CX2 + P["wall"]
 OY1, OY2 = CY1 - P["wall_rj"], CY2 + P["wall"]
 R_IN = P["r_out"] - P["wall"]
 
+STANDOFF_Z = WS["standoff_z"][0] + ZM                  # underside of the module's M2 standoffs
+POST_PIN_OUT = 2.0                                     # the pins of the body posts stick out this far under the board
+
 # USB-C end
 Y_BAY = OY2 - P["bay_depth"]                           # floor of the bay
-USB_X, USB_Z = G.WS_XC, WS["usbc_axis_z"] + ZM         # axis of the receptacle
+USB_X, USB_Z = WS_XC, WS["usbc_axis_z"] + ZM           # axis of the receptacle
 USB_RIM_Y = ws_dev(0, WS["usbc_front_y"])[1]           # front edge of the receptacle shell
 USB_BACK_Y = ws_dev(0, WS["usbc_back_y"])[1]           # where a plug's shell stops
 BAY_Z = USB_Z + 0.2
@@ -111,8 +148,8 @@ KEYS = {name: ws_dev(xv, yv) for name, (xv, yv) in WS["buttons"].items()}   # x 
 KEY_TIP_Y = max(y for _, y in KEYS.values())           # the two tips differ by 0.025 mm: one key fits both
 KEY_STOP_Y = ws_dev(0, WS["tp_fpc_y"])[1] + 0.45       # nothing of the body reaches further in: drop-in path of the module
 
-POSTS = [dev(x, y) for x, y in G.POSTS]
-ARMS = [("L", 22.0), ("L", 80.0), ("R", 22.0), ("R", 80.0), ("U", W / 2 - P["arm_l"] / 2)]   # side, start along the wall
+POSTS = [dev(x, y) for x, y in POST_XY]
+ARMS = ARM_STARTS                                      # side, start along the wall
 
 
 # ----------------------------------------------------------------------------- helpers
@@ -234,9 +271,9 @@ def make_body():
             .extrude(P["wall"] + 2).edges("|Y").fillet(P["usb_r"]))
     body = body.cut(well)
     # RJ45 windows with a small chamfer outwards
-    hw = G.V["RJ45_W"] / 2 + P["rj_clr"]
-    z1, z2 = -P["rj_clr"], G.V["RJ45_H"] + P["rj_clr"] + 0.1
-    for xc in G.CH_CENTERS:
+    hw = JACK_W / 2 + P["rj_clr"]
+    z1, z2 = -P["rj_clr"], JACK_H + P["rj_clr"] + 0.1
+    for xc in JACKS:
         body = body.cut(box(xc - hw, OY1 - 1, xc + hw, CY1 + 0.5, z1, z2))
         ch = (cq.Workplane("XZ").workplane(offset=-OY1).center(xc, (z1 + z2) / 2).rect(2 * hw + 1.4, z2 - z1 + 1.4)
               .workplane(offset=-0.7).rect(2 * hw, z2 - z1).loft())
@@ -244,8 +281,10 @@ def make_body():
     # posts that hold the carrier down
     for px, py in POSTS:
         body = body.union(cyl(px, py, 0.0, Z_PLATE + 0.1, P["post_d"]))
+        if POST_PIN:                                   # a pin through the board's mounting hole: the board finds its place on four of them
+            body = body.union(cyl(px, py, Z_CARR_BOT - POST_PIN_OUT, 0.01, POST_PIN).faces("<Z").chamfer(0.5))
     # port numbers, debossed
-    for i, xc in enumerate(G.CH_CENTERS):
+    for i, xc in enumerate(JACKS):
         t = (cq.Workplane("XY").workplane(offset=Z_TOP - 0.4).center(xc, 9.0)
              .text(str(i + 1), 5.0, 1.0, font="Liberation Sans", halign="center", valign="center"))
         body = body.cut(t)
@@ -258,11 +297,20 @@ def make_body():
         body = body.cut(oriented_prism(wall_o, u, n, [(-0.01, Z_BOT - 0.01), (0.9, Z_BOT - 0.01), (-0.01, Z_BOT + 0.9)], a1 - 1.5, a2 + 1.5))
     # two pry notches in the bottom edge of the long sides
     for x1, x2 in ((OX1 - 1, CX1 + 0.01), (CX2 - 0.01, OX2 + 1)):
-        body = body.cut(box(x1, 49.0, x2, 61.0, Z_BOT - 1, Z_BASE_BOT + 1.0))
+        body = body.cut(box(x1, PRY_Y - 6.0, x2, PRY_Y + 6.0, Z_BOT - 1, Z_BASE_BOT + 1.0))
     return body
 
 
 # ----------------------------------------------------------------------------- base
+def battery_rect():
+    """The space the corner stops on the base leave for the cell (x1, y1, x2, y2)."""
+    bx1, bx2 = WS_XC - BATTERY[0] / 2 - 0.5, WS_XC + BATTERY[0] / 2 + 0.5
+    by2 = CY2 - P["base_clr"] - P["arm_t"] - P["arm_slot"] - 1.0
+    if STANDOFF_POSTS:                                 # the cell ends before the posts under the module
+        by2 = min(ws_dev(*s)[1] for s in STANDOFF_POSTS) - 4.5 / 2 - POST_ROOT - 0.6
+    return bx1, by2 - BATTERY[1] - 1.0, bx2, by2
+
+
 def make_base():
     e = P["base_clr"]
     x1, y1, x2, y2 = CX1 + e, CY1 + e, CX2 - e, CY2 - e
@@ -276,14 +324,20 @@ def make_base():
         base = base.union(oriented_box(o, u, n, 0.0, L, -t, 0.0, Z_BASE_BOT, arm_top))                         # the arm
         base = base.union(oriented_prism(o, u, n, [(-0.01, z) if r == 0 else (r, z) for r, z in bump_profile(Z_BUMP)], 0.5, 0.5 + P["bump_l"]))
     # posts under the carrier (same places as the body posts)
+    def post(px, py, z_top, d):
+        nonlocal base
+        base = base.union(cyl(px, py, Z_BASE_TOP - 0.01, z_top, d))
+        base = base.union(cq.Workplane("XY").workplane(offset=Z_BASE_TOP - 0.01).center(px, py).circle(d / 2 + POST_ROOT)
+                          .workplane(offset=3.0).circle(d / 2).loft())
     for px, py in POSTS:
-        base = base.union(cyl(px, py, Z_BASE_TOP - 0.01, Z_CARR_BOT, P["post_d"]))
-        base = base.union(cq.Workplane("XY").workplane(offset=Z_BASE_TOP - 0.01).center(px, py).circle(P["post_d"] / 2 + 2.0)
-                          .workplane(offset=3.0).circle(P["post_d"] / 2).loft())
+        post(px, py, Z_CARR_BOT, P["post_d"])
+        if POST_PIN:                                   # socket for the pin of the body post above
+            base = base.cut(cyl(px, py, Z_CARR_BOT - POST_PIN_OUT - 0.6, Z_CARR_BOT + 0.01, POST_PIN + 0.5))
+    for xv, yv in STANDOFF_POSTS:                      # the module rests on these with its M2 standoffs
+        px, py = ws_dev(xv, yv)
+        post(px, py, STANDOFF_Z - P["rest_gap"], 4.5)
     # battery fence: corner stops for a cell up to 40 x 60 mm under the module
-    bx1, bx2 = G.WS_XC - 20.5, G.WS_XC + 20.5
-    by2 = CY2 - e - P["arm_t"] - P["arm_slot"] - 1.0
-    by1 = by2 - 61.0
+    bx1, by1, bx2, by2 = battery_rect()
     for cx, sx in ((bx1, 1), (bx2, -1)):
         for cy, sy in ((by1, 1), (by2, -1)):
             base = base.union(box(min(cx, cx - sx * 1.4), min(cy, cy + sy * 9.0), max(cx, cx - sx * 1.4), max(cy, cy + sy * 9.0), Z_BASE_TOP - 0.01, Z_BASE_TOP + 4.0))
@@ -293,9 +347,9 @@ def make_base():
         for fy in (y1 + 10, y2 - 10):
             base = base.cut(cyl(fx, fy, Z_BASE_BOT - 1, Z_BASE_BOT + P["foot_depth"], P["foot_d"]))
     for xa, xb in ((x1 - 1, x1 + 1.2), (x2 - 1.2, x2 + 1)):
-        base = base.cut(box(xa, 50.0, xb, 60.0, Z_BASE_BOT - 1, Z_BASE_BOT + 1.0))
-    label = (cq.Workplane("XY").workplane(offset=Z_BASE_BOT + 0.4).center(W / 2, 30.0)
-             .text("RS232 CONSOLE", 4.5, -1.0, font="Liberation Sans", halign="center", valign="center"))
+        base = base.cut(box(xa, PRY_Y - 5.0, xb, PRY_Y + 5.0, Z_BASE_BOT - 1, Z_BASE_BOT + 1.0))
+    label = (cq.Workplane("XY").workplane(offset=Z_BASE_BOT + 0.4).center(W / 2, LABEL[1])
+             .text("RS232 CONSOLE", LABEL[0], -1.0, font="Liberation Sans", halign="center", valign="center"))
     base = base.cut(label.mirror("YZ", (W / 2, 0, 0)))
     return base
 
@@ -393,8 +447,50 @@ def make_module():
     return parts
 
 
+def make_hat():
+    """The two-port board with its parts, from its fabrication files (hardware/hat)."""
+    pcb = box(0, 0, W, H, Z_CARR_BOT, 0)
+    for xk, yk in HB.HOLES:
+        pcb = pcb.cut(cyl(*dev(xk, yk), Z_CARR_BOT - 1, 1, HB.HOLE_D))
+    top, bottom = None, None
+    for _, x1, y1, x2, y2 in HB.JACKS:
+        (ax, ay), (bx, by) = dev(x1, y2), dev(x2, y1)
+        xc = (ax + bx) / 2
+        jack = box(ax, ay, bx, by, 0, JACK_H).cut(box(xc - 5.85, ay - 0.1, xc + 5.85, ay + 14.0, 2.6, 10.8))    # plug opening
+        top = jack if top is None else top.union(jack)
+    for _, x1, y1, x2, y2, h in HB.boxes():
+        (ax, ay), (bx, by) = dev(x1, y2), dev(x2, y1)
+        top = top.union(box(ax, ay, bx, by, 0, h))
+    for d, length in ((0.76, HB.PIN_BELOW), (3.2, 3.0)):                 # solder tails and board locks under the board
+        for xk, yk in (HB.PTH if d < 1 else HB.NPTH).get(d, []):
+            pin = cyl(*dev(xk, yk), Z_CARR_BOT - length, Z_CARR_BOT, 0.5 if d < 1 else 3.0)
+            bottom = pin if bottom is None else bottom.union(pin)
+    return {"pcb": pcb, "parts_top": top, "parts_bottom": bottom}
+
+
+def make_rest():
+    """Two-port variant: a bar that stands on the board and carries the module's two standoffs at the antenna
+    end, where no post from the base can reach.  Horns at its ends hold it between the standoffs.  It stands
+    in the free strip between the resistor row and the jumper row.  Printed lying on its side."""
+    so = sorted(WS["standoffs"], key=lambda t: t[1])[2:]
+    xs = sorted(ws_dev(x, y)[0] for x, y in so)
+    yc = ws_dev(*so[0])[1]
+    r = WS["standoff_d"] / 2 + 0.2
+    z_seat = STANDOFF_Z - P["rest_gap"]
+    z_horn = z_seat + 1.3
+    xa, xb = xs[0] - r, xs[1] + r                      # the standoffs sit between these two faces
+    profile = [(xa - 2.0, 0), (xa + 5.0, 0), (xa + 5.0, 0.8), (xb - 5.0, 0.8), (xb - 5.0, 0), (xb + 2.0, 0),
+               (xb + 2.0, z_horn), (xb, z_horn), (xb, z_seat), (xa, z_seat), (xa, z_horn), (xa - 2.0, z_horn)]
+    return prism_y(profile, yc - REST_T / 2, yc + REST_T / 2)
+
+
+REST_T = 2.6
+
+
 def make_carrier():
     """Carrier board with its parts as boxes (fab outline x height), from the board generator."""
+    if VARIANT == "hat":
+        return make_hat()
     placed, _ = G.build(write=False)
     pcb = rbox(0, 0, W, H, Z_CARR_BOT, 0, G.BOARD_R)
     top, bottom = None, None
@@ -424,7 +520,7 @@ def load_vendor():
 
 
 # ----------------------------------------------------------------------------- checks
-def checks(body, base, module, carrier, vendor, keys):
+def checks(body, base, module, carrier, vendor, keys, rest=None):
     ok = True
 
     def report(name, value, limit=0.01, unit="mm3"):
@@ -444,9 +540,28 @@ def checks(body, base, module, carrier, vendor, keys):
     # the catches are meant to bear on their pockets with a small preload: allow exactly that overlap
     preload_volume = 5 * P["bump_l"] * P["preload"] * P["bump"] * 1.3
     report("base x body (only the preload of the five catches)", vol(base.intersect(body)), preload_volume)
-    report("module x carrier (pins in sockets excluded)", vol(mod_all.cut(module["headers"]).intersect(car_all)))
+    if VARIANT == "hat":
+        report("module x board (the module hangs free above it)", vol(mod_all.intersect(car_all)))
+        pins = module["headers"].val().BoundingBox().zmin
+        print(f"  pin tips {pins:.2f} mm above the board, tallest part under the module {max(b[5] for b in HB.boxes()):.2f} mm")
+        report("module rest x board", vol(rest.intersect(car_all)))
+        report("module rest x module", vol(rest.intersect(mod_all)))
+        report("module rest x body", vol(rest.intersect(body)))
+        report("base x module", vol(base.intersect(mod_all)))
+        report("base x module rest", vol(base.intersect(rest)))
+        lift = P["rest_gap"] + 0.05                   # raised by a little more than the play, each support must meet a standoff
+        for name, part in (("base posts", base), ("module rest", rest)):
+            hit = vol(part.translate((0, 0, lift)).intersect(module["standoffs"]))
+            print(f"  {'ok  ' if hit > 0.01 else 'FAIL'} {name} carry the module's standoffs: overlap {hit:.3f} mm3 when raised {lift:.2f} mm")
+            ok &= hit > 0.01
+    else:
+        report("module x carrier (pins in sockets excluded)", vol(mod_all.cut(module["headers"]).intersect(car_all)))
     if vendor is not None:
         report("body x module (vendor STEP)", vol(body.intersect(vendor)))
+        if rest is not None:
+            report("module rest x module (vendor STEP)", vol(rest.intersect(vendor)))
+            report("base x module (vendor STEP)", vol(base.intersect(vendor)))
+            report("board x module (vendor STEP)", vol(car_all.intersect(vendor)))
         bb = vendor.val().BoundingBox()
         e = mod_all.val().BoundingBox()
         d = max(abs(bb.xmin - e.xmin), abs(bb.xmax - e.xmax), abs(bb.ymin - e.ymin), abs(bb.ymax - e.ymax), abs(bb.zmin - e.zmin), abs(bb.zmax - e.zmax))
@@ -533,7 +648,8 @@ def main():
     vendor = None
     if "--no-vendor" not in sys.argv and os.path.exists(VENDOR_STEP):
         vendor = load_vendor()
-    ok = checks(body, base, module, carrier, vendor, keys)
+    rest = make_rest() if VARIANT == "hat" else None
+    ok = checks(body, base, module, carrier, vendor, keys, rest)
 
     cq.exporters.export(body, os.path.join(OUT, "body.step"))
     cq.exporters.export(base, os.path.join(OUT, "base.step"))
@@ -546,6 +662,13 @@ def main():
     cq.exporters.export(key_flat, os.path.join(OUT, "key.stl"), tolerance=0.01, angularTolerance=0.1)
     kb = key_flat.val().BoundingBox()
     print(f"key   {kb.xlen:.1f} x {kb.ylen:.1f} x {kb.zlen:.1f} mm (print two, flat as exported)")
+    if rest is not None:
+        rb = rest.val().BoundingBox()
+        rest_flat = rest.translate((-rb.xmin, -rb.ymin, -rb.zmin)).rotate((0, 0, 0), (1, 0, 0), 90).translate((0, 0, REST_T))
+        cq.exporters.export(rest_flat, os.path.join(OUT, "rest.step"))
+        cq.exporters.export(rest_flat, os.path.join(OUT, "rest.stl"), tolerance=0.01, angularTolerance=0.1)
+        fb = rest_flat.val().BoundingBox()
+        print(f"rest  {fb.xlen:.1f} x {fb.ylen:.1f} x {fb.zlen:.1f} mm (print one, flat as exported)")
     colours = {"glass": (0.04, 0.04, 0.05), "tp_sensor": (0.2, 0.2, 0.22), "lcm": (0.55, 0.55, 0.57), "pmma": (0.85, 0.9, 0.95),
                "pcb": (0.05, 0.15, 0.45), "headers": (0.85, 0.75, 0.2), "standoffs": (0.8, 0.65, 0.3), "usbc": (0.75, 0.75, 0.78),
                "buttons": (0.9, 0.9, 0.9), "bat_header": (0.95, 0.95, 0.9), "tf_slot": (0.7, 0.72, 0.75), "camera_fpc": (0.2, 0.2, 0.2)}
@@ -553,7 +676,7 @@ def main():
     for name, s in module.items():
         mod.add(s, name=name, color=cq.Color(*colours[name]))
     mod.save(os.path.join(OUT, "waveshare_module_envelope.step"))
-    car = cq.Assembly(name="rs232_carrier")
+    car = cq.Assembly(name="rs232_console_hat" if VARIANT == "hat" else "rs232_carrier")
     car.add(carrier["pcb"], name="pcb", color=cq.Color(0.1, 0.4, 0.2))
     car.add(carrier["parts_top"], name="parts_top", color=cq.Color(0.15, 0.15, 0.15))
     car.add(carrier["parts_bottom"], name="parts_bottom", color=cq.Color(0.15, 0.15, 0.15))
@@ -563,6 +686,8 @@ def main():
     asm.add(base, name="base", color=cq.Color(0.6, 0.6, 0.6))
     for name, k in key_parts.items():
         asm.add(k, name=f"key_{name}", color=cq.Color(0.35, 0.36, 0.38))
+    if rest is not None:
+        asm.add(rest, name="module_rest", color=cq.Color(0.35, 0.36, 0.38))
     asm.add(mod, name="module")
     asm.add(car, name="carrier")
     asm.save(os.path.join(OUT, "rs232_console_assembly.step"))
@@ -573,17 +698,33 @@ def main():
         full.add(base, name="base", color=cq.Color(0.6, 0.6, 0.6))
         for name, k in key_parts.items():
             full.add(k, name=f"key_{name}", color=cq.Color(0.35, 0.36, 0.38))
+        if rest is not None:
+            full.add(rest, name="module_rest", color=cq.Color(0.35, 0.36, 0.38))
         full.add(vendor, name="waveshare_esp32_s3_touch_lcd_2_vendor")
         full.add(car, name="carrier")
         full.save(os.path.join(OUT, "rs232_console_assembly_vendor_module.step"))
     # meshes for the renderer
     shell, over = make_plug()
-    extra = [("keys", keys), ("plug_shell", shell), ("plug_over", over)]
+    extra = [("keys", keys), ("plug_shell", shell), ("plug_over", over)] + ([("rest", rest)] if rest is not None else [])
     for name, s in [("pcb_ws" if k == "pcb" else k, v) for k, v in module.items()] + list(carrier.items()) + extra:
         cq.exporters.export(s, os.path.join(OUT, f"_{name}.stl"), tolerance=0.02 if name in ("usbc", "buttons", "keys") else 0.03, angularTolerance=0.2)
     import json
     va = ws_dev(WS["glass"][0] + 3.06 + 30.99 / 2, WS["glass"][3] - 7.51 - 41.20 / 2)     # centre of the lit view area
-    json.dump({"z_top": Z_TOP, "z_base_top": Z_BASE_TOP, "cy2": CY2, "view_area_centre": va, "outer": [bb.xlen, bb.ylen, bb.zlen],
+    hat = None
+    if VARIANT == "hat":
+        so = sorted(WS["standoffs"], key=lambda t: t[1])
+        hat = {"W": W, "H": H, "holes": [list(dev(*h)) for h in HB.HOLES], "hole_d": HB.HOLE_D,
+               "jacks": [[dev(j[1], j[4])[0], dev(j[1], j[4])[1], dev(j[3], j[2])[0], dev(j[3], j[2])[1]] for j in HB.JACKS],
+               "parts": [[b[0], dev(b[1], b[4])[0], dev(b[1], b[4])[1], dev(b[3], b[2])[0], dev(b[3], b[2])[1], b[5]] for b in HB.boxes()],
+               "j3": [list(dev(*q)) for q in HB.J3], "pin_below": HB.PIN_BELOW,
+               "module_pcb": [*ws_dev(WS["pcb"][2], WS["pcb"][3]), *ws_dev(WS["pcb"][0], WS["pcb"][1])],
+               "glass": [GX1, GY1, GX2, GY2], "standoffs_base": [list(ws_dev(*q)) for q in so[:2]], "standoffs_rest": [list(ws_dev(*q)) for q in so[2:]],
+               "standoff_z": STANDOFF_Z, "rest_t": REST_T, "pin_tip_z": WS["hdr_pin_tip_z"] + ZM, "cavity": [CX1, CY1, CX2, CY2], "outer": [OX1, OY1, OX2, OY2],
+               "pcb_z": [WS["pcb_z"][0] + ZM, WS["pcb_z"][1] + ZM], "hdr_x": [ws_dev(WS["hdr_x"], 0)[0], ws_dev(-WS["hdr_x"], 0)[0]],
+               "hdr_y": [ws_dev(0, WS["hdr_y1"])[1], ws_dev(0, WS["hdr_y1"] - 13 * 2.54)[1]]}
+    json.dump({"variant": VARIANT, "hat": hat, "jacks": list(JACKS), "jack_w": JACK_W, "jack_h": JACK_H, "jack_front": JACK_FRONT, "ws_xc": WS_XC, "battery": list(BATTERY), "battery_rect": list(battery_rect()),
+               "oy": [OY1, OY2], "posts": [list(p) for p in POSTS],
+               "z_top": Z_TOP, "z_base_top": Z_BASE_TOP, "cy2": CY2, "view_area_centre": va, "outer": [bb.xlen, bb.ylen, bb.zlen],
                "P": P, "z": {"bot": Z_BOT, "base_bot": Z_BASE_BOT, "base_top": Z_BASE_TOP, "bay": Z_BAY, "plate": Z_PLATE, "glass": Z_GLASS,
                              "top": Z_TOP, "bump": Z_BUMP},
                "bump_profile": bump_profile(Z_BUMP), "recess_profile": recess_profile(Z_BUMP),

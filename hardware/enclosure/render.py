@@ -2,6 +2,7 @@
 """Raytraced pictures of the case (POV-Ray) from the meshes that case.py wrote to out/.
 
     python3 render.py            # writes out/render_*.png
+    python3 render.py --hat      # the two-port variant, out_hat/
 
 Device coordinates as in case.py: X across, Y from the RJ45 edge to the USB-C end, Z up.
 """
@@ -11,9 +12,8 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(HERE, "out")
-sys.path.insert(0, os.path.join(HERE, "..", "carrier"))
-import generate as G   # noqa: E402
+HAT = "--hat" in sys.argv                       # the two-port variant: reads and writes out_hat/
+OUT = os.path.join(HERE, "out_hat" if HAT else "out")
 
 LCD = os.path.join(HERE, "lcd_status.png")     # what the display shows in the pictures
 
@@ -108,9 +108,16 @@ __JACKS__
   object { m_plug_over texture { pigment { rgb <0.93, 0.93, 0.92> } finish { diffuse 0.75 specular 0.2 roughness 0.04 } } }
 }
 #declare Base = object { m_base texture { T_base } }
-
+__REST_DECL__
+// The camera positions are written for the four-port case (centre 39, 57.4; USB-C end at y = 116.73).
+// A variant of another size moves and scales them: Cam about its centre, CamU with its USB-C end.
+#declare CS = __CS__; #declare CCX = __CCX__; #declare CCY = __CCY__; #declare UY = __UY__;
 #macro Cam(ex, ey, ez, lx, ly, lz, ang)
-  camera { perspective location <ex, ey, ez> look_at <lx, ly, lz> sky <0, 0, 1> right <-4/3, 0, 0> angle ang }
+  camera { perspective location <CCX + (ex - 39) * CS, CCY + (ey - 57.4) * CS, ez * CS> look_at <CCX + (lx - 39) * CS, CCY + (ly - 57.4) * CS, lz>
+           sky <0, 0, 1> right <-4/3, 0, 0> angle ang }
+#end
+#macro CamU(ex, ey, ez, lx, ly, lz, ang)
+  camera { perspective location <CCX + ex - 39, UY + ey - 116.73, ez> look_at <CCX + lx - 39, UY + ly - 116.73, lz> sky <0, 0, 1> right <-4/3, 0, 0> angle ang }
 #end
 #switch (View)
 #case (1)   // hero: USB-C end towards the viewer
@@ -122,17 +129,20 @@ __JACKS__
   object { Body } object { Base } object { Module } object { Carrier } object { Keys }
 #break
 #case (3)   // exploded
+  #declare CS = (CS + 1) / 2;
   Cam(-175, 345, 185, 40, 58, 0, 36)
   object { Module translate <0, 0, 62> }
   object { Body translate <0, 0, 30> }
   object { Keys translate <0, 14, 30> }
+  __REST_UP__
   object { Carrier }
   object { Battery translate <0, 0, -24> }
   object { Base translate <0, 0, -34> }
 #break
 #case (4)   // section along the middle of the display
   Cam(-260, 150, 70, 40, 60, 3, 26)
-  #declare Cut = plane { x, 39.0 inverse }
+  #declare Cut = plane { x, CCX inverse }
+  __REST__
   intersection { object { Body } object { Cut } cutaway_textures }
   intersection { object { Base } object { Cut } cutaway_textures }
   intersection { object { Module } object { Cut } cutaway_textures }
@@ -149,22 +159,22 @@ __JACKS__
 #break
 #case (7)   // the electronics without the case: carrier with the module plugged in
   Cam(-150, 300, 175, 40, 55, 6, 30)
-  object { Module } object { Carrier }
+  object { Module } object { Carrier } __REST__
 #break
 #case (8)   // the carrier from below: relays, battery connectors, protection diodes
   Cam(-130, 270, -190, 40, 55, 0, 30)
   object { Carrier }
 #break
 #case (9)   // the USB-C end: bay, port, the two keys
-  Cam(8, 232, 52, 39, 116, 9.5, 24)
+  CamU(8, 232, 52, 39, 116, 9.5, 24)
   object { Body } object { Base } object { Module } object { Carrier } object { Keys }
 #break
 #case (10)  // the same with a plug in (overmould of the largest size the USB-IF allows)
-  Cam(8, 232, 52, 39, 122, 9.5, 24)
+  CamU(8, 232, 52, 39, 122, 9.5, 24)
   object { Body } object { Base } object { Module } object { Carrier } object { Keys } object { Plug }
 #break
 #case (11)  // cut open level with the keys: receptacle, switches, keys in their tunnels
-  Cam(39, 138, 86, 39, 108.5, 10, 30)
+  CamU(39, 138, 86, 39, 108.5, 10, 30)
   #declare Cut = plane { z, __CUTZ__ }
   intersection { object { Body } object { Cut } cutaway_textures }
   intersection { object { Module } object { Cut } cutaway_textures }
@@ -177,6 +187,8 @@ __JACKS__
 
 def main():
     import shutil
+    if HAT and "_rest" not in PARTS:
+        PARTS.append("_rest")
     for n in PARTS:
         if n == "_pcb_ws":
             continue
@@ -196,22 +208,30 @@ def main():
     geo = json.load(open(os.path.join(OUT, "geometry.json")))
     cx, cy = geo["view_area_centre"]
     jacks = []
-    for xc in G.CH_CENTERS:
-        jacks.append(f"  box {{ <{xc - 5.9}, -0.05, 2.2>, <{xc + 5.9}, 6.0, 10.6> texture {{ pigment {{ rgb <0.02, 0.02, 0.02> }} finish {{ diffuse 0.3 }} }} }}")
+    jf = geo["jack_front"]                      # the jack fronts sit this far behind the board edge
+    for xc in geo["jacks"]:
+        jacks.append(f"  box {{ <{xc - 5.8}, {jf - 0.05 if not HAT else jf + 13.0}, 2.7>, <{xc + 5.8}, {jf + 6.0 if not HAT else jf + 13.9}, 10.7> texture {{ pigment {{ rgb <0.02, 0.02, 0.02> }} finish {{ diffuse 0.3 }} }} }}")
         for i in range(8):
-            jacks.append(f"  box {{ <{xc - 4.5 + i * 1.27:.2f}, -0.08, 9.0>, <{xc - 4.1 + i * 1.27:.2f}, 0.5, 10.4> texture {{ T_gold }} }}")
-    bx1, bx2 = G.WS_XC - 17, G.WS_XC + 17
-    by2 = geo["cy2"] - 6.0
+            jacks.append(f"  box {{ <{xc - 4.5 + i * 1.27:.2f}, {jf - 0.08 if not HAT else jf + 1.0}, 9.0>, <{xc - 4.1 + i * 1.27:.2f}, {jf + 0.5 if not HAT else jf + 9.0}, {10.4 if not HAT else 9.4}> texture {{ T_gold }} }}")
+    bx1, by1, bx2, by2 = geo["battery_rect"]
+    bx1, bx2, by1 = bx1 + 1.0, bx2 - 1.0, by1 + 1.5
+    by2 = by1 + geo["battery"][1] - 2.0
     scene = (SCENE.replace("__INCLUDES__", "\n".join(inc)).replace("__LCD__", LCD)
              .replace("__VAW__", "30.99").replace("__VAL__", "41.20").replace("__VAX__", f"{cx:.3f}").replace("__VAY__", f"{cy:.3f}")
              .replace("__ZTOP__", f"{geo['z_top']:.3f}").replace("__JACKS__", "\n".join(jacks))
-             .replace("__BX1__", f"{bx1}").replace("__BX2__", f"{bx2}").replace("__BY1__", f"{by2 - 50:.2f}").replace("__BY2__", f"{by2:.2f}")
+             .replace("__BX1__", f"{bx1}").replace("__BX2__", f"{bx2}").replace("__BY1__", f"{by1:.2f}").replace("__BY2__", f"{by2:.2f}")
+             .replace("__CS__", f"{(geo['oy'][1] - geo['oy'][0]) / 118.63:.3f}" if HAT else "1").replace("__CCX__", f"{geo['ws_xc']}")
+             .replace("__CCY__", f"{(geo['oy'][0] + geo['oy'][1]) / 2:.2f}").replace("__UY__", f"{geo['oy'][1]:.2f}")
+             .replace("__REST_DECL__", "#declare Rest = object { m_rest texture { pigment { rgb <0.30, 0.31, 0.33> } finish { diffuse 0.7 specular 0.2 roughness 0.05 } } }" if HAT else "")
+             .replace("__REST_UP__", "object { Rest translate <0, 0, 16> }" if HAT else "").replace("__REST__", "object { Rest }" if HAT else "")
              .replace("__CUTZ__", f"{geo['key']['z'] - 0.15:.2f}")
              .replace("__BZ1__", f"{geo['z_base_top'] + 0.1:.2f}").replace("__BZ2__", f"{geo['z_base_top'] + 5.1:.2f}"))
     pov = os.path.join(OUT, "scene.pov")
     open(pov, "w").write(scene)
     names = {1: "hero", 2: "ports", 3: "exploded", 4: "section", 5: "base", 6: "below", 7: "electronics", 8: "carrier_bottom",
              9: "usb_end", 10: "usb_plug", 11: "usb_cut"}
+    if HAT:
+        names[7], names[8] = "electronics", "board_bottom"
     want = [int(a) for a in sys.argv[1:] if a.isdigit()] or list(names)
     ok = True
     for v in want:
@@ -222,7 +242,131 @@ def main():
         ok &= good
         print(names[v], "ok" if good else r.stderr[-600:])
     details(geo)
+    if geo.get("hat"):
+        hat_layout(geo)
     return 0 if ok else 1
+
+
+def hat_layout(geo):
+    """Two-port variant: where board, module, posts and battery sit - plan and lengthwise section, with dimensions."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Circle, FancyBboxPatch, Rectangle
+    h, P, z = geo["hat"], geo["P"], geo["z"]
+    ox1, oy1, ox2, oy2 = h["outer"]
+    cx1, cy1, cx2, cy2 = h["cavity"]
+    red = "#b3261e"
+
+    def dim(ax, p1, p2, text, off, side="h", fs=8):
+        (x1, y1), (x2, y2) = p1, p2
+        if side == "h":
+            y = y1 + off
+            for x, yy in ((x1, y1), (x2, y2)):
+                ax.plot([x, x], [yy, y], color=red, lw=0.4)
+            ax.annotate("", (x1, y), (x2, y), arrowprops=dict(arrowstyle="<->", color=red, lw=0.7, shrinkA=0, shrinkB=0))
+            ax.text((x1 + x2) / 2, y + (0.5 if off >= 0 else -0.5), text, ha="center", va="bottom" if off >= 0 else "top", fontsize=fs, color=red)
+        else:
+            x = x1 + off
+            for xx, y in ((x1, y1), (x2, y2)):
+                ax.plot([xx, x], [y, y], color=red, lw=0.4)
+            ax.annotate("", (x, y1), (x, y2), arrowprops=dict(arrowstyle="<->", color=red, lw=0.7, shrinkA=0, shrinkB=0))
+            ax.text(x + (0.6 if off >= 0 else -0.6), (y1 + y2) / 2, text, ha="left" if off >= 0 else "right", va="center", fontsize=fs, color=red, rotation=90)
+
+    fig = plt.figure(figsize=(15, 9.6))
+    a1 = fig.add_axes([0.03, 0.05, 0.42, 0.88]); a2 = fig.add_axes([0.50, 0.30, 0.48, 0.58])
+    # ---------------- plan, seen from above, port end at the bottom
+    r = P["r_out"]
+    a1.add_patch(FancyBboxPatch((ox1 + r, oy1 + r), ox2 - ox1 - 2 * r, oy2 - oy1 - 2 * r, boxstyle=f"round,pad={r}", fc="#ecebe7", ec="k", lw=1.2))
+    a1.add_patch(Rectangle((cx1, cy1), cx2 - cx1, cy2 - cy1, fc="white", ec="#777", lw=0.6))
+    b1, b2, b3, b4 = geo["battery_rect"]
+    a1.add_patch(Rectangle((0, 0), h["W"], h["H"], fc="#2e7d32", ec="k", lw=1.0, alpha=0.8))
+    for x1, y1, x2, y2 in h["jacks"]:
+        a1.add_patch(Rectangle((x1, y1), x2 - x1, y2 - y1, fc="#cfd2d6", ec="k", lw=0.8))
+    a1.text(geo["jacks"][0], 9, "PORT 1", ha="center", fontsize=8); a1.text(geo["jacks"][1], 9, "PORT 2", ha="center", fontsize=8)
+    for name, x1, y1, x2, y2, hh in h["parts"]:
+        a1.add_patch(Rectangle((x1, y1), x2 - x1, y2 - y1, fc="#222" if name.startswith("U") else "#b7a07a", ec="k", lw=0.4))
+    for x, y in h["j3"]:
+        a1.add_patch(Circle((x, y), 0.8, fc="#d8c36a", ec="k", lw=0.4))
+    a1.text(h["j3"][0][0] - 1.5, h["j3"][0][1], "J3", ha="right", va="center", fontsize=7, color="w")
+    for x, y in h["holes"]:
+        a1.add_patch(Circle((x, y), P["post_d"] / 2, fc="#ecebe7", ec="k", lw=0.7))
+        a1.add_patch(Circle((x, y), h["hole_d"] / 2 - 0.15, fc="#8f9094", ec="k", lw=0.4))
+    m = h["module_pcb"]; g = h["glass"]
+    a1.add_patch(Rectangle((m[0], m[1]), m[2] - m[0], m[3] - m[1], fc="none", ec="#1f3b73", lw=1.2, ls="--"))
+    a1.add_patch(FancyBboxPatch((g[0] + 2.6, g[1] + 2.6), g[2] - g[0] - 5.2, g[3] - g[1] - 5.2, boxstyle="round,pad=2.6", fc="none", ec="k", lw=1.0, ls=":"))
+    for x in h["hdr_x"]:
+        for i in range(14):
+            a1.add_patch(Circle((x, h["hdr_y"][0] + i * 2.54), 0.35, fc="#c9a227", ec="none"))
+    for x, y in h["standoffs_base"]:
+        a1.add_patch(Circle((x, y), 2.25, fc="#8f9094", ec="k", lw=0.7))
+    sr = h["standoffs_rest"]
+    xs = sorted(q[0] for q in sr)
+    a1.add_patch(Rectangle((xs[0] - 3.95, sr[0][1] - h["rest_t"] / 2), xs[1] - xs[0] + 7.9, h["rest_t"], fc="#8f9094", ec="k", lw=0.7))
+    for x, y in sr:
+        a1.add_patch(Circle((x, y), 1.75, fc="none", ec="#7a5c00", lw=0.9))
+    a1.add_patch(Rectangle((b1, b2), b3 - b1, b4 - b2, fc="none", ec="#555", lw=0.9, ls="-."))
+    a1.text((b1 + b3) / 2, b4 - 9, f"battery below the board\nup to {geo['battery'][0]:.0f} x {geo['battery'][1]:.0f} x 7", ha="center", fontsize=7.5, color="#333")
+    a1.annotate("module PCB (dashed)\nglass (dotted)", (m[2], m[3] - 12), (ox2 + 3, m[3] - 13), arrowprops=dict(arrowstyle="->", lw=0.6), fontsize=7.5, color="#1f3b73")
+    a1.annotate("module rest: stands on the board,\ncarries two standoffs", (xs[1] + 2, sr[0][1]), (ox2 + 3, sr[0][1] + 3), arrowprops=dict(arrowstyle="->", lw=0.6), fontsize=7.5)
+    a1.annotate("posts on the base carry\nthe other two standoffs", (h["standoffs_base"][1][0] + 2, h["standoffs_base"][1][1] - 1), (ox2 + 3, h["standoffs_base"][1][1] - 19), arrowprops=dict(arrowstyle="->", lw=0.6), fontsize=7.5)
+    a1.annotate("four posts with pins\nin the board's holes", (h["holes"][-1][0], min(q[1] for q in h["holes"])), (ox2 + 3, 0), arrowprops=dict(arrowstyle="->", lw=0.6), fontsize=7.5)
+    a1.text((ox1 + ox2) / 2, oy2 + 1.2, "USB-C, RST, BOOT", ha="center", fontsize=8)
+    dim(a1, (ox1, oy1), (ox2, oy1), f"{ox2 - ox1:.1f}", off=-9)
+    dim(a1, (ox1, oy1), (ox1, oy2), f"{oy2 - oy1:.1f}", off=-7, side="v")
+    dim(a1, (0, 0), (h["W"], 0), f"board {h['W']:.0f}", off=-4.5)
+    dim(a1, (h["W"], 0), (h["W"], h["H"]), f"board {h['H']:.0f}", off=6.5, side="v")
+    dim(a1, (geo["jacks"][0], 14.0), (geo["jacks"][1], 14.0), f"{geo['jacks'][1] - geo['jacks'][0]:.1f}", off=0.0, fs=7)
+    a1.annotate(f"glass ends {g[3] - h['H']:.1f}\npast the board", (g[2] - 1, g[3]), (ox2 + 3, g[3] - 3), arrowprops=dict(arrowstyle="->", lw=0.6), fontsize=7.5)
+    a1.set_xlim(ox1 - 12, ox2 + 34); a1.set_ylim(oy1 - 13, oy2 + 5); a1.set_aspect("equal"); a1.axis("off")
+    a1.set_title("Two-port case from above (mm)", fontsize=11)
+    # ---------------- lengthwise section through a row of standoffs
+    grey, part = "#d9d7d2", "#8f9094"
+    a2.add_patch(Rectangle((oy1, z["bot"]), cy1 - oy1, z["top"] - z["bot"], fc=grey, ec="k", lw=0.8))                    # port wall
+    a2.add_patch(Rectangle((cy2, z["bot"]), oy2 - cy2, z["top"] - z["bot"], fc=grey, ec="k", lw=0.8))                    # USB-C wall
+    a2.add_patch(Rectangle((cy1, z["plate"]), g[1] - P["glass_clr"] - cy1, z["top"] - z["plate"], fc=grey, ec="k", lw=0.8))   # top over the jacks
+    a2.add_patch(Rectangle((g[1] - P["glass_clr"], z["plate"]), m[1] - 0.3 - g[1] + P["glass_clr"], z["glass"] - z["plate"], fc=grey, ec="k", lw=0.8))   # ledge
+    a2.add_patch(Rectangle((cy1 + P["base_clr"], z["base_bot"]), cy2 - cy1 - 2 * P["base_clr"], z["base_top"] - z["base_bot"], fc=part, ec="k", lw=0.8))
+    a2.add_patch(Rectangle((b2 + 1.5, z["base_top"] + 0.1), geo["battery"][1] - 2, 5.0, fc="#3a4254", ec="k", lw=0.6))
+    a2.text(b2 + geo["battery"][1] / 2, z["base_top"] + 2.6, "battery", ha="center", va="center", fontsize=8, color="w")
+    a2.add_patch(Rectangle((0, -1.6), h["H"], 1.6, fc="#2e7d32", ec="k", lw=0.8))
+    j = h["jacks"][0]
+    a2.add_patch(Rectangle((j[1], 0), j[3] - j[1], geo["jack_h"], fc="#cfd2d6", ec="k", lw=0.8))
+    a2.text((j[1] + j[3]) / 2, geo["jack_h"] / 2, "RJ45", ha="center", va="center", fontsize=8)
+    for y in (j[1] + 14.0, j[1] + 16.5):
+        a2.add_patch(Rectangle((y, -1.6 - h["pin_below"]), 0.5, h["pin_below"], fc="#c9a227", ec="none"))
+    hy = sorted(q[1] for q in h["holes"])
+    for y in (hy[0], hy[-1]):
+        a2.add_patch(Rectangle((y - 2.5, 0), 5.0, z["plate"], fc=grey, ec="k", lw=0.6, alpha=0.75))
+        a2.add_patch(Rectangle((y - 2.5, z["base_top"]), 5.0, -1.6 - z["base_top"], fc=part, ec="k", lw=0.6, alpha=0.75))
+        a2.add_patch(Rectangle((y - 1.2, -3.6), 2.4, 3.6, fc=grey, ec="k", lw=0.5))
+    sy, sz = sr[0][1], h["standoff_z"]
+    a2.add_patch(Rectangle((sy - h["rest_t"] / 2, 0), h["rest_t"], sz - P["rest_gap"], fc=part, ec="k", lw=0.7))
+    by_ = h["standoffs_base"][0][1]
+    a2.add_patch(Rectangle((by_ - 2.25, z["base_top"]), 4.5, sz - P["rest_gap"] - z["base_top"], fc=part, ec="k", lw=0.7))
+    for y in (sy, by_):
+        a2.add_patch(Rectangle((y - 1.75, sz), 3.5, 4.0, fc="#c9a227", ec="k", lw=0.5))
+    a2.add_patch(Rectangle((m[1], h["pcb_z"][0]), m[3] - m[1], 1.6, fc="#1f3b73", ec="k", lw=0.8))
+    a2.add_patch(Rectangle((m[1] + 0.2, h["pcb_z"][1]), m[3] - m[1] - 0.4, z["glass"] - h["pcb_z"][1], fc="#b9babd", ec="k", lw=0.6))
+    a2.add_patch(Rectangle((g[1], z["glass"]), g[3] - g[1], z["top"] - z["glass"], fc="#1c1d22", ec="k", lw=0.8))
+    for i in range(14):
+        a2.add_patch(Rectangle((h["hdr_y"][0] + i * 2.54 - 0.3, h["pin_tip_z"]), 0.6, h["pcb_z"][0] - h["pin_tip_z"], fc="#c9a227", ec="none"))
+    a2.text((m[1] + m[3]) / 2, (h["pcb_z"][1] + z["glass"]) / 2, "display", ha="center", va="center", fontsize=8)
+    zt, zb = z["top"] + 4.2, z["bot"] - 8.5
+    a2.annotate("module rest", (sy, 4.0), (sy - 5, zt), arrowprops=dict(arrowstyle="->", lw=0.6), fontsize=7.5)
+    a2.annotate("post under a standoff", (by_, 0), (by_ - 16, zt), arrowprops=dict(arrowstyle="->", lw=0.6), fontsize=7.5)
+    a2.annotate(f"jack front {j[1] - oy1:.1f} behind the outer face", (j[1], 5), (oy1 - 10, zt), arrowprops=dict(arrowstyle="->", lw=0.6), fontsize=7.5)
+    a2.annotate(f"pin tips {h['pin_tip_z']:.1f} above the board", (h["hdr_y"][0] + 9 * 2.54, h["pin_tip_z"]), (h["hdr_y"][0] + 12, zb), arrowprops=dict(arrowstyle="->", lw=0.6), fontsize=7.5)
+    a2.annotate("pin of the body post in the board's hole,\nits end in the post of the base", (hy[-1], -2.6), (oy1 - 10, zb - 1.2), arrowprops=dict(arrowstyle="->", lw=0.6), fontsize=7.5)
+    dim(a2, (oy1, z["bot"]), (oy1, z["top"]), f"{z['top'] - z['bot']:.1f}", off=-4, side="v")
+    dim(a2, (oy1, z["bot"]), (oy2, z["bot"]), f"{oy2 - oy1:.1f}", off=-3.0)
+    dim(a2, (j[3], geo["jack_h"]), (j[3], z["plate"]), f"{z['plate'] - geo['jack_h']:.1f}", off=3.5, side="v", fs=7)
+    a2.set_xlim(oy1 - 12, oy2 + 6); a2.set_ylim(zb - 4, zt + 3); a2.set_aspect("equal"); a2.axis("off")
+    a2.set_title("Section along the length, through one row of standoffs (port end on the left)", fontsize=11)
+    fig.text(0.50, 0.21, "Assembly\n1. Solder the six wires from J3 to the module's pins.\n2. Both keys into their tunnels, module into the body from above, body face down.\n"
+                         "3. Module rest onto the two standoffs next to the jacks.\n4. Board onto the four pins, its parts towards the module.\n5. Battery, then press the base in.",
+             fontsize=9.5, va="top", linespacing=1.5)
+    fig.savefig(os.path.join(OUT, "hat_layout.png"), dpi=125)
 
 
 def details(geo):

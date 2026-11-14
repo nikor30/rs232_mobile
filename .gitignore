@@ -10,8 +10,8 @@ __pycache__/
 hardware/vendor/*
 !hardware/vendor/README.md
 # intermediate files of the case renderer, and the assembly that contains the vendor's model
-hardware/enclosure/out/_*.stl
-hardware/enclosure/out/*.inc
-hardware/enclosure/out/scene.pov
-hardware/enclosure/out/rs232_console_assembly_vendor_module.step
-hardware/enclosure/out/carrier_envelope.step
+hardware/enclosure/out*/_*.stl
+hardware/enclosure/out*/*.inc
+hardware/enclosure/out*/scene.pov
+hardware/enclosure/out*/rs232_console_assembly_vendor_module.step
+hardware/enclosure/out*/carrier_envelope.step
