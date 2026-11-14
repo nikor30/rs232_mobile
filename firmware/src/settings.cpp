@@ -133,6 +133,7 @@ void load() {
   settings.c2UnattS     = prefs.getUInt("c2una", 0);
   settings.c2Control    = prefs.getBool("c2ctl", false);
   settings.adminUi      = prefs.getBool("admui", false);
+  settings.usbDebug     = prefs.getBool("usbdbg", false);
   settings.hostname = prefs.getString("host", DEFAULT_HOSTNAME);
   settings.webPass  = prefs.getString("webPass", "");
   settings.displayFlip = prefs.getBool("flip", false);
@@ -216,6 +217,7 @@ void save() {
   prefs.putUInt("c2una", settings.c2UnattS);
   prefs.putBool("c2ctl", settings.c2Control);
   prefs.putBool("admui", settings.adminUi);
+  prefs.putBool("usbdbg", settings.usbDebug);
   prefs.putString("host", settings.hostname);
   prefs.putString("webPass", settings.webPass);
   prefs.putBool("flip", settings.displayFlip);

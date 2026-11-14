@@ -402,6 +402,10 @@
 
       <p class="hint">Wi-Fi client (802.1X too), HTTPS and certificates are in the tab <b>Network</b>.</p>
 
+      <h3>USB port</h3>
+      <label class="check"><input id="usbDebug" type="checkbox"> Debug console at the USB port (for developers)</label>
+      <p class="hint">Off, nothing answers at the USB port until “Use the SD card as a USB stick” – then it is a plain USB stick, which switches and firewalls take. On, it is the chip’s serial/JTAG port for the debug console and for flashing – a Cisco switch crashed when that was plugged into it. Never plug it into a network device then. Changing it restarts the device.</p>
+
       <h3>Firmware update</h3>
       <p class="hint">Choose the OTA file (<code>…ota-update.bin</code> or <code>firmware.bin</code>).</p>
       <div class="row">

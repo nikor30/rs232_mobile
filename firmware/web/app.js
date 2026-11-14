@@ -466,13 +466,14 @@
     // the administrator's tabs: shown only where the device says so
     document.body.classList.toggle('admin', !!s.adminUi);
     if (document.activeElement !== $('#adminUi')) $('#adminUi').checked = !!s.adminUi;
+    if (document.activeElement !== $('#usbDebug')) $('#usbDebug').checked = !!s.usbDebug;
     const open = $('.tabs button.active');
     if (!s.adminUi && open && open.hasAttribute('data-admin')) showTab('serial');
     $('#host').textContent = s.host;
     const k = s.stick;
     $('#dSd').textContent = k ? tr('USB stick: {0} · read {1}, written {2}', [k.ejected ? tr('ejected') : k.host ? tr('connected') : tr('waiting for the USB port'), fmtBytes(k.readKb * 1024), fmtBytes(k.writtenKb * 1024)])
       : s.sd ? tr('inserted') : tr('none');
-    $('#devStick').hidden = !s.sd || !!k;
+    $('#devStick').hidden = !(s.sd || s.sdRaw) || !!k;
     $('#stickHint').hidden = !s.sd || !!k;
     $('#stickNote').hidden = !k;
     document.title = s.host + ' · RS232';
@@ -584,6 +585,15 @@
       if (!r.ok) throw new Error();
       document.body.classList.toggle('admin', on);
       if (state.status) state.status.adminUi = on;
+    } catch (err) { e.target.checked = !on; toast(tr('Device not reachable')); }
+  });
+  $('#usbDebug').addEventListener('change', async (e) => {
+    const on = e.target.checked;
+    if (!confirm(tr('Restart the device?'))) { e.target.checked = !on; return; }
+    try {
+      const r = await fetch('/api/usbdebug', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on }) });
+      if (!r.ok) throw new Error();
+      toast(tr('Restarting …'));
     } catch (err) { e.target.checked = !on; toast(tr('Device not reachable')); }
   });
   $('#btnMenu').addEventListener('click', () => openPanel());

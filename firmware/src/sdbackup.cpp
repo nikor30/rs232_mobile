@@ -88,21 +88,24 @@ static void dumpNvs(JsonArray out) {
   nvs_close(h);
 }
 
-// Two settings are never taken from a backup: whether the control center may
-// change things here, and unattended access. Both are granted at the device
-// only (CLAUDE.md) - a restore must not hand them out from afar.
-static bool keepHere(const char *k) { return !strcmp(k, "c2ctl") || !strcmp(k, "c2una"); }
+// Three settings are never taken from a backup: whether the control center may
+// change things here, unattended access, and the debug console at the USB port
+// (it crashes a switch it is plugged into). All are set at the device only
+// (CLAUDE.md) - a restore must not hand them out from afar.
+static bool keepHere(const char *k) { return !strcmp(k, "c2ctl") || !strcmp(k, "c2una") || !strcmp(k, "usbdbg"); }
 
 static bool restoreNvs(JsonArray in) {
   nvs_handle_t h;
   if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return false;
-  uint8_t ctl = 0;
+  uint8_t ctl = 0, dbg = 0;
   uint32_t una = 0;
   nvs_get_u8(h, "c2ctl", &ctl);
   nvs_get_u32(h, "c2una", &una);
+  nvs_get_u8(h, "usbdbg", &dbg);
   nvs_erase_all(h);
   nvs_set_u8(h, "c2ctl", ctl);
   nvs_set_u32(h, "c2una", una);
+  nvs_set_u8(h, "usbdbg", dbg);
   bool ok = true;
   for (JsonObject e : in) {
     const char *k = e["k"] | "";

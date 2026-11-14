@@ -193,6 +193,7 @@ struct Snapshot {
   bool    saver;                     // running from the battery: dim early, poll slowly
   uint8_t cpuMhz;
   bool    sdMounted;
+  bool    sdRaw;                         // a card without a usable file system: still offered as a USB stick
   char    sdType[16];
   uint32_t sdUsedMb, sdTotalMb;
   uint8_t brightness;
@@ -507,6 +508,7 @@ static void buildSnapshot() {
   s.cpuMhz = (uint8_t)getCpuFrequencyMhz();
   s.adminUi = settings.adminUi;
   s.sdMounted = Sd::mounted();
+  s.sdRaw = Sd::unreadable();
   Sd::Stick st = Sd::stick();
   if (stickDemoUntil && (int32_t)(millis() - stickDemoUntil) < 0) st = {true, true, false, 5321, 48};   // debug: "stickui N"
   s.stick = st.on;
@@ -1908,7 +1910,7 @@ static void screenInfo() {
   {
     BtnDef def[2] = {{TR("Mount SD card", "SD-Karte einbinden", "Montar cartao SD"), B_SD, C_TEXT},
                      {TR("Connect to center", "Leitstelle verbinden", "Conectar a central"), B_C2_RETRY, C_ACCENT}};
-    if (S.sdMounted) def[0] = {TR("SD card as USB stick", "SD-Karte als USB-Stick", "Cartao SD como pendrive"), B_STICK, C_TEXT};
+    if (S.sdMounted || S.sdRaw) def[0] = {TR("SD card as USB stick", "SD-Karte als USB-Stick", "Cartao SD como pendrive"), B_STICK, C_TEXT};
     // only while there is something to do about it: no contact with the server
     bottom = buttonRow(def, S.c2Down ? 2 : 1) - 2;
   }

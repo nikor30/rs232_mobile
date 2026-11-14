@@ -310,7 +310,10 @@ static String statusJson() {
   d["board"] = BOARD_NAME;
   d["host"] = settings.hostname;
   d["adminUi"] = settings.adminUi;
+  d["usbDebug"] = settings.usbDebug;
   d["sd"] = Sd::mounted();
+  d["sdRaw"] = Sd::unreadable();
+  d["reset"] = (int)esp_reset_reason();   // why the last run ended (esp_reset_reason_t: 3 software, 4 panic, 5-7 watchdogs)
   Sd::Stick st = Sd::stick();
   if (st.on) {                           // the card is lent to the USB port
     JsonObject k = d["stick"].to<JsonObject>();
@@ -756,6 +759,19 @@ static void handleOtaUpload() {
   }
 }
 
+// Diagnosis: an image for the RAM medium of the stick (sdcard.cpp), loaded while the USB port is still dead.
+static size_t ramOff = 0;
+static bool ramErr = false;
+static void handleRamUpload() {
+  if (!settings.webPass.isEmpty() && !http.authenticate("admin", settings.webPass.c_str())) return;
+  HTTPUpload &up = http.upload();
+  if (up.status == UPLOAD_FILE_START) { ramOff = 0; ramErr = false; }
+  else if (up.status == UPLOAD_FILE_WRITE) {
+    if (!ramErr && !Sd::stickRamLoad(ramOff, up.buf, up.currentSize)) ramErr = true;
+    ramOff += up.currentSize;
+  }
+}
+
 // ---- stored configurations (tab "Konfig") ----
 static void handleConfigs() {
   if (!guard()) return;
@@ -955,13 +971,42 @@ static void setupHttp() {
     Store::save();
     sendJson(200, "{\"ok\":true}");
   });
+  // The USB port as the chip's serial/JTAG unit (debug console, flashing), or
+  // dead until stick mode (sdcard.cpp: usbStart). Decided here at the device
+  // only - not in applySettings(), which the control center can reach, and not
+  // by a restored backup (sdbackup.cpp): the serial/JTAG unit crashed a switch
+  // it was plugged into. Takes a restart.
+  http.on("/api/usbdebug", HTTP_POST, []() {
+    if (!guard()) return;
+    JsonDocument d;
+    if (deserializeJson(d, http.arg("plain")) || !d["on"].is<bool>()) return sendJson(400, TR("{\"ok\":false,\"error\":\"invalid JSON\"}", "{\"ok\":false,\"error\":\"JSON ungültig\"}", "{\"ok\":false,\"error\":\"JSON inválido\"}"));
+    settings.usbDebug = d["on"];
+    Store::save();
+    sendJson(200, "{\"ok\":true}");
+    rebootAt = millis() + 1000;
+  });
   // The SD card as a USB memory stick at the USB port. Ends with a restart.
+  http.on("/api/stick/ram", HTTP_POST, []() {
+    if (!guard()) return;
+    sendJson(ramErr ? 409 : 200, ramErr ? "{\"ok\":false}" : "{\"ok\":true}");
+  }, handleRamUpload);
+  http.on("/api/stick/delay", HTTP_POST, []() {
+    if (!guard()) return;
+    Sd::stickSetDelay(http.arg("first").toInt(), http.arg("next").toInt());
+    sendJson(200, "{}");
+  });
+  http.on("/api/stick/replug", HTTP_POST, []() {
+    if (!guard()) return;
+    sendJson(Sd::stickReplug() ? 200 : 409, "{}");
+  });
   http.on("/api/stick/sectors", HTTP_GET, []() { sendJson(200, Sd::stickSectors()); });
   http.on("/api/stick", HTTP_POST, []() {
     if (!guard()) return;
-    const char *err = Sd::stickStart();
-    if (!err) return sendJson(200, "{\"ok\":true}");
     JsonDocument d;
+    deserializeJson(d, http.arg("plain"));           // no body is the usual case: the card
+    const char *err = Sd::stickStart(d["ram"] | false, d["mb"] | 0);
+    if (!err) return sendJson(200, "{\"ok\":true}");
+    d.clear();
     d["ok"] = false;
     d["error"] = err;
     String out;

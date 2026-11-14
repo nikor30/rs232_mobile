@@ -11,6 +11,7 @@
 namespace Sd {
   bool begin();                       // false = no card
   bool mounted();
+  bool unreadable();                  // a card is there but holds no file system the board can use (a host may format it)
   uint64_t totalMb();
   uint64_t usedMb();
   const char *typeName();
@@ -55,9 +56,14 @@ namespace Sd {
     uint32_t retries, fails;
     uint32_t cmds[8];                 // SCSI opcodes beyond what TinyUSB handles itself, one bit each          // requests the card refused at first / after every try
   };
-  const char *stickStart();           // nullptr = started, otherwise why not
+  const char *stickStart(bool ram = false, uint32_t ramMb = 0);   // nullptr = started, otherwise why not; ram: a medium in RAM instead of the card, 4 MB backed, ramMb the size reported (diagnosis)
+  void stickSetDelay(uint32_t first, uint32_t next);   // measuring: how long a request / the chunks that follow it take at least (sdcard.cpp: stickIo)
+  bool stickReplug();                 // diagnosis: unplug and plug the stick again for the host
+  bool stickRamLoad(uint32_t off, const uint8_t *data, size_t n);   // diagnosis: fill the RAM medium before stick mode
   Stick stick();
   String stickSectors();              // JSON: the last single-sector writes, in hex
   String stickTrace();                // the host's last requests, one per line (sdcard.cpp: StickReq)
-  void usbRestore();                  // first thing after a start: the USB port is the debug console again
+  void usbStart(bool debug);          // early in setup(): the debug console (serial/JTAG unit), or a dead port until stick mode
+  bool usbOwn();                      // the USB port is not the serial/JTAG unit: dead, or the stick
+  bool usbHostSeen();                 // stick mode, and a host has taken the stick
 }

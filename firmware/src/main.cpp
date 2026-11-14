@@ -147,7 +147,6 @@ static void *tlsCalloc(size_t n, size_t size) {
 void setup() {
   mbedtls_platform_set_calloc_free(tlsCalloc, free);     // before anything opens a TLS connection
   setCpuFrequencyMhz(CPU_MHZ);
-  Sd::usbRestore();
   Serial.begin(115200);
 #if ARDUINO_USB_CDC_ON_BOOT
   // Never wait for a USB host that is not reading. Not 0: the core's write loop
@@ -160,6 +159,7 @@ void setup() {
     if (b.pin >= 0) pinMode(b.pin, INPUT_PULLUP);
 
   Store::load();
+  Sd::usbStart(settings.usbDebug);   // no serial/JTAG device at the port unless asked for (sdcard.cpp)
 
   Net::prepareRadio();               // credentials (true RNG with radio on) + channel scan
 

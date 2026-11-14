@@ -25,6 +25,7 @@ static const uint32_t FLUSH_MS = 2000;     // SD writes are slow: collect, then 
 static const size_t   BUF_SIZE = 1024;
 
 static bool ok = false;
+static bool rawCard = false;             // a card answers, but holds no file system the board can mount
 static bool lent = false;                  // the card belongs to the USB host (stick mode)
 static SPIClass &spi = SPI;                // LovyanGFX has opened this bus for the LCD
 
@@ -134,6 +135,7 @@ bool begin() {
     digitalWrite(PIN_SD_CS, HIGH);
     spi.transfer(0xFF);
     spi.endTransaction();
+    rawCard = r[0] == 0x01;              // idle: a card is there, only its file system is not
     Serial.printf("[SD]   keine Karte gefunden (Antwort auf CMD0: %02X %02X %02X %02X %02X %02X %02X %02X)\n",
                   r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]);
     if (firstAttempt) {
@@ -145,6 +147,7 @@ bool begin() {
     lastFailure = millis() | 1;
     return false;
   }
+  rawCard = false;
   if (firstAttempt) note(String(boot) + "+");
   firstAttempt = false;
   if (!SD.exists("/logs")) SD.mkdir("/logs");
@@ -471,6 +474,9 @@ void loop() {
 // and could not format the card ("Didn't find 55AA signature in System Sector").
 static uint8_t drive = 0xFF;
 static volatile bool stickMedia = false, stickEjected = false;
+static bool ownUsb = false;                                  // the USB port is taken from the serial/JTAG unit: dead, or our stick
+static void stickDevice();
+static void usbRestore();
 static volatile uint32_t stickSeen[8];                       // opcodes that reached stickScsi(), one bit each
 static volatile uint32_t stickRead = 0, stickWritten = 0;    // sectors
 static volatile uint32_t stickRetries = 0, stickFails = 0;   // requests the card refused at first / for good
@@ -487,7 +493,38 @@ struct DriveOf : fs::SDFS {
 // in between; the same sectors written twice do no harm.
 static const int STICK_TRIES = 5;
 
-static bool stickIo(bool write, uint8_t *buffer, uint32_t lba, uint32_t count) {
+// A medium in RAM instead of the card (POST /api/stick {"ram":true}): what a
+// host does with the stick can be watched without a card, and the card's own
+// refusals are out of the picture. Empty at the start, gone with the restart.
+static const uint32_t RAM_SECTORS = 8192;  // 4 MB
+static uint8_t *ramDisk = nullptr;
+
+// Fills the RAM medium before stick mode starts, so the host finds a file
+// system on it that was made on a PC (POST /api/stick/ram, then /api/stick).
+static bool ramAlloc() {
+  if (!ramDisk) ramDisk = (uint8_t *)heap_caps_calloc(RAM_SECTORS, 512, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  return ramDisk != nullptr;
+}
+
+bool stickRamLoad(uint32_t off, const uint8_t *data, size_t n) {
+  if (lent || off + n > RAM_SECTORS * 512UL || !ramAlloc()) return false;
+  memcpy(ramDisk + off, data, n);
+  return true;
+}
+
+static bool stickIoRaw(bool write, uint8_t *buffer, uint32_t lba, uint32_t count) {
+  if (ramDisk) {
+    // Only the first RAM_SECTORS are backed; a larger reported size reads as zeros beyond them.
+    uint32_t in = lba >= RAM_SECTORS ? 0 : min(count, RAM_SECTORS - lba);
+    if (write) {
+      if (in < count) return false;
+      memcpy(ramDisk + lba * 512, buffer, count * 512);
+    } else {
+      memcpy(buffer, ramDisk + lba * 512, in * 512);
+      memset(buffer + in * 512, 0, (count - in) * 512);
+    }
+    return true;
+  }
   for (int i = 0; i < STICK_TRIES; i++) {
     if (i) {
       stickRetries = stickRetries + 1;
@@ -499,6 +536,33 @@ static bool stickIo(bool write, uint8_t *buffer, uint32_t lba, uint32_t count) {
   }
   stickFails = stickFails + 1;
   return false;
+}
+
+// A Cisco switch (C2960CX, IOS 15.2(7)E5) talks to a full-speed device through
+// its OHCI driver, and that driver gets the data of a request wrong when the
+// device answers at once: measured with the same stick replugged again and
+// again - mounted 3 times in 12 with no delay, 6 in 10 at 20 ms, 10 in 10 at
+// 40 ms and 60 ms; files read back with a different MD5 each time, its own
+// format wrote its heap into the partition table. A flash stick is slow enough
+// not to meet this, the board's RAM or an SD card at SPI speed is not. So the
+// first chunk of a request is answered no sooner than STICK_FIRST_MS after it
+// arrived. TinyUSB hands a request over in chunks of 4 kB; a chunk that follows
+// at once (same place, within STICK_CONT_MS) counts as part of the request and
+// waits stickNextMs only. Both can be set at run time for measuring
+// (/api/stick/delay).
+static const uint32_t STICK_FIRST_MS = 60, STICK_CONT_MS = 25;
+static volatile uint32_t stickFirstMs = STICK_FIRST_MS, stickNextMs = 0;
+static uint32_t stickLastEnd = 0xFFFFFFFF, stickLastAt = 0;
+
+static bool stickIo(bool write, uint8_t *buffer, uint32_t lba, uint32_t count) {
+  uint32_t t0 = millis();
+  bool cont = lba == stickLastEnd && t0 - stickLastAt < STICK_CONT_MS;
+  bool ok = stickIoRaw(write, buffer, lba, count);
+  uint32_t want = cont ? stickNextMs : stickFirstMs, used = millis() - t0;
+  if (used < want) vTaskDelay(pdMS_TO_TICKS(want - used));
+  stickLastEnd = lba + count;
+  stickLastAt = millis();
+  return ok;
 }
 
 // The last requests of the host, for /api/status: which sectors a host reads
@@ -654,12 +718,13 @@ static uint32_t stickSize(uint32_t card) {
   return end && end <= STICK_MAX ? STICK_MAX : card;
 }
 
-const char *stickStart() {
+const char *stickStart(bool ram, uint32_t ramMb) {
   if (lent) return nullptr;
+  if (ram && !ramAlloc()) return TR("not enough memory", "nicht genug Speicher", "memória insuficiente");
   for (uint8_t p = 0; p < MAX_PORTS; p++) logStop(p);
-  uint32_t sectors = 0;
-  bool raw = false;
-  {
+  uint32_t sectors = !ram ? 0 : ramMb ? min(ramMb, 4095u) * 2048 : RAM_SECTORS;
+  bool raw = ram;
+  if (!ram) {
     BusGuard guard;
     if (ok) {
       drive = DriveOf::get(SD);
@@ -688,9 +753,9 @@ const char *stickStart() {
     }
     if (sectors) sectors = stickSize(sectors);
   }
-  if (drive == 0xFF || !sectors) return TR("the card cannot be read", "die Karte lässt sich nicht lesen", "o cartão não pode ser lido");
+  if (!ram && (drive == 0xFF || !sectors)) return TR("the card cannot be read", "die Karte lässt sich nicht lesen", "o cartão não pode ser lido");
   Serial.printf("[SD]   USB-Stick-Modus: %lu Sektoren%s, die Debug-Konsole am USB endet hier\n", (unsigned long)sectors,
-                raw ? " (ohne Dateisystem)" : "");
+                ram ? " (im RAM, ohne Karte)" : raw ? " (ohne Dateisystem)" : "");
   Serial.flush();
   ok = false;
   lent = true;
@@ -700,8 +765,14 @@ const char *stickStart() {
   stickShown = sectors;
   memset((void *)stickSeen, 0, sizeof stickSeen);
   stickLogN = 0;
-  stickMedia = true;
   Power::forceSaver(0);                    // the USB controller wants the full clock
+  stickMedia = true;
+  stickDevice();                           // only now is there anything at the port: a stick with its medium in it
+  return nullptr;
+}
+
+// The board's own USB device: one interface, mass storage.
+static void stickDevice() {
   tinyusb_enable_interface(USB_INTERFACE_MSC, TUD_MSC_DESC_LEN, stickDescriptor);
   USB.manufacturerName("RS232 Console");
   USB.productName("RS232 Console SD card");
@@ -711,18 +782,68 @@ const char *stickStart() {
   USB.usbClass(0);
   USB.usbSubClass(0);
   USB.usbProtocol(0);
-  USB.begin();                            // takes the port away from the USB serial/JTAG unit
-  return nullptr;
+  USB.begin();                             // takes the port away from the USB serial/JTAG unit
+  ownUsb = true;
 }
 
-// Which unit owns the USB pins is kept in the RTC domain: it survives every
-// restart, only a power cut clears it. Without this the port stays dead after
-// stick mode - no debug console, no flashing over the cable.
-void usbRestore() {
+// The chip's serial/JTAG unit must not meet a switch. It answers requests for
+// strings it does not have with nothing or with scraps of its ROM instead of
+// refusing them (measured: string 5 comes back with 0 bytes, 6 with 239, 7
+// with a single 0xFF), and the IOS of a Cisco C2960CX turns such an answer
+// into a string of some 250 characters that it writes over its heap: "Corrupted
+// magic value in in-use chunk", "Software-forced reload" (30 Oct 2026, twice).
+// So unless the debug console is asked for (settings.usbDebug), the port is
+// dead outside stick mode: it goes to the USB controller, which is not started
+// - no pull-up on D+, a host sees no device at all, there is nothing to get
+// wrong. Stick mode starts the controller (stickDevice), and the host sees a
+// stick being plugged in, medium and all.
+// Which unit owns the port lives in the RTC domain: through a restart the
+// serial/JTAG unit does not come back. Power-on clears the choice, and the
+// chip then puts the serial/JTAG unit on the port by itself - for the half
+// second until this runs, long enough for a host to read all of it (measured).
+// That is why the bootloader is ours (bootloader/): it does the two lines
+// below some tens of milliseconds after power-on, sooner than a host talks to
+// a device it has just seen.
+void usbStart(bool debug) {
+  if (debug) {
+    usbRestore();
+    return;
+  }
+  RTCCNTL.usb_conf.sw_hw_usb_phy_sel = 1;  // the choice below counts, not the eFuse ...
+  RTCCNTL.usb_conf.sw_usb_phy_sel = 1;     // ... and it is the USB controller (what usb_hal_init() sets, too)
+  ownUsb = true;
+}
+
+// Diagnosis: the host sees the stick unplugged and plugged in again.
+void stickSetDelay(uint32_t first, uint32_t next) {
+  stickFirstMs = first;
+  stickNextMs = next;
+}
+
+bool stickReplug() {
+  if (!lent) return false;
+  stickLogN = 0;
+  tud_disconnect();
+  vTaskDelay(pdMS_TO_TICKS(1500));
+  tud_connect();
+  return true;
+}
+
+bool usbOwn() { return ownUsb; }
+bool unreadable() { return rawCard && !ok && !lent; }
+bool usbHostSeen() { return ownUsb && tud_mounted(); }
+
+// The port as the chip's serial/JTAG unit: debug console, flashing over the
+// cable. Chosen here in so many words (sw_hw_usb_phy_sel set), not by falling
+// back to the chip's default - the bootloader takes a port that nobody has
+// chosen away again at every start (bootloader/bootloader_components/usb_port).
+static void usbRestore() {
   USB_SERIAL_JTAG.conf0.phy_sel = 0;       // the internal transceiver ...
+  USB_SERIAL_JTAG.conf0.pad_pull_override = 0;
+  USB_SERIAL_JTAG.conf0.dp_pullup = 1;
   USB_SERIAL_JTAG.conf0.usb_pad_enable = 1;
-  RTCCNTL.usb_conf.sw_hw_usb_phy_sel = 0;  // ... wired to the serial/JTAG unit, as after power-on
-  RTCCNTL.usb_conf.sw_usb_phy_sel = 0;
+  RTCCNTL.usb_conf.sw_usb_phy_sel = 0;     // ... wired to the serial/JTAG unit ...
+  RTCCNTL.usb_conf.sw_hw_usb_phy_sel = 1;  // ... because this says so (as usb_phy_ll_int_jtag_enable() does)
 }
 
 Stick stick() {

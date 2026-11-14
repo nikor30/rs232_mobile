@@ -3,6 +3,7 @@
 #include "config.h"
 #include "settings.h"
 #include "bat_curve.h"
+#include "sdcard.h"
 #if ARDUINO_USB_MODE
 #include "soc/usb_serial_jtag_struct.h"
 #define USB_SOF_DETECT 1
@@ -72,9 +73,13 @@ bool empty() { return false; }
 
 static void chargeSample() {
 #if USB_SOF_DETECT
-  uint16_t sof = USB_SERIAL_JTAG.fram_num.sof_frame_index;
-  host = sof != lastSof;
-  lastSof = sof;
+  if (Sd::usbOwn()) {
+    host = Sd::usbHostSeen();                     // only the stick tells: a dead port cannot see who feeds it
+  } else {
+    uint16_t sof = USB_SERIAL_JTAG.fram_num.sof_frame_index;
+    host = sof != lastSof;
+    lastSof = sof;
+  }
 #endif
   if (!present() || settings.batType != 0) { stepUp = false; histFill = 0; highSince = 0; flatSince = 0; return; }
   uint16_t v = (uint16_t)filt;

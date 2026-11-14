@@ -41,7 +41,10 @@ def find_port():
     """
     if os.environ.get("LCD_PORT"):
         return os.environ["LCD_PORT"] if os.path.exists(os.environ["LCD_PORT"]) else None
-    found = sorted(glob.glob("/dev/serial/by-id/usb-Espressif_USB_JTAG*")) or sorted(glob.glob("/dev/ttyACM*"))
+    # Only the board itself, never just any ttyACM: the WLED matrix on the bench
+    # resets when opened, and since 13 Nov 2026 the board has no serial port at
+    # all unless "Debug console at the USB port" is set in its web interface.
+    found = sorted(glob.glob("/dev/serial/by-id/usb-Espressif_USB_JTAG*"))
     return found[0] if found else None
 
 
@@ -55,11 +58,15 @@ def open_port():
     import termios
     for attempt in range(40):            # after a restart the port comes and goes for a moment
         try:
-            s = serial.Serial(find_port() or "/dev/ttyACM0", 115200, timeout=0.1)
+            port = find_port()
+            if not port:
+                raise serial.SerialException("no debug console at the USB port")
+            s = serial.Serial(port, 115200, timeout=0.1)
             break
         except serial.SerialException:
             if attempt == 39:
-                raise
+                sys.exit("no debug console: is the board on USB, and is 'Debug console at the USB port' "
+                         "set in its web interface (POST /api/usbdebug {\"on\":true})?")
             time.sleep(0.25)
     attrs = termios.tcgetattr(s.fd)
     attrs[2] &= ~termios.HUPCL
