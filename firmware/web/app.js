@@ -334,6 +334,8 @@
     const d = $('#dot');
     d.className = 'dot ' + mode;
     d.title = mode === 'on' ? tr('Connected') : mode === 'wait' ? tr('Connecting …') : tr('Disconnected');
+    $('#conn').textContent = d.title;                    // never the colour alone
+    document.body.classList.toggle('offline', mode !== 'on');
   }
 
   // Blinking cursor = "you can type now". There's no DCD/DSR wiring on the MAX3232
@@ -475,7 +477,8 @@
       : s.sd ? tr('inserted') : tr('none');
     $('#devStick').hidden = !(s.sd || s.sdRaw) || !!k;
     $('#stickHint').hidden = !s.sd || !!k;
-    $('#stickNote').hidden = !k;
+    if (k) $('#stickState').textContent = $('#dSd').textContent;
+    if ($('#stickDlg').hidden === !!k) { $('#stickDlg').hidden = !k; if (k) $('#stickEnd').focus(); }
     document.title = s.host + ' · RS232';
     const list = s.ports || [];
     for (const info of list) {
@@ -495,7 +498,7 @@
     const bc = $('#batChip');
     bc.hidden = !s.bat.measured;
     if (s.bat.present) {
-      bc.textContent = (s.bat.charge ? '⚡ ' : '🔋 ') + s.bat.pct + '%';
+      bc.textContent = (s.bat.charge ? '⚡ ' : '') + s.bat.pct + '%';
       bc.title = tr('Battery {0} mV ({1})', [s.bat.mv, s.bat.type]) + (s.bat.charge === 1 ? tr(', charging') : s.bat.charge === 2 ? tr(', full') : '');
     } else {
       bc.textContent = 'USB';
@@ -1232,6 +1235,9 @@
       const j = await r.json();
       toast(j.ok ? tr('USB stick mode is on') : j.error || tr('Error'));
     } catch (e) { toast(tr('Error')); }
+  });
+  $('#stickEnd').addEventListener('click', async () => {
+    try { await fetch('/api/reboot', { method: 'POST' }); toast(tr('Restarting …')); } catch (e) { toast(tr('Error')); }
   });
   $('#devReboot').addEventListener('click', async () => {
     if (!confirm(tr('Restart the device?'))) return;

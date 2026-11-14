@@ -411,7 +411,19 @@ static bool lanPlain() {
   return !Https::fromProxy(ip) && !inApSubnet(ip);
 }
 
+// A request another website made the browser send (cross-site request forgery):
+// its Origin names that site, not us. Tools like curl send no Origin at all.
+static bool foreign() {
+  String o = http.header("Origin");
+  int c = o.indexOf("://");
+  return o.length() && (c < 0 || o.substring(c + 3) != http.hostHeader());
+}
+
 static bool guard() {
+  if (foreign()) {
+    http.send(403, "text/plain", "cross-site request refused\n");
+    return false;
+  }
   if (lanPlain()) {                                  // send the browser to HTTPS before anything else
     String host = http.hostHeader();
     int c = host.indexOf(':');
@@ -513,6 +525,8 @@ String deviceSettings() {
   serializeJson(d, out);
   return out;
 }
+
+static void badJson() { sendJson(400, TR("{\"ok\":false,\"error\":\"invalid JSON\"}", "{\"ok\":false,\"error\":\"JSON ungültig\"}", "{\"ok\":false,\"error\":\"JSON inválido\"}")); }
 
 static void handleGetSettings() {
   if (!guard()) return;
@@ -634,7 +648,7 @@ static void handlePostSettings() {
 static void handleBatCal() {
   if (!guard()) return;
   JsonDocument d;
-  if (deserializeJson(d, http.arg("plain"))) return sendJson(400, TR("{\"ok\":false,\"error\":\"invalid JSON\"}", "{\"ok\":false,\"error\":\"JSON ungültig\"}", "{\"ok\":false,\"error\":\"JSON inválido\"}"));
+  if (deserializeJson(d, http.arg("plain"))) return badJson();
   const char *point = d["point"] | "";
   const char *err;
   if (!strcmp(point, "full")) err = Power::calibrateNow(true);
@@ -704,7 +718,7 @@ static bool profileOf(const char *token, JsonDocument &out) {
 static void handleC2Enroll() {
   if (!guard()) return;
   JsonDocument d;
-  if (deserializeJson(d, http.arg("plain"))) return sendJson(400, TR("{\"ok\":false,\"error\":\"invalid JSON\"}", "{\"ok\":false,\"error\":\"JSON ungültig\"}", "{\"ok\":false,\"error\":\"JSON inválido\"}"));
+  if (deserializeJson(d, http.arg("plain"))) return badJson();
   const char *token = d["token"] | "";
   const char *err = C2::enroll(token);
   if (err) return sendJson(400, String("{\"ok\":false,\"error\":\"") + err + "\"}");
@@ -740,7 +754,7 @@ static void handleOtaDone() {
 }
 
 static void handleOtaUpload() {
-  if (!settings.webPass.isEmpty() && !http.authenticate("admin", settings.webPass.c_str())) return;
+  if (foreign() || (!settings.webPass.isEmpty() && !http.authenticate("admin", settings.webPass.c_str()))) return;
   HTTPUpload &up = http.upload();
   if (up.status == UPLOAD_FILE_START) {
     otaOk = false;
@@ -764,7 +778,7 @@ static void handleOtaUpload() {
 static size_t ramOff = 0;
 static bool ramErr = false;
 static void handleRamUpload() {
-  if (!settings.webPass.isEmpty() && !http.authenticate("admin", settings.webPass.c_str())) return;
+  if (foreign() || (!settings.webPass.isEmpty() && !http.authenticate("admin", settings.webPass.c_str()))) return;
   HTTPUpload &up = http.upload();
   if (up.status == UPLOAD_FILE_START) { ramOff = 0; ramErr = false; }
   else if (up.status == UPLOAD_FILE_WRITE) {
@@ -824,7 +838,7 @@ static void freeTlsBuf() {
 }
 
 static void handleTlsUpload() {
-  if (!settings.webPass.isEmpty() && !http.authenticate("admin", settings.webPass.c_str())) return;
+  if (foreign() || (!settings.webPass.isEmpty() && !http.authenticate("admin", settings.webPass.c_str()))) return;
   if (lanPlain()) return;
   HTTPUpload &up = http.upload();
   if (up.status == UPLOAD_FILE_START) {
@@ -890,8 +904,8 @@ static void handleTlsDownload() {
 }
 
 static void setupHttp() {
-  static const char *hdrs[] = {"If-None-Match"};
-  http.collectHeaders(hdrs, 1);
+  static const char *hdrs[] = {"If-None-Match", "Origin"};
+  http.collectHeaders(hdrs, 2);
   http.enableDelay(false);                     // the main loop decides when to pause
 
   for (size_t i = 0; i < WEB_ASSETS_COUNT; i++) {
@@ -935,7 +949,7 @@ static void setupHttp() {
   http.on("/api/tls/csr", HTTP_POST, []() {
     if (!guard()) return;
     JsonDocument d;
-    if (deserializeJson(d, http.arg("plain"))) return sendJson(400, TR("{\"ok\":false,\"error\":\"invalid JSON\"}", "{\"ok\":false,\"error\":\"JSON ungültig\"}", "{\"ok\":false,\"error\":\"JSON inválido\"}"));
+    if (deserializeJson(d, http.arg("plain"))) return badJson();
     String err;
     bool ok = Certs::csrStart(d["subject"] | "", d["san"] | "", d["rsa"] | true, err);
     sendJson(ok ? 200 : 400, ok ? "{\"ok\":true}" : String("{\"ok\":false,\"error\":\"") + err + "\"}");
@@ -948,7 +962,7 @@ static void setupHttp() {
   http.on("/api/c2/control", HTTP_POST, []() {   // may the server change things? Decided here, at the device.
     if (!guard()) return;
     JsonDocument d;
-    if (deserializeJson(d, http.arg("plain")) || !d["allow"].is<bool>()) return sendJson(400, TR("{\"ok\":false,\"error\":\"invalid JSON\"}", "{\"ok\":false,\"error\":\"JSON ungültig\"}", "{\"ok\":false,\"error\":\"JSON inválido\"}"));
+    if (deserializeJson(d, http.arg("plain")) || !d["allow"].is<bool>()) return badJson();
     settings.c2Control = d["allow"];
     Store::save();
     sendJson(200, "{\"ok\":true}");
@@ -959,7 +973,7 @@ static void setupHttp() {
     if (!guard()) return;
     JsonDocument d;
     if (deserializeJson(d, http.arg("plain")) || !d["hours"].is<int>() || d["hours"].as<int>() < 0 || d["hours"].as<int>() > 168)
-      return sendJson(400, TR("{\"ok\":false,\"error\":\"invalid JSON\"}", "{\"ok\":false,\"error\":\"JSON ungültig\"}", "{\"ok\":false,\"error\":\"JSON inválido\"}"));
+      return badJson();
     C2::unattendedSet(d["hours"].as<uint32_t>() * 3600UL);
     sendJson(200, "{\"ok\":true}");
   });
@@ -967,7 +981,7 @@ static void setupHttp() {
   http.on("/api/adminui", HTTP_POST, []() {
     if (!guard()) return;
     JsonDocument d;
-    if (deserializeJson(d, http.arg("plain")) || !d["on"].is<bool>()) return sendJson(400, TR("{\"ok\":false,\"error\":\"invalid JSON\"}", "{\"ok\":false,\"error\":\"JSON ungültig\"}", "{\"ok\":false,\"error\":\"JSON inválido\"}"));
+    if (deserializeJson(d, http.arg("plain")) || !d["on"].is<bool>()) return badJson();
     settings.adminUi = d["on"];
     Store::save();
     sendJson(200, "{\"ok\":true}");
@@ -980,7 +994,7 @@ static void setupHttp() {
   http.on("/api/usbdebug", HTTP_POST, []() {
     if (!guard()) return;
     JsonDocument d;
-    if (deserializeJson(d, http.arg("plain")) || !d["on"].is<bool>()) return sendJson(400, TR("{\"ok\":false,\"error\":\"invalid JSON\"}", "{\"ok\":false,\"error\":\"JSON ungültig\"}", "{\"ok\":false,\"error\":\"JSON inválido\"}"));
+    if (deserializeJson(d, http.arg("plain")) || !d["on"].is<bool>()) return badJson();
     settings.usbDebug = d["on"];
     Store::save();
     sendJson(200, "{\"ok\":true}");
@@ -1000,7 +1014,7 @@ static void setupHttp() {
     if (!guard()) return;
     sendJson(Sd::stickReplug() ? 200 : 409, "{}");
   });
-  http.on("/api/stick/sectors", HTTP_GET, []() { sendJson(200, Sd::stickSectors()); });
+  http.on("/api/stick/sectors", HTTP_GET, []() { if (guard()) sendJson(200, Sd::stickSectors()); });
   http.on("/api/stick", HTTP_POST, []() {
     if (!guard()) return;
     JsonDocument d;

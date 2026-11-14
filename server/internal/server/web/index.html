@@ -167,6 +167,11 @@
     </div>
 
     <div id="p-overview" class="panel" hidden>
+      <div class="row left wrap acts">
+        <a id="oConsole" class="btn primary">Open a console</a>
+        <button class="btn" data-cmd="ping" type="button">Ping</button>
+        <button id="oProfile" class="btn" type="button" data-admin>Apply a profile</button>
+      </div>
       <dl class="tiles">
         <div id="tConn"><dt>Connection</dt><dd id="oConn">–</dd><p id="oConnSub"></p></div>
         <div><dt>Serial ports</dt><dd id="oUse">–</dd><p id="oUseSub"></p></div>
@@ -177,11 +182,6 @@
         <div><dt>Firmware</dt><dd id="oFw">–</dd><p id="oFwSub"></p></div>
         <div><dt>Stored on it</dt><dd id="oStore">–</dd><p id="oStoreSub"></p></div>
       </dl>
-      <div class="row left wrap">
-        <a id="oConsole" class="btn primary">Open a console</a>
-        <button class="btn" data-cmd="ping" type="button">Ping</button>
-        <button id="oProfile" class="btn" type="button" data-admin>Apply a profile</button>
-      </div>
     </div>
 
     <div id="p-console" class="panel" hidden>

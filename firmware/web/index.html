@@ -17,6 +17,7 @@
   <svg class="mark" viewBox="0 0 64 64" width="26" height="26" aria-hidden="true"><defs><linearGradient id="markFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3b9eff"/><stop offset="1" stop-color="#0066d6"/></linearGradient></defs><rect width="64" height="64" rx="15" fill="url(#markFill)"/><path d="M14.5 23.5h35l-4.6 17H19.1z" fill="#fff" stroke="#fff" stroke-width="7" stroke-linejoin="round"/><path d="M22.5 26.5l5.5 5.5-5.5 5.5" fill="none" stroke="#0a6fe0" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M32.5 37.5h9" stroke="#0a6fe0" stroke-width="3.4" stroke-linecap="round"/></svg>
   <span id="dot" class="dot off" title="Connection"></span>
   <span id="host" class="host">rs232</span>
+  <span id="conn" class="chip static warn" role="status"></span>
   <button id="serChip" class="chip" type="button" title="Serial settings">-- ---</button>
   <span id="batChip" class="chip static" title="Battery" hidden>--</span>
   <span class="grow"></span>
@@ -58,6 +59,16 @@
       <button id="varsCancel" class="btn" type="button">Cancel</button>
     </div>
   </form>
+</div>
+
+<!-- the SD card is lent to the USB port: nothing else to do here until it is given back -->
+<div id="stickDlg" class="modal" role="alertdialog" aria-modal="true" aria-labelledby="stickTitle" hidden>
+  <div class="modal-box">
+    <h3 id="stickTitle">USB stick mode</h3>
+    <p id="stickState"></p>
+    <p class="hint" id="stickNote">The SD card belongs to the USB port now: the switch, firewall or computer it is plugged into sees a USB stick. Eject it there, then restart this device to get the card back.</p>
+    <button id="stickEnd" class="btn primary" type="button">Restart</button>
+  </div>
 </div>
 
 <section id="panel" hidden>
@@ -102,8 +113,8 @@
           <select id="sStop"><option>1</option><option>2</option></select>
         </label>
       </div>
-      <label class="check"><input id="sSwap" type="checkbox"> Swap RX/TX at the TTL level converter</label>
-      <p class="hint">Only in case the labels TXD/RXD on the module mean the opposite of how it is wired (the loopback test shows it). This swaps the two lines <b>between the ESP32 and the level converter</b> – nothing changes on the DB9 side. So a missing crossover in the cable (null modem) can <b>not</b> be made up for with it; that takes a crossed adapter.</p>
+      <label class="check" data-admin><input id="sSwap" type="checkbox"> Swap RX/TX at the TTL level converter</label>
+      <p class="hint" data-admin>Only in case the labels TXD/RXD on the module mean the opposite of how it is wired (the loopback test shows it). This swaps the two lines <b>between the ESP32 and the level converter</b> – nothing changes on the DB9 side. So a missing crossover in the cable (null modem) can <b>not</b> be made up for with it; that takes a crossed adapter.</p>
       <label class="inline">Line ending when sending
         <select id="sEol"><option value="cr">CR (\r) – Cisco, Fortinet …</option><option value="crlf">CR+LF</option><option value="lf">LF</option></select>
       </label>
@@ -341,26 +352,25 @@
 
     <!-- ============ Gerät ============ -->
     <div class="tab" data-tab="device" hidden>
-      <table class="kv">
-        <tr><th>Battery</th><td id="dBat">–</td></tr>
-        <tr><th>Wi-Fi (AP)</th><td id="dAp">–</td></tr>
-        <tr><th>LAN (client)</th><td id="dSta">–</td></tr>
-        <tr><th>HTTPS</th><td id="dHttps">–</td></tr>
-        <tr><th>Connections</th><td id="dClients">–</td></tr>
-        <tr><th>Ports</th><td id="dPorts">–</td></tr>
-        <tr><th>Uptime</th><td id="dUp">–</td></tr>
-        <tr><th>Firmware</th><td id="dFw">–</td></tr>
-        <tr><th>Hardware</th><td id="dBoard">–</td></tr>
-        <tr><th>Free RAM</th><td id="dHeap">–</td></tr>
-        <tr><th>SD card</th><td id="dSd">–</td></tr>
-      </table>
-      <label class="check"><input id="adminUi" type="checkbox"> Show the administrator settings (Ports, Network, Setup)</label>
       <div class="row">
         <button id="devStick" class="btn" type="button" hidden>Use the SD card as a USB stick</button>
         <button id="devReboot" class="btn" type="button">Restart</button>
       </div>
-      <p class="hint" id="stickNote" hidden>The SD card belongs to the USB port now: the switch, firewall or computer it is plugged into sees a USB stick. Eject it there, then restart this device to get the card back.</p>
       <p class="hint" id="stickHint" hidden>As a USB stick the card can be read by a switch or firewall (firmware images, configurations) and filled from a computer. The USB port moves about half a megabyte per second.</p>
+      <table class="kv">
+        <tr><th>Battery</th><td id="dBat">–</td></tr>
+        <tr><th>Wi-Fi (AP)</th><td id="dAp">–</td></tr>
+        <tr><th>LAN (client)</th><td id="dSta">–</td></tr>
+        <tr data-admin><th>HTTPS</th><td id="dHttps">–</td></tr>
+        <tr><th>Connections</th><td id="dClients">–</td></tr>
+        <tr data-admin><th>Ports</th><td id="dPorts">–</td></tr>
+        <tr data-admin><th>Uptime</th><td id="dUp">–</td></tr>
+        <tr><th>Firmware</th><td id="dFw">–</td></tr>
+        <tr data-admin><th>Hardware</th><td id="dBoard">–</td></tr>
+        <tr data-admin><th>Free RAM</th><td id="dHeap">–</td></tr>
+        <tr><th>SD card</th><td id="dSd">–</td></tr>
+      </table>
+      <label class="check"><input id="adminUi" type="checkbox"> Show the administrator settings (Ports, Network, Setup)</label>
     </div>
 
     <!-- ============ Setup ============ -->
