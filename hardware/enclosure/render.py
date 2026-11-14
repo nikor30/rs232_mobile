@@ -15,7 +15,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 HAT = "--hat" in sys.argv                       # the two-port variant: reads and writes out_hat/
 OUT = os.path.join(HERE, "out_hat" if HAT else "out")
 
-LCD = os.path.join(HERE, "lcd_status.png")     # what the display shows in the pictures
+STUDIO = "--studio" in sys.argv                 # product shots on a floor: out*/studio_*.png
+# what the display shows in the pictures: screenshots of the firmware's home page, its sheet from below
+# (baud ruler, keys) and its sheet from above (QR code, addresses), 240 x 320 enlarged three times
+LCD = os.path.join(HERE, "lcd_status.png")
+LCD2 = os.path.join(HERE, "lcd_sheet.png")
+LCD3 = os.path.join(HERE, "lcd_qr.png")
 
 
 def stl_to_inc(name):
@@ -52,12 +57,26 @@ SCENE = r'''
 global_settings { assumed_gamma 1.0 max_trace_level 8
   radiosity { pretrace_start 0.08 pretrace_end 0.005 count 220 nearest_count 10 error_bound 0.3 recursion_limit 2 brightness 0.9 } }
 #ifndef (View) #declare View = 1; #end
+#ifndef (Floor) #declare Floor = 0; #end     // 0 none (documentation pictures), 1 black gloss, 2 light sweep
+#ifndef (AR) #declare AR = 4/3; #end         // width / height of the picture
+#ifndef (Lcd) #declare Lcd = 1; #end         // 1 home page, 2 sheet with the baud ruler, 3 sheet with the QR code
+#ifndef (Zf) #declare Zf = __ZFLOOR__; #end  // height of the floor
+#ifndef (SBa) #declare SBa = 62; #end        // soft box: what it covers on the glass, across and along the view (mm)
+#ifndef (SBl) #declare SBl = 84; #end
+#ifndef (SBo) #declare SBo = 0; #end         // shifted along the view (mm on the glass)
+#ifndef (SBe) #declare SBe = 0.8; #end       // brightness at its far edge
+#ifndef (SBp) #declare SBp = 1.5; #end       // how late the brightness rises
 __INCLUDES__
-background { rgbt <0, 0, 0, 1> }
+#if (Floor = 0) background { rgbt <0, 0, 0, 1> } #else background { rgb 0 } #end
 sphere { <40, 55, 0>, 2500 hollow no_image no_shadow no_reflection
   texture { pigment { gradient z color_map { [0.0 rgb <0.05, 0.055, 0.07>] [0.3 rgb <0.10, 0.11, 0.14>] [1.0 rgb <0.30, 0.32, 0.38>] } scale 2500 } finish { emission 1.0 ambient 0 diffuse 0 } } }
+#if (Floor = 2)   // far away and large: the same light everywhere on the floor, shadows still soft
+light_source { <40, 55, 0> + <-300, 325, 420> * 8 color rgb <1.0, 0.99, 0.97> * 1.0 area_light <1100, 0, 0>, <0, 1100, 0>, 9, 9 adaptive 1 jitter circular orient }
+light_source { <40, 55, 0> + <280, -135, 260> * 8 color rgb <0.9, 0.94, 1.0> * 0.35 area_light <640, 0, 0>, <0, 640, 0>, 5, 5 adaptive 1 jitter circular orient shadowless }
+#else
 light_source { <-260, 380, 420> color rgb <1.0, 0.98, 0.95> * 1.15 area_light <120, 0, 0>, <0, 120, 0>, 9, 9 adaptive 1 jitter circular orient }
 light_source { <320, -80, 260> color rgb <0.85, 0.9, 1.0> * 0.5 area_light <80, 0, 0>, <0, 80, 0>, 5, 5 adaptive 1 jitter circular orient shadowless }
+#end
 #if (View = 11)
 light_source { <39, 150, 200> color rgb <1, 1, 1> * 0.8 area_light <60, 0, 0>, <0, 60, 0>, 5, 5 adaptive 1 jitter circular orient shadowless }
 #end
@@ -65,7 +84,13 @@ light_source { <39, 150, 200> color rgb <1, 1, 1> * 0.8 area_light <60, 0, 0>, <
 light_source { <40, 60, -300> color rgb <1, 1, 1> * 0.9 area_light <80, 0, 0>, <0, 80, 0>, 5, 5 adaptive 1 jitter circular orient }
 #end
 
+#if (Floor = 0)
 #declare T_body = texture { pigment { rgb <0.90, 0.895, 0.875> } finish { diffuse 0.72 specular 0.18 roughness 0.06 brilliance 1.2 } }
+#else   // printed PLA: layers of 0.2 mm on the walls, the grain of the build plate on the top face
+#declare T_body = texture { pigment { rgb <0.83, 0.83, 0.82> }
+  normal { average normal_map { [1 gradient z 0.5 sine_wave scale 0.2] [1 bumps 0.12 scale 0.09] } }
+  finish { diffuse 0.74 specular 0.14 roughness 0.09 brilliance 1.1 } }
+#end
 #declare T_base = texture { pigment { rgb <0.42, 0.43, 0.45> } finish { diffuse 0.7 specular 0.12 roughness 0.08 } }
 #declare T_glass = texture { pigment { rgb <0.03, 0.03, 0.035> } finish { diffuse 0.3 specular 0.6 roughness 0.004 reflection { 0.08, 0.35 fresnel } } }
 #declare T_dark = texture { pigment { rgb <0.10, 0.10, 0.11> } finish { diffuse 0.6 specular 0.15 roughness 0.05 } }
@@ -76,11 +101,12 @@ light_source { <40, 60, -300> color rgb <1, 1, 1> * 0.9 area_light <80, 0, 0>, <
 #declare T_white = texture { pigment { rgb <0.92, 0.92, 0.88> } finish { diffuse 0.75 } }
 #declare T_clear = texture { pigment { rgbt <0.85, 0.9, 0.95, 0.5> } finish { diffuse 0.4 specular 0.5 roughness 0.01 } }
 
+#switch (Lcd) #case (2) #declare LcdFile = "__LCD2__"; #break #case (3) #declare LcdFile = "__LCD3__"; #break #else #declare LcdFile = "__LCD__"; #end
 #declare Module = union {
   object { m_glass texture { T_glass } }
   // the lit view area (30.99 x 41.20, 7.51 from the antenna end), just above the glass surface
   box { <0, 0, 0>, <1, 1, 0.02>
-    texture { pigment { image_map { png "__LCD__" once } } finish { emission 1.0 ambient 0 diffuse 0.15 specular 0.5 roughness 0.004 reflection { 0.05, 0.25 fresnel } } }
+    texture { pigment { image_map { png LcdFile once } } finish { emission 1.0 ambient 0 diffuse 0.15 specular 0.5 roughness 0.004 reflection { 0.05, 0.25 fresnel } } }
     translate <-0.5, -0.5, 0> rotate <0, 0, 180> scale <__VAW__, __VAL__, 1> translate <__VAX__, __VAY__, __ZTOP__> }
   object { m_tp_sensor texture { T_dark } }
   object { m_lcm texture { T_metal } }
@@ -114,13 +140,89 @@ __REST_DECL__
 // A variant of another size moves and scales them: Cam about its centre, CamU with its USB-C end.
 #declare CS = __CS__; #declare CCX = __CCX__; #declare CCY = __CCY__; #declare UY = __UY__;
 #macro Cam(ex, ey, ez, lx, ly, lz, ang)
+  #declare CamLoc = <CCX + (ex - 39) * CS, CCY + (ey - 57.4) * CS, ez * CS>;
   camera { perspective location <CCX + (ex - 39) * CS, CCY + (ey - 57.4) * CS, ez * CS> look_at <CCX + (lx - 39) * CS, CCY + (ly - 57.4) * CS, lz>
-           sky <0, 0, 1> right <-4/3, 0, 0> angle ang }
+           sky <0, 0, 1> right <-AR, 0, 0> angle ang }
 #end
 #macro CamU(ex, ey, ez, lx, ly, lz, ang)
-  camera { perspective location <CCX + ex - 39, UY + ey - 116.73, ez> look_at <CCX + lx - 39, UY + ly - 116.73, lz> sky <0, 0, 1> right <-4/3, 0, 0> angle ang }
+  #declare CamLoc = <CCX + ex - 39, UY + ey - 116.73, ez>;
+  camera { perspective location <CCX + ex - 39, UY + ey - 116.73, ez> look_at <CCX + lx - 39, UY + ly - 116.73, lz> sky <0, 0, 1> right <-AR, 0, 0> angle ang }
+#end
+// ---- studio: floor, feet, a light panel that shows in the glass, cables
+#if (Floor = 1)
+plane { z, Zf pigment { rgb 0 } finish { diffuse 0 ambient 0 specular 0 reflection { 0.02, 0.45 fresnel on } } interior { ior 1.5 } }
+#end
+#if (Floor = 2)
+plane { z, Zf pigment { rgb <0.80, 0.80, 0.81> } finish { diffuse 0.9 ambient 0 } }
+#end
+#declare Feet = union {
+__FEET__
+}
+#declare T_cable = texture { pigment { rgb <0.90, 0.90, 0.89> } finish { diffuse 0.75 specular 0.25 roughness 0.03 } }
+#declare T_patch = texture { pigment { rgb <0.05, 0.25, 0.62> } finish { diffuse 0.7 specular 0.3 roughness 0.03 } }
+// USB-C cable: from the back of the plug's grip in a bow down to the floor and away
+#declare PX = CCX; #declare PY = UY + 19.32; #declare PZ = __PLUGZ__;
+#declare UsbCable = union {
+  cone { <PX, PY - 0.5, PZ>, 2.9, <PX, PY + 9, PZ>, 2.0 texture { T_cable } }
+  sphere_sweep { cubic_spline 7,
+    <PX, PY - 10, PZ>, 1.7, <PX, PY + 5, PZ>, 1.7, <PX + 2, PY + 30, PZ - 3>, 1.7, <PX + 14, PY + 58, Zf + 4>, 1.7,
+    <PX + 44, PY + 84, Zf + 1.7>, 1.7, <PX + 110, PY + 96, Zf + 1.7>, 1.7, <PX + 260, PY + 90, Zf + 1.7>, 1.7
+    tolerance 0.05 texture { T_cable } }
+}
+// a patch cable in jack N (0 = first): clear plug with its contacts, boot, cable in a bow to the floor
+#macro Patch(N, Side)
+  #local JX = __JACK0__ + N * __JACKP__; #local JY = __JACKY__; #local JZ = 6.7;
+  union {
+    box { <JX - 5.8, JY - 12.5, JZ - 3.3>, <JX + 5.8, JY + 3, JZ + 3.3>
+      texture { pigment { rgbt <0.86, 0.90, 0.93, 0.55> } finish { diffuse 0.3 specular 0.7 roughness 0.008 reflection { 0.04, 0.3 fresnel on } } } interior { ior 1.45 } }
+    #local I = 0; #while (I < 8)
+      box { <JX - 4.5 + I * 1.27, JY - 6, JZ + 2.4>, <JX - 4.1 + I * 1.27, JY + 2.5, JZ + 3.1> texture { T_gold } }
+    #local I = I + 1; #end
+    box { <JX - 2.2, JY - 12, JZ - 5.2>, <JX + 2.2, JY - 2, JZ - 3.3> texture { pigment { rgbt <0.86, 0.90, 0.93, 0.45> } finish { diffuse 0.3 specular 0.7 roughness 0.008 } } }
+    cone { <JX, JY - 12.5, JZ>, 4.6, <JX, JY - 30, JZ>, 3.0 texture { T_patch } }
+    sphere_sweep { cubic_spline 7,
+      <JX, JY, JZ>, 2.7, <JX, JY - 28, JZ>, 2.7, <JX + Side * 3, JY - 52, JZ - 5>, 2.7, <JX + Side * 16, JY - 80, Zf + 5>, 2.7,
+      <JX + Side * 46, JY - 104, Zf + 2.7>, 2.7, <JX + Side * 120, JY - 116, Zf + 2.7>, 2.7, <JX + Side * 280, JY - 108, Zf + 2.7>, 2.7
+      tolerance 0.05 texture { T_patch } }
+  }
 #end
 #switch (View)
+#case (21)  // studio: the whole device, USB-C end towards the viewer
+  Cam(-84, 292, 118, 40, 58, 2, 29)
+  object { Body } object { Base } object { Module } object { Carrier } object { Keys } object { Feet }
+#break
+#case (22)  // studio: the port end
+  Cam(150, -208, 98, 40, 50, -1, 31)
+  object { Body } object { Base } object { Module } object { Carrier } object { Keys } object { Feet }
+#break
+#case (23)  // studio: the display, close
+  CamU(-38, 232, 118, 38, 82, 14, 20)
+  object { Body } object { Base } object { Module } object { Carrier } object { Keys } object { Feet }
+#break
+#case (24)  // studio: exploded, no floor
+  #declare CS = (CS + 1) / 2;
+  Cam(-175, 345, 185, 40, 58, __EXZ__, __EXA__ * 0.80)
+  object { Module translate <0, 0, __EXM__> }
+  object { Body translate <0, 0, __EXB__> }
+  object { Keys translate <0, 14, __EXB__> }
+  __REST_UP__
+  object { Carrier }
+  __BATTERY_OUT__
+  object { Base translate <0, 0, -34> }
+#break
+#case (25)  // studio: the USB-C end with a cable plugged in
+  CamU(-52, 262, 62, 39, 112, 3, 24)
+  object { Body } object { Base } object { Module } object { Carrier } object { Keys } object { Feet } object { Plug } object { UsbCable }
+#break
+#case (26)  // studio: the electronics alone
+  Cam(-150, 300, 175, 40, 55, 6, 23)
+  object { Module } object { Carrier } __REST__
+#break
+#case (27)  // studio: at work - a patch cable in port 1, charging over USB-C
+  Cam(176, -232, 124, 46, 36, -2, 33)
+  object { Body } object { Base } object { Module } object { Carrier } object { Keys } object { Feet } object { Plug } object { UsbCable }
+  Patch(0, -1)
+#break
 #case (1)   // hero: USB-C end towards the viewer
   Cam(-85, 300, 150, 40, 62, 0, 30)
   object { Body } object { Base } object { Module } object { Carrier } object { Keys }
@@ -183,6 +285,21 @@ __REST_DECL__
   object { Carrier }
 #break
 #end
+#if (Floor > 0)
+  // A soft box overhead, placed where the display glass mirrors it for this camera: the sheen in the glass,
+  // dark at the near edge and bright at the far one.  The floor mirrors the box in nearly the same direction,
+  // so it is kept narrower than the top face of the case: there its mirror image lies hidden behind the device.
+  #local G = <__VAX__, __VAY__, __ZTOP__>;
+  #local D = G - CamLoc;
+  #local T = (420 - G.z) / (-D.z);
+  #local U = vnormalize(<D.x, D.y, 0>);
+  box { <-0.5, -0.5, 0>, <0.5, 0.5, 1> no_image no_shadow
+    texture { pigment { function { 0.999 * pow(max(0, min(1, y + 0.5)), SBp) * min(1, max(0, (0.5 - abs(x)) / 0.2)) }
+                        color_map { [0 rgb 0] [1 rgb SBe] } }
+              finish { emission 1 ambient 0 diffuse 0 } }
+    scale <SBa * (1 + T), SBl * (1 + T), 1> rotate <0, 0, degrees(atan2(-U.x, U.y))>
+    translate G + <D.x, D.y, -D.z> * T + U * SBo * (1 + T) }
+#end
 '''
 
 
@@ -223,9 +340,18 @@ def main():
         bx1, bx2, by1 = bx1 + 1.0, bx2 - 1.0, by1 + 1.5
         by2 = by1 + geo["battery"][1] - 2.0
         bz1, bz2 = geo["z_base_top"] + 0.1, geo["z_base_top"] + 5.1
-    scene = (SCENE.replace("__INCLUDES__", "\n".join(inc)).replace("__LCD__", LCD)
+    P = geo["P"]
+    zf = geo["z"]["bot"] - 0.9                   # the case stands on stick-on feet 1.5 mm thick
+    fx = (geo["ox"][0] + P["wall"] + P["base_inset"] + 10, geo["ox"][1] - P["wall"] - P["base_inset"] - 10)
+    fy = (geo["oy"][0] + P["wall_rj"] + P["base_inset"] + 10, geo["oy"][1] - P["wall"] - P["base_inset"] - 10)
+    feet = "\n".join(f"  cylinder {{ <{x:.2f}, {y:.2f}, {zf:.2f}>, <{x:.2f}, {y:.2f}, {zf + 1.5:.2f}>, {P['foot_d'] / 2 - 0.2:.2f} texture {{ T_dark }} }}"
+                     for x in fx for y in fy)
+    scene = (SCENE.replace("__INCLUDES__", "\n".join(inc)).replace("__LCD__", LCD).replace("__LCD2__", LCD2).replace("__LCD3__", LCD3)
+             .replace("__ZFLOOR__", f"{zf:.2f}").replace("__FEET__", feet).replace("__PLUGZ__", f"{geo['usb']['z']:.2f}")
+             .replace("__JACK0__", f"{geo['jacks'][0]}").replace("__JACKP__", f"{geo['jacks'][1] - geo['jacks'][0]}")
+             .replace("__JACKY__", f"{geo['jack_front'] + 0.5:.2f}")
              .replace("__VAW__", "30.99").replace("__VAL__", "41.20").replace("__VAX__", f"{cx:.3f}").replace("__VAY__", f"{cy:.3f}")
-             .replace("__ZTOP__", f"{geo['z_top']:.3f}").replace("__JACKS__", "\n".join(jacks))
+             .replace("__ZTOP__", f"{geo['z_glass_top']:.3f}").replace("__JACKS__", "\n".join(jacks))
              .replace("__BX1__", f"{bx1}").replace("__BX2__", f"{bx2}").replace("__BY1__", f"{by1:.2f}").replace("__BY2__", f"{by2:.2f}")
              .replace("__CS__", f"{(geo['oy'][1] - geo['oy'][0]) / 118.63 + 0.07:.3f}" if HAT else "1").replace("__CCX__", f"{geo['ws_xc']}")
              .replace("__CCY__", f"{(geo['oy'][0] + geo['oy'][1]) / 2:.2f}").replace("__UY__", f"{geo['oy'][1]:.2f}")
@@ -240,6 +366,8 @@ def main():
              .replace("__BATTERY_ON_BASE__", "" if HAT else "object { Battery }"))
     pov = os.path.join(OUT, "scene.pov")
     open(pov, "w").write(scene)
+    if STUDIO:
+        return studio()
     names = {1: "hero", 2: "ports", 3: "exploded", 4: "section", 5: "base", 6: "below", 7: "electronics", 8: "carrier_bottom",
              9: "usb_end", 10: "usb_plug", 11: "usb_cut"}
     if HAT:
@@ -256,6 +384,62 @@ def main():
     details(geo)
     if geo.get("hat"):
         hat_layout(geo)
+    return 0 if ok else 1
+
+
+# Product shots: name, view, floor (0 none, 1 black gloss, 2 light sweep), page on the display, width, height, extra declares
+STUDIO_VIEWS = [
+    ("hero", 21, 1, 2, 2000, 1500, {}),
+    ("hero_light", 21, 2, 1, 2000, 1500, {}),
+    ("ports", 22, 1, 1, 2000, 1500, {}),
+    ("ports_light", 22, 2, 1, 2000, 1500, {}),
+    ("display", 23, 1, 1, 1500, 1800, {}),
+    ("exploded", 24, 0, 1, 1500, 1800, {}),
+    ("usb_cable", 25, 1, 2, 2000, 1500, {}),
+    ("electronics", 26, 0, 1, 2000, 1500, {}),
+    ("at_work", 27, 1, 1, 2000, 1500, {}),
+]
+LIGHT_BG = (245, 245, 247)       # the light slides of the presentation
+
+
+def flatten_backdrop(path):
+    """Light sweep: scale the picture so that the open floor comes out in exactly LIGHT_BG, and let the edges
+    run into that colour, so the picture has no visible border on a slide of the same colour."""
+    import numpy as np
+    from PIL import Image
+    a = np.asarray(Image.open(path).convert("RGB")).astype(float)
+    h, w, _ = a.shape
+    corners = np.concatenate([a[:40, :40].reshape(-1, 3), a[:40, -40:].reshape(-1, 3)])      # the far floor
+    a = a * (np.array(LIGHT_BG) / np.median(corners, axis=0))
+    yy, xx = np.mgrid[0:h, 0:w]
+    edge = np.minimum.reduce([xx, yy, w - 1 - xx, h - 1 - yy]) / (0.05 * w)
+    k = np.clip(edge, 0, 1)[..., None] ** 0.8
+    a = a * k + np.array(LIGHT_BG) * (1 - k)
+    Image.fromarray(np.clip(a, 0, 255).astype("uint8")).save(path)
+
+
+def studio():
+    """python3 render.py --studio [--hat] [name ...] [--draft]"""
+    want = [a for a in sys.argv[1:] if not a.startswith("-")]
+    draft = "--draft" in sys.argv
+    ok = True
+    for name, view, floor, lcd, w, h, extra in STUDIO_VIEWS:
+        if want and name not in want:
+            continue
+        if draft:
+            w, h = w // 3, h // 3
+        out = os.path.join(OUT, f"studio_{name}.png")
+        args = ["povray", "+Iscene.pov", f"+O{out}", f"+W{w}", f"+H{h}", "+A0.3" if draft else "+A0.1", "+AM2", "+R3", "+J0", "-D", "-V", "+Q9",
+                f"Declare=View={view}", f"Declare=Floor={floor}", f"Declare=Lcd={lcd}", f"Declare=AR={w / h:.5f}"]
+        args += [f"Declare={k}={v}" for k, v in extra.items()]
+        if floor == 0:
+            args.append("+UA")
+        r = subprocess.run(args, cwd=OUT, capture_output=True, text=True)
+        good = r.returncode == 0 and os.path.exists(out)
+        if good and floor == 2:
+            flatten_backdrop(out)
+        ok &= good
+        print("studio", name, "ok" if good else r.stderr[-900:])
     return 0 if ok else 1
 
 
@@ -449,7 +633,7 @@ def details(geo):
     a2.text(gx1 + 5.2, (ws["pcb_z"][0] + ws["pcb_z"][1]) / 2 + zm, "module PCB 1.6", va="center", fontsize=7.5, color="white")
 
     a2.annotate(f"ledge {ox1 - gx1:.2f}", ((ox1 + gx1) / 2, z["glass"]), (gx1 - 5.2, z["plate"] - 1.6), arrowprops=dict(arrowstyle="->"), fontsize=7.5)
-    a2.text(xl + 2.6, z["top"] + 0.25, "top of the case = top of the glass", fontsize=8)
+    a2.text(xl + 2.6, z["top"] + 0.25, f"glass {P['glass_recess']:.1f} below the top of the case", fontsize=8)
     a2.text(xl + 0.3, (z["plate"] + z["top"]) / 2, f"top plate {P['top_t']:.1f}", fontsize=8, va="center")
     a2.annotate(f"gap {g:.2f}", (gx1 - g / 2, z["top"]), (gx1 - 3.2, z["top"] + 1.1), arrowprops=dict(arrowstyle="->"), fontsize=7.5)
     a2.set_xlim(xl - 0.5, gx1 + 12); a2.set_ylim(z["plate"] - 5.2, z["top"] + 1.8); a2.set_aspect("equal")

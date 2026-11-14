@@ -25,6 +25,7 @@ down, carrier pressed onto the pins, battery plugged, base pushed in until it cl
 """
 import math
 import os
+import re
 import sys
 
 import cadquery as cq
@@ -48,30 +49,35 @@ P = dict(
     gap=0.5,             # carrier to side walls
     gap_rj=0.3,          # carrier edge to the port wall
     r_out=6.0,           # outer vertical corner radius
-    r_top=1.5,           # radius of the top edge
+    r_top=1.2,           # 45 deg chamfer of the top edge (the top lies on the bed: a chamfer prints clean, a radius does not)
     plug_gap=0.3,        # the module sits this much above "fully plugged": the glass always seats on its ledge first
     top_t=3.0,           # top plate
     glass_clr=0.25,      # glass to pocket wall (lens tolerance +-0.05, FDM)
+    glass_recess=0.1,    # the glass lies this far below the top face: the pocket is then 1.2 deep, six layers of 0.2 mm
     open_clr=0.30,       # module PCB to the drop-in opening
     bot_clr=2.6,         # under the carrier: through-hole pins 2 mm, relays 1.75 mm
     bat_t=7.0,           # battery bay height
     base_t=2.0, base_inset=0.6, base_clr=0.25,
     post_d=5.0,
     # snap arms (in-plane cantilevers on the base)
-    arm_l=16.0, arm_t=2.0, arm_h=5.0, arm_slot=1.6,
+    arm_l=18.0, arm_t=1.6, arm_h=5.0, arm_slot=1.6,     # long and slim for PLA: 0.65 % strain when snapping in
     bump=0.9, bump_l=4.0, bump_land=0.6, lead_deg=30.0, preload=0.2, recess_d=1.0,
     # USB-C end: a shallow bay with 45 deg walls holds the port and the two keys below the outer face
     bay_depth=1.0, bay_w=26.0, bay_h=9.6, bay_r=3.0,
     usb_w=13.4, usb_h=7.5, usb_r=2.0,    # well for the plug's overmould (USB-IF maximum 12.35 x 6.5)
     key_w=3.0, key_h=6.0,                # the visible cap
     key_proud=0.8,                       # cap above the bay floor (0.2 below the outer face)
-    key_clr=0.15,                        # sliding fit in hole and tunnel
+    key_clr=0.2,                         # sliding fit in hole and tunnel
     key_gap=0.15,                        # nose to switch plunger at rest
     key_shoulder=1.0,                    # the key's body is taller than its cap: it cannot leave outwards
     key_nose_h=1.9, key_stroke=0.6,
-    rj_clr=0.3, foot_d=10.4, foot_depth=0.5,
+    rj_clr=0.3, foot_d=10.4, foot_depth=0.6,
     rest_gap=0.15,       # play between the module's standoffs and what they rest on (two-port variant)
 )
+# Printing material: name, modulus (MPa), strain a snap arm may see when it is pushed in.  PLA is stiff and
+# brittle; PETG would be ("PETG", 2000.0, 0.02).
+MATERIAL = ("PLA", 3300.0, 0.010)
+
 if VARIANT == "hat":
     # Two-port prototype board: 50 x 50 mm with square corners, held by its four mounting holes.  It lies at
     # the bottom.  The module is wired to it with jumper wires whose plugs hang 14 mm down from its pins, so
@@ -119,8 +125,9 @@ def ws_dev(xv, yv):
 
 
 ZM = MODULE_Z                                # vendor z -> device z
-Z_TOP = WS["glass_z"][1] + ZM                # glass front = top face of the body
 Z_GLASS = WS["glass_z"][0] + ZM              # glass underside = ledge
+Z_GLASS_TOP = WS["glass_z"][1] + ZM          # glass front
+Z_TOP = Z_GLASS_TOP + P["glass_recess"]      # top face of the body
 Z_PLATE = Z_TOP - P["top_t"]
 Z_CARR_BOT = -1.6
 Z_BAY = Z_CARR_BOT - P["bot_clr"]
@@ -242,7 +249,7 @@ def oriented_prism(o, u, n, profile, a1, a2):
 # ----------------------------------------------------------------------------- body
 def make_body():
     body = rbox(OX1, OY1, OX2, OY2, Z_BOT, Z_TOP, P["r_out"])
-    body = body.faces(">Z").edges().fillet(P["r_top"])
+    body = body.faces(">Z").edges().chamfer(P["r_top"])
     body = body.faces("<Z").edges().chamfer(0.4)
     body = body.cut(rbox(CX1, CY1, CX2, CY2, Z_BOT - 1, Z_PLATE, R_IN))
     # glass pocket: flush, the ledge is what is left of the top plate under the glass rim
@@ -303,6 +310,29 @@ def make_body():
     for x1, x2 in ((OX1 - 1, CX1 + 0.01), (CX2 - 0.01, OX2 + 1)):
         body = body.cut(box(x1, PRY_Y - 6.0, x2, PRY_Y + 6.0, Z_BOT - 1, Z_BASE_BOT + 1.0))
     return body
+
+
+def pocket_ribs():
+    """Break-away ribs for printing the body with its top face on the bed.  They stand in the glass pocket under
+    the ledge at its two ends - the only faces of the body that would otherwise start in mid-air - and stop
+    one layer (0.2 mm) short of it.  They are separate from the body and come out with a fingernail."""
+    g, c = P["glass_clr"], P["open_clr"]
+    x1, x2, y1, y2 = GX1 - g, GX2 + g, GY1 - g, GY2 + g
+    _, ay = ws_dev(WS["pcb"][2] + c, WS["pcb"][3] + c)
+    _, by = ws_dev(WS["pcb"][0] - c, WS["tp_fpc_y"] - c - 0.05)
+    ux1, uy1 = ws_dev(WS["usbc"][2] + 0.4, WS["usbc"][3])
+    ux2, uy2 = ws_dev(WS["usbc"][0] - 0.4, WS["usbc"][1] - 0.4)
+    z1, z2 = Z_GLASS + 0.2, Z_TOP                  # one layer short of the ledge
+    pitch = 2.5
+    n = int((x2 - x1 - 4.0) // pitch)
+    x0 = (x1 + x2) / 2 - n * pitch / 2
+    ribs = None
+    for i in range(n + 1):
+        x = x0 + i * pitch
+        for ya, yb in ((y1 + 0.3, ay + 0.2), (by - 0.2, y2 - 0.3)):   # 0.2 past the edge of the opening: its outline lands on them
+            r = box(x - 0.25, ya, x + 0.25, yb, z1, z2)
+            ribs = r if ribs is None else ribs.union(r)
+    return ribs.cut(box(ux1 - 0.3, uy1, ux2 + 0.3, uy2 + 0.3, z1 - 1, z2 + 1))
 
 
 # ----------------------------------------------------------------------------- base
@@ -403,7 +433,7 @@ def make_module():
         (x1, y1), (x2, y2) = ws_dev(b[2], b[3]), ws_dev(b[0], b[1])
         return box(x1, y1, x2, y2, z[0] + ZM, z[1] + ZM)
     parts = {}
-    parts["glass"] = rbox(GX1, GY1, GX2, GY2, Z_GLASS, Z_TOP, WS["glass_r"])
+    parts["glass"] = rbox(GX1, GY1, GX2, GY2, Z_GLASS, Z_GLASS_TOP, WS["glass_r"])
     parts["tp_sensor"] = vbox(WS["tp_sensor"], WS["tp_sensor_z"])
     parts["lcm"] = vbox(WS["lcm"], WS["lcm_z"])
     parts["pmma"] = vbox(WS["pmma"], WS["pmma_z"])
@@ -679,17 +709,22 @@ def checks(body, base, module, carrier, vendor, keys, rest=None):
     ledge = vol(body.intersect(under).intersect(box(GX1, GY1, GX2, GY2, Z_GLASS - 1, Z_GLASS))) / 0.05
     print(f"  ledge area under the glass: {ledge:.0f} mm2 of {37.1 * 58.8 - (4 - math.pi) * 2.6 ** 2:.0f} mm2 glass")
     ok &= ledge > 300
-    print("snap arms (PETG, E ~ 2000 MPa):")
+    mat, e_mod, strain_max = MATERIAL
+    print(f"snap arms ({mat}, E ~ {e_mod:.0f} MPa):")
     y = P["bump"] - P["base_clr"]
     L, t, b = P["arm_l"] - 0.5 - P["bump_l"] / 2, P["arm_t"], P["arm_h"]
     strain = 1.5 * t * y / L ** 2
-    force = 2000 * b * t ** 3 * y / (4 * L ** 3)
+    force = e_mod * b * t ** 3 * y / (4 * L ** 3)
     mu = 0.3
     fin = force * (mu + math.tan(math.radians(P["lead_deg"]))) / (1 - mu * math.tan(math.radians(P["lead_deg"])))
     fout = force * (mu + 1.0) / (1 - mu)
-    print(f"  deflection {y:.2f} mm, strain {strain * 100:.2f} % (limit about 2 %), force per arm {force:.1f} N")
+    print(f"  deflection {y:.2f} mm, strain {strain * 100:.2f} % (limit {strain_max * 100:.1f} %), force per arm {force:.1f} N")
     print(f"  push-in about {5 * fin:.0f} N, pull-out about {5 * fout:.0f} N for five arms")
-    ok &= strain < 0.02
+    print(f"  held bent by the preload: {1.5 * t * P['preload'] / L ** 2 * 100:.2f} % strain")
+    ok &= strain < strain_max
+    ribs = pocket_ribs()
+    print("printing the body with its top face on the bed:")
+    report("break-away ribs in the glass pocket x body", vol(body.intersect(ribs)))
     return ok
 
 
@@ -712,24 +747,49 @@ def main():
     rest = make_rest() if VARIANT == "hat" else None
     ok = checks(body, base, module, carrier, vendor, keys, rest)
 
-    cq.exporters.export(body, os.path.join(OUT, "body.step"))
-    cq.exporters.export(base, os.path.join(OUT, "base.step"))
+    tag = "rs232_2port" if VARIANT == "hat" else "rs232_4port"
+
+    def step(shape, fname):
+        """A single part as STEP, with a part name of its own: CAD systems that keep one part number per
+        session (CATIA) refuse two files that both carry the exporter's default name."""
+        path = os.path.join(OUT, fname)
+        cq.exporters.export(shape, path)
+        name = f"{tag}_{os.path.splitext(fname)[0]}"
+        text = open(path).read()
+        text, n = re.subn(r"PRODUCT\('Open CASCADE STEP translator [^']*',\s*'Open CASCADE STEP translator [^']*'", f"PRODUCT('{name}','{name}'", text)
+        assert n == 1, (fname, n)
+        open(path, "w").write(text)
+    step(body, "body.step")
+    step(base, "base.step")
     cq.exporters.export(body, os.path.join(OUT, "body.stl"), tolerance=0.02, angularTolerance=0.15)
     cq.exporters.export(base, os.path.join(OUT, "base.stl"), tolerance=0.02, angularTolerance=0.15)
     # one key, lying on its side as it is printed (two are needed)
     k0x = KEYS["RST"][0]
     key_flat = key_parts["RST"].translate((-k0x + P["key_w"] / 2, -KEY_STOP_Y, -KEY_Z)).rotate((0, 0, 0), (0, 1, 0), -90)
-    cq.exporters.export(key_flat, os.path.join(OUT, "key.step"))
+    step(key_flat, "key.step")
     cq.exporters.export(key_flat, os.path.join(OUT, "key.stl"), tolerance=0.01, angularTolerance=0.1)
     kb = key_flat.val().BoundingBox()
     print(f"key   {kb.xlen:.1f} x {kb.ylen:.1f} x {kb.zlen:.1f} mm (print two, flat as exported)")
     if rest is not None:
         rb = rest.val().BoundingBox()
         rest_flat = rest.translate((-rb.xmin, -rb.ymin, -rb.zmin)).rotate((0, 0, 0), (1, 0, 0), 90).translate((0, rb.zlen, 0))
-        cq.exporters.export(rest_flat, os.path.join(OUT, "cradle.step"))
+        step(rest_flat, "cradle.step")
         cq.exporters.export(rest_flat, os.path.join(OUT, "cradle.stl"), tolerance=0.01, angularTolerance=0.1)
         fb = rest_flat.val().BoundingBox()
         print(f"cradle {fb.xlen:.1f} x {fb.ylen:.1f} x {fb.zlen:.1f} mm (print one, standing as exported)")
+    # print-ready files: every part as it goes on the bed
+    pd = os.path.join(OUT, "print")
+    os.makedirs(pd, exist_ok=True)
+
+    def face_down(shape):
+        return shape.rotate((0, 0, 0), (1, 0, 0), 180).translate((0, 0, Z_TOP))
+    body_print = cq.Workplane("XY").add(cq.Compound.makeCompound([face_down(body).val(), face_down(pocket_ribs()).val()]))
+    cq.exporters.export(body_print, os.path.join(pd, "body_print.stl"), tolerance=0.02, angularTolerance=0.15)
+    cq.exporters.export(base.translate((0, 0, -Z_BASE_BOT)), os.path.join(pd, "base_print.stl"), tolerance=0.02, angularTolerance=0.15)
+    two_keys = cq.Workplane("XY").add(cq.Compound.makeCompound([key_flat.val(), key_flat.translate((kb.xlen + 5.0, 0, 0)).val()]))
+    cq.exporters.export(two_keys, os.path.join(pd, "key_print_x2.stl"), tolerance=0.01, angularTolerance=0.1)
+    if rest is not None:
+        cq.exporters.export(rest_flat, os.path.join(pd, "cradle_print.stl"), tolerance=0.01, angularTolerance=0.1)
     colours = {"glass": (0.04, 0.04, 0.05), "tp_sensor": (0.2, 0.2, 0.22), "lcm": (0.55, 0.55, 0.57), "pmma": (0.85, 0.9, 0.95),
                "pcb": (0.05, 0.15, 0.45), "headers": (0.85, 0.75, 0.2), "standoffs": (0.8, 0.65, 0.3), "usbc": (0.75, 0.75, 0.78),
                "buttons": (0.9, 0.9, 0.9), "bat_header": (0.95, 0.95, 0.9), "tf_slot": (0.7, 0.72, 0.75), "camera_fpc": (0.2, 0.2, 0.2)}
@@ -787,7 +847,7 @@ def main():
                "hdr_y": [ws_dev(0, WS["hdr_y1"])[1], ws_dev(0, WS["hdr_y1"] - 13 * 2.54)[1]]}
     json.dump({"variant": VARIANT, "hat": hat, "jacks": list(JACKS), "jack_w": JACK_W, "jack_h": JACK_H, "jack_front": JACK_FRONT, "ws_xc": WS_XC, "battery": list(BATTERY or HB.BATTERY), "battery_rect": battery_rect() and list(battery_rect()),
                "oy": [OY1, OY2], "posts": [list(p) for p in POSTS],
-               "z_top": Z_TOP, "z_base_top": Z_BASE_TOP, "cy2": CY2, "view_area_centre": va, "outer": [bb.xlen, bb.ylen, bb.zlen],
+               "z_top": Z_TOP, "z_glass_top": Z_GLASS_TOP, "z_base_top": Z_BASE_TOP, "cy2": CY2, "view_area_centre": va, "outer": [bb.xlen, bb.ylen, bb.zlen],
                "P": P, "z": {"bot": Z_BOT, "base_bot": Z_BASE_BOT, "base_top": Z_BASE_TOP, "bay": Z_BAY, "plate": Z_PLATE, "glass": Z_GLASS,
                              "top": Z_TOP, "bump": Z_BUMP},
                "bump_profile": bump_profile(Z_BUMP), "recess_profile": recess_profile(Z_BUMP),

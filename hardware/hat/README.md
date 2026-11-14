@@ -34,7 +34,8 @@ Dieselbe Konstruktion wie für die Vier-Port-Trägerplatine (`../README.md`, Abs
 demselben Skript: `enclosure/case.py --hat`. Oberseite und USB-C-Ende sind unverändert: Glas bündig auf seiner
 Auflage, Mulde mit Stecköffnung und den zwei Tasten für BOOT und RST, Boden mit fünf Rastarmen.
 
-Außen **56,8 × 81,0 × 35,7 mm**. Fünf gedruckte Teile: `body`, `base`, zweimal `key`, einmal `cradle`.
+Außen **56,8 × 81,0 × 35,8 mm**. Fünf gedruckte Teile: `body`, `base`, zweimal `key`, einmal `cradle`.
+Ausgelegt für PLA auf einem Bambu Lab mit 0,4-mm-Düse, ohne Stützen des Slicers.
 
 ### Anordnung: Platine unten, Akku in der Mitte, Modul oben
 
@@ -51,7 +52,7 @@ Deshalb liegt die Platine ganz unten und das Modul hoch darüber:
 | Akkutasche, zwischen den beiden Stiftreihen | 6,6 bis 13,0 |
 | Spitzen der unbenutzten Stifte | 12,2 |
 | Modulplatine | 20,5 bis 22,1 |
-| Glas, bündig mit der Oberseite | 27,7 |
+| Glas, 0,1 mm unter der Oberseite | 27,7 |
 
 - **Platine**: Die vier Pfosten des Körpers haben Zapfen (Ø 2,4), auf die die Platine mit ihren Löchern
   gesetzt wird. Vier kurze Pfosten des Bodens drücken von unten dagegen und nehmen die Zapfenenden auf.
@@ -81,12 +82,23 @@ USB-C-Stecker: `enclosure/out_hat/detail_sections.png`.
 5. Platine mit der Bauteilseite zum Modul auf die vier Zapfen setzen. Boden eindrücken, bis die fünf Arme
    einrasten. Der Steg zwischen den hohen Pfosten steht dann vor dem offenen Rohrende und hält den Akku drin.
 
-### Drucken
+### Drucken (PLA, Bambu Lab, 0,4-mm-Düse)
 
-Wie beim großen Gehäuse: PETG oder ABS, Körper mit der Oberseite nach unten, Boden flach. `key.stl` zweimal,
-flach wie es liegt. `cradle.stl` einmal, stehend wie es liegt (der Bügel auf dem Druckbett, das Rohr wächst
-40 mm nach oben), ohne Stützen. Die Zapfen an den Pfosten des Körpers sind 3,6 mm lang und 2,4 mm dick:
-langsam drucken und beim Aufsetzen der Platine nicht verkanten.
+Wie beim großen Gehäuse (`../README.md`, Abschnitt „Drucken“): PLA, 0,2 mm Schichthöhe, **Stützen im Slicer
+aus**. In `enclosure/out_hat/print/` liegen die Teile so, wie sie auf das Druckbett kommen:
+
+| Datei | Lage auf dem Bett | Größe (mm) |
+|---|---|---|
+| `body_print.stl` | Oberseite unten, mit den Abbrechrippen in der Glastasche | 56,8 × 81,0 × 35,8 |
+| `base_print.stl` | flach, die beiden hohen Pfosten mit ihrem Steg stehen nach oben | 53,3 × 77,4 × 25,2 |
+| `key_print_x2.stl` | zwei Tasten flach auf der Seite | je 8,0 × 7,7 × 3,0 |
+| `cradle_print.stl` | stehend, der Bügel auf dem Bett, das Rohr wächst 40 mm nach oben | 36,9 × 19,1 × 40,3 |
+
+Nicht neu ausrichten. Die Rippen in der Glastasche nach dem Druck herausbrechen. Längste Brücke 16,0 mm
+(Oberkanten der RJ45-Fenster). Die Zapfen an den Pfosten des Körpers sind 3,6 mm lang und 2,4 mm dick: Sie
+stehen beim Druck frei nach oben, also nicht zu schnell drucken und beim Aufsetzen der Platine nicht
+verkanten. Die Wiege ist schlank und hoch: ein Rand (Brim) von 5 mm hält sie auf dem Bett.
+`python3 printcheck.py --hat` rechnet die Druckbarkeit nach, Ergebnis: ohne Stützen.
 
 ### Zu beachten
 

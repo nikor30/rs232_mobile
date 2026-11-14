@@ -144,16 +144,21 @@ isolierter Wandler B0503S-1WR3. Standard ist „aus“ (Pull-down). Der Akku ste
 
 ## Gehäuse
 
-Außen **83,8 × 118,6 × 32,3 mm**. Vier gedruckte Teile, keine Schraube:
+Außen **83,8 × 118,6 × 32,4 mm**. Vier gedruckte Teile, keine Schraube. Ausgelegt für **PLA** auf einem
+Bambu Lab mit 0,4-mm-Düse, ohne Stützen des Slicers (Abschnitt „Drucken“):
 
-- **`body`** — Oberseite und alle vier Wände. Das Glas liegt in einer 1,10 mm tiefen Tasche mit 0,25 mm Spiel
-  ringsum auf einer Auflage (0,74 mm an den Längsseiten, rund 5 mm an den Stirnseiten, zusammen 423 mm²) und
-  ist bündig mit der Oberseite. Der Druck beim Tippen geht ins Gehäuse, nicht in die Stiftleisten. Vier
-  Fenster für die RJ45-Buchsen, darüber die Ziffern 1 bis 4 vertieft.
-- **`base`** — Bodenplatte, liegt innen in den Wänden. Fünf Federarme (16 × 2 × 5 mm) biegen sich in der
+- **`body`** — Oberseite und alle vier Wände. Das Glas liegt in einer 1,20 mm tiefen Tasche (sechs Schichten
+  zu 0,2 mm) mit 0,25 mm Spiel ringsum auf einer Auflage (0,74 mm an den Längsseiten, rund 5 mm an den
+  Stirnseiten, zusammen 423 mm²). Es liegt damit 0,1 mm unter der Oberseite, praktisch bündig. Der Druck beim
+  Tippen geht ins Gehäuse, nicht in die Stiftleisten. Vier Fenster für die RJ45-Buchsen, darüber die Ziffern
+  1 bis 4 vertieft. Die Oberkante hat eine 45°-Fase von 1,2 mm statt einer Rundung, weil der Körper auf der
+  Oberseite gedruckt wird.
+- **`base`** — Bodenplatte, liegt innen in den Wänden. Fünf Federarme (18 × 1,6 × 5 mm) biegen sich in der
   Plattenebene und rasten mit 0,9 mm Nase in Taschen der Wände; 30° Einführschräge, 45° Haltefläche mit
-  0,2 mm Vorspannung. Rechnerisch 1,07 % Dehnung beim Einrasten (PETG verträgt rund 2 %), etwa 28 N zum
-  Eindrücken, etwa 49 N zum Abziehen. Zwei Kerben an den Längsseiten zum Aufhebeln. Vier Pfosten klemmen die
+  0,2 mm Vorspannung. Für PLA gerechnet (E rund 3300 MPa): 0,65 % Dehnung beim Einrasten bei einer Grenze von
+  1,0 %, etwa 16 N zum Eindrücken, etwa 27 N zum Abziehen. Eingerastet bleiben 0,20 % Dehnung durch die
+  Vorspannung; PLA gibt unter Dauerlast nach, die Vorspannung wird also mit der Zeit kleiner, die Nase hält
+  weiter durch ihre Form. Zwei Kerben an den Längsseiten zum Aufhebeln. Vier Pfosten klemmen die
   Trägerplatine gegen die Pfosten des Körpers, vier Winkel halten einen Akku bis 40 × 60 × 7 mm.
 - **`key`** — zweimal drucken. Tasten für RST und BOOT, siehe unten.
 
@@ -186,12 +191,39 @@ Schnitte mit Maßen: `enclosure/out/detail_sections.png`.
 
 Der SD-Slot ist nicht nach außen geführt (USB-Stick-Modus der Firmware oder Boden abnehmen).
 
-### Drucken
+### Drucken (PLA, Bambu Lab, 0,4-mm-Düse)
 
-PETG oder ABS, nicht PLA (die Federarme). Körper mit der Oberseite nach unten: Stützmaterial nur in der
-1,1 mm tiefen Glastasche. Fenster, Stecköffnung und Tastentunnel werden überbrückt (längste Brücke 16,5 mm). Boden flach, die Arme liegen dann in der Schichtebene. Tasten so, wie `key.stl`
-liegt (flach auf der Seite, 8,0 × 7,7 × 3,0 mm), ohne Stützen. **Der erste Druck ist eine Probe:** Spiel der
-Glastasche (`glass_clr`), Rastnase (`bump`) und Tastenspiel (`key_clr`, `key_gap`) stehen oben in `case.py`.
+Ausgelegt für PLA, 0,4-mm-Düse, 0,2 mm Schichthöhe, **Stützen im Slicer aus**. In `enclosure/out/print/`
+liegen die Teile schon so, wie sie auf das Druckbett kommen:
+
+| Datei | Lage auf dem Bett | Größe (mm) |
+|---|---|---|
+| `body_print.stl` | Oberseite unten, mit den Abbrechrippen in der Glastasche | 83,8 × 118,6 × 32,4 |
+| `base_print.stl` | flach, die Federarme liegen in der Schichtebene | 80,3 × 115,0 × 11,6 |
+| `key_print_x2.stl` | zwei Tasten flach auf der Seite | je 8,0 × 7,7 × 3,0 |
+
+- **Im Slicer nicht neu ausrichten** und `body_print.stl` nicht in Einzelteile zerlegen: Die Rippen sind
+  eigene Körper in derselben Datei. Wandgenerator Arachne (Standard in Bambu Studio), drei Wände,
+  Bauteillüfter an.
+- **Glastasche**: 1,2 mm tief, das sind sechs Schichten. Unter den beiden breiten Auflagen an den Stirnseiten
+  stehen Rippen (0,5 mm dick, alle 2,5 mm), die eine Schicht unter der Auflage enden und 0,2 mm über ihre
+  Kante hinausreichen. Nach dem Druck mit Fingernagel oder Pinzette herausbrechen. Die schmalen Auflagen an
+  den Längsseiten (0,74 mm, knapp zwei Bahnen) druckt die Düse frei.
+- **Brücken**: Oberkanten der RJ45-Fenster 16,4 mm, Decke der USB-Öffnung 10,8 mm, Tastentunnel 3,4 mm,
+  Fußmulden im Boden 10,4 mm. Alles andere steht auf Material oder ist steiler als 45°.
+- Die Oberseite bekommt die Oberfläche der Druckplatte. Eine strukturierte PEI-Platte gibt eine gleichmäßig
+  matte Fläche.
+- **PLA wird ab etwa 55 °C weich.** Das Gerät nicht im Auto in der Sonne liegen lassen. PETG geht mit
+  denselben Dateien; die Arme sind dann weicher (kleinere Kräfte, größere Reserve).
+- `python3 printcheck.py` rechnet das nach: Es schneidet jedes Teil in senkrechte Säulen (0,2-mm-Raster) und
+  prüft für jede Fläche, die über dem Bett in der Luft beginnt, was sie in der Schicht darunter hält (Brücke
+  mit Material auf beiden Seiten bis 18 mm, einseitige Auflage bis 1,0 mm, Rippe). Ergebnis für alle Teile:
+  druckbar ohne Stützen.
+
+**Der erste Druck ist eine Probe:** Spiel der Glastasche (`glass_clr`), Rastnase (`bump`) und Tastenspiel
+(`key_clr`, `key_gap`) stehen oben in `case.py`. Gedruckt ist noch nichts.
+
+Für eine Nachprüfung im CAD (STEP-Dateien, Koordinaten, Sollmaße, Annahmen): `enclosure/PRUEFUNG.md`.
 
 ### Was `case.py` prüft
 
@@ -204,7 +236,7 @@ eingesteckt und auf dem Weg hinein. Dazu: Die Tastennase trifft den Stößel des
 ### Variante für den Zwei-Port-Prototyp
 
 `case.py --hat` baut dasselbe Gehäuse um die vorhandene Zwei-Port-Platine (50 × 50 mm, nicht isoliert, mit
-Steckbrücken am Modul): außen 56,8 × 81,0 × 35,7 mm, Oberseite und USB-C-Ende unverändert. Die Platine liegt
+Steckbrücken am Modul): außen 56,8 × 81,0 × 35,8 mm, Oberseite und USB-C-Ende unverändert. Die Platine liegt
 unten, das Modul hoch darüber, damit die 14 mm langen Stecker der Drähte Platz haben; der Akku steckt
 dazwischen in einer Tasche. Weil das Modul dort in keiner Buchsenleiste steckt, tragen es zwei Pfosten des
 Bodens und eine Wiege auf der Platine an seinen M2-Abstandsbolzen. Alles Weitere: `hat/README.md`.
