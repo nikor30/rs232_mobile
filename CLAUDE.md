@@ -38,9 +38,10 @@ geprüft — **nicht gebaut, nicht gedruckt**. Details und die Liste „Vor der 
   Auflage; das Modul wird von oben eingesetzt. `case.py` prüft Durchdringungen und Montagewege, auch den
   USB-C-Stecker und die Tasten. Das Modul hat nur eine Keramikantenne, keine IPEX-Buchse.
 - **Zwei-Port-Prototyp** (`hardware/hat/`): die vorhandene, gebaute Platine „RS232 CONSOLE HAT v3.0“ (50 × 50 mm, ein MAX3232,
-  zwei RJ45, nicht isoliert, mit sechs Drähten von J3 am Modul: TX1 GPIO21, RX1 GPIO44, TX2 GPIO13, RX2 GPIO15). Ihre
-  Fertigungsdaten liegen in `hardware/hat/gerber/`; `case.py --hat` baut dasselbe Gehäuse um sie (56,8 × 81,0 × 32,8 mm,
-  `enclosure/out_hat/`, nicht gedruckt). Beschreibung: `hardware/hat/README.md`.
+  zwei RJ45, nicht isoliert, mit sechs Steckbrücken von J3 am Modul: TX1 GPIO21, RX1 GPIO44, TX2 GPIO13, RX2 GPIO15). Ihre
+  Fertigungsdaten liegen in `hardware/hat/gerber/`; `case.py --hat` baut dasselbe Gehäuse um sie (56,8 × 81,0 × 35,7 mm,
+  `enclosure/out_hat/`, nicht gedruckt): Platine unten, Modul oben, dazwischen die Stecker der Steckbrücken (14 mm) und der
+  Akku (20 × 30 × 3 mm) in einer Tasche der Wiege. Beschreibung: `hardware/hat/README.md`.
 - Erzeugen: `generate.py` → `route.py` → `drc.py` in `hardware/carrier/`, dann `case.py`, `render.py`,
   `module_sheet.py` in `hardware/enclosure/` (KiCad 7, POV-Ray, `pip install cadquery`).
 

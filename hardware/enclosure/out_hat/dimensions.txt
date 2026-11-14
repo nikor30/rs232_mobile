@@ -1,5 +1,5 @@
-outer 56.80 x 81.04 x 32.80 mm
-z: bottom -15.20, base -14.60..-12.60, carrier -1.60..0, top plate 14.60, ledge 16.50, top 17.60
+outer 56.80 x 81.04 x 35.70 mm
+z: bottom -8.00, base -7.40..-5.40, carrier -1.60..0, top plate 24.70, ledge 26.60, top 27.70
 glass pocket x 6.20..43.80, y 16.74..76.04, depth 1.10
-USB-C: axis x 25.00 z 8.73, receptacle rim y 71.89, plug stop y 67.11, well 13.4 x 7.5, bay floor y 77.44, outer face y 78.44
-keys: axis z 9.50, x RST 15.53, BOOT 34.45, cap 3.0 x 6.0, 0.8 above the bay floor, stroke 0.6
+USB-C: axis x 25.00 z 18.83, receptacle rim y 71.89, plug stop y 67.11, well 13.4 x 7.5, bay floor y 77.44, outer face y 78.44
+keys: axis z 19.60, x RST 15.53, BOOT 34.45, cap 3.0 x 6.0, 0.8 above the bay floor, stroke 0.6

@@ -89,6 +89,14 @@ J3 = sorted(PTH[1.0])
 STANDOFF_Y = 24.5
 WS_XC = W / 2
 
+# Wiring: jumper wires, plugged onto the module's pins and soldered into J3.  A plug (Dupont housing)
+# is 2.54 square and 14 mm long; below it the wire needs room to turn.
+PLUG_LEN, PLUG_W, WIRE_BEND = 14.0, 2.54, 3.0
+MODULE_PINS = {"3V3": 1, "GND": 2, "RX1 (GPIO44)": 4, "RX2 (GPIO15)": 7, "TX2 (GPIO13)": 8, "TX1 (GPIO21)": 22}   # header pin numbers
+
+# Battery: a small pouch cell that lies between the two pin rows, in a pocket of the cradle
+BATTERY = (20.0, 30.0, 3.0)        # width, length, thickness
+
 
 def ws_yc(ws):
     """KiCad y of the module's origin (ws: the measurement table of carrier/generate.py)."""

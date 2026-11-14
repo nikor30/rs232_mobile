@@ -93,6 +93,7 @@ light_source { <40, 60, -300> color rgb <1, 1, 1> * 0.9 area_light <80, 0, 0>, <
   object { m_bat_header texture { T_white } }
   object { m_tf_slot texture { T_metal } }
   object { m_camera_fpc texture { T_dark } }
+__PLUGS__
 }
 #declare Carrier = union {
   object { m_pcb texture { T_fr4 } }
@@ -130,13 +131,13 @@ __REST_DECL__
 #break
 #case (3)   // exploded
   #declare CS = (CS + 1) / 2;
-  Cam(-175, 345, 185, 40, 58, 0, 36)
-  object { Module translate <0, 0, 62> }
-  object { Body translate <0, 0, 30> }
-  object { Keys translate <0, 14, 30> }
+  Cam(-175, 345, 185, 40, 58, __EXZ__, __EXA__)
+  object { Module translate <0, 0, __EXM__> }
+  object { Body translate <0, 0, __EXB__> }
+  object { Keys translate <0, 14, __EXB__> }
   __REST_UP__
   object { Carrier }
-  object { Battery translate <0, 0, -24> }
+  __BATTERY_OUT__
   object { Base translate <0, 0, -34> }
 #break
 #case (4)   // section along the middle of the display
@@ -151,7 +152,7 @@ __REST_DECL__
 #break
 #case (5)   // the base with its snap arms
   Cam(-120, 250, 150, 40, 56, -10, 32)
-  object { Base } object { Battery }
+  object { Base } __BATTERY_ON_BASE__
 #break
 #case (6)   // from below
   Cam(-110, 260, -170, 40, 58, 0, 32)
@@ -188,7 +189,7 @@ __REST_DECL__
 def main():
     import shutil
     if HAT and "_rest" not in PARTS:
-        PARTS.append("_rest")
+        PARTS.extend(["_rest", "_plugs"])
     for n in PARTS:
         if n == "_pcb_ws":
             continue
@@ -213,19 +214,30 @@ def main():
         jacks.append(f"  box {{ <{xc - 5.8}, {jf - 0.05 if not HAT else jf + 13.0}, 2.7>, <{xc + 5.8}, {jf + 6.0 if not HAT else jf + 13.9}, 10.7> texture {{ pigment {{ rgb <0.02, 0.02, 0.02> }} finish {{ diffuse 0.3 }} }} }}")
         for i in range(8):
             jacks.append(f"  box {{ <{xc - 4.5 + i * 1.27:.2f}, {jf - 0.08 if not HAT else jf + 1.0}, 9.0>, <{xc - 4.1 + i * 1.27:.2f}, {jf + 0.5 if not HAT else jf + 9.0}, {10.4 if not HAT else 9.4}> texture {{ T_gold }} }}")
-    bx1, by1, bx2, by2 = geo["battery_rect"]
-    bx1, bx2, by1 = bx1 + 1.0, bx2 - 1.0, by1 + 1.5
-    by2 = by1 + geo["battery"][1] - 2.0
+    if HAT:                                     # the cell lies in the pocket of the cradle
+        px1, py1, px2, py2, pz1, pz2 = geo["hat"]["cradle"]["pocket"]
+        bw, bl, bt = geo["hat"]["cell"]
+        bx1, bx2, by1, by2, bz1, bz2 = geo["ws_xc"] - bw / 2, geo["ws_xc"] + bw / 2, py1 + 0.2, py1 + 0.2 + bl, pz1 + 0.2, pz1 + 0.2 + bt
+    else:
+        bx1, by1, bx2, by2 = geo["battery_rect"]
+        bx1, bx2, by1 = bx1 + 1.0, bx2 - 1.0, by1 + 1.5
+        by2 = by1 + geo["battery"][1] - 2.0
+        bz1, bz2 = geo["z_base_top"] + 0.1, geo["z_base_top"] + 5.1
     scene = (SCENE.replace("__INCLUDES__", "\n".join(inc)).replace("__LCD__", LCD)
              .replace("__VAW__", "30.99").replace("__VAL__", "41.20").replace("__VAX__", f"{cx:.3f}").replace("__VAY__", f"{cy:.3f}")
              .replace("__ZTOP__", f"{geo['z_top']:.3f}").replace("__JACKS__", "\n".join(jacks))
              .replace("__BX1__", f"{bx1}").replace("__BX2__", f"{bx2}").replace("__BY1__", f"{by1:.2f}").replace("__BY2__", f"{by2:.2f}")
-             .replace("__CS__", f"{(geo['oy'][1] - geo['oy'][0]) / 118.63:.3f}" if HAT else "1").replace("__CCX__", f"{geo['ws_xc']}")
+             .replace("__CS__", f"{(geo['oy'][1] - geo['oy'][0]) / 118.63 + 0.07:.3f}" if HAT else "1").replace("__CCX__", f"{geo['ws_xc']}")
              .replace("__CCY__", f"{(geo['oy'][0] + geo['oy'][1]) / 2:.2f}").replace("__UY__", f"{geo['oy'][1]:.2f}")
              .replace("__REST_DECL__", "#declare Rest = object { m_rest texture { pigment { rgb <0.30, 0.31, 0.33> } finish { diffuse 0.7 specular 0.2 roughness 0.05 } } }" if HAT else "")
-             .replace("__REST_UP__", "object { Rest translate <0, 0, 16> }" if HAT else "").replace("__REST__", "object { Rest }" if HAT else "")
+             .replace("__REST_UP__", "object { Rest }" if HAT else "")
+             .replace("__EXZ__", "26" if HAT else "0").replace("__EXA__", "40" if HAT else "36")
+             .replace("__EXM__", "78" if HAT else "62").replace("__EXB__", "38" if HAT else "30").replace("__REST__", "object { Rest } object { Battery }" if HAT else "")
              .replace("__CUTZ__", f"{geo['key']['z'] - 0.15:.2f}")
-             .replace("__BZ1__", f"{geo['z_base_top'] + 0.1:.2f}").replace("__BZ2__", f"{geo['z_base_top'] + 5.1:.2f}"))
+             .replace("__BZ1__", f"{bz1:.2f}").replace("__BZ2__", f"{bz2:.2f}")
+             .replace("__PLUGS__", "  object { m_plugs texture { pigment { rgb <0.03, 0.03, 0.03> } finish { diffuse 0.5 specular 0.3 roughness 0.03 } } }" if HAT else "")
+             .replace("__BATTERY_OUT__", "object { Battery translate <0, 30, 0> }" if HAT else "object { Battery translate <0, 0, -24> }")
+             .replace("__BATTERY_ON_BASE__", "" if HAT else "object { Battery }"))
     pov = os.path.join(OUT, "scene.pov")
     open(pov, "w").write(scene)
     names = {1: "hero", 2: "ports", 3: "exploded", 4: "section", 5: "base", 6: "below", 7: "electronics", 8: "carrier_bottom",
@@ -248,15 +260,17 @@ def main():
 
 
 def hat_layout(geo):
-    """Two-port variant: where board, module, posts and battery sit - plan and lengthwise section, with dimensions."""
+    """Two-port variant: where board, cradle with battery, module and posts sit - plan and lengthwise section, with dimensions."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from matplotlib.patches import Circle, FancyBboxPatch, Rectangle
     h, P, z = geo["hat"], geo["P"], geo["z"]
+    c = h["cradle"]
     ox1, oy1, ox2, oy2 = h["outer"]
     cx1, cy1, cx2, cy2 = h["cavity"]
-    red = "#b3261e"
+    red, grey, part = "#b3261e", "#d9d7d2", "#8f9094"
+    plug_len, plug_w, bend = h["plug"]
 
     def dim(ax, p1, p2, text, off, side="h", fs=8):
         (x1, y1), (x2, y2) = p1, p2
@@ -273,62 +287,63 @@ def hat_layout(geo):
             ax.annotate("", (x, y1), (x, y2), arrowprops=dict(arrowstyle="<->", color=red, lw=0.7, shrinkA=0, shrinkB=0))
             ax.text(x + (0.6 if off >= 0 else -0.6), (y1 + y2) / 2, text, ha="left" if off >= 0 else "right", va="center", fontsize=fs, color=red, rotation=90)
 
-    fig = plt.figure(figsize=(15, 9.6))
-    a1 = fig.add_axes([0.03, 0.05, 0.42, 0.88]); a2 = fig.add_axes([0.50, 0.30, 0.48, 0.58])
+    fig = plt.figure(figsize=(15, 9.8))
+    a1 = fig.add_axes([0.03, 0.05, 0.42, 0.88]); a2 = fig.add_axes([0.50, 0.33, 0.48, 0.58])
+    m, g, sr = h["module_pcb"], h["glass"], h["standoffs_rest"]
+    tx1, ty1, tx2, ty2, tz1, tz2 = c["tube"]
+    px1, py1, px2, py2, pz1, pz2 = c["pocket"]
+    bw, bl, bt = h["cell"]
     # ---------------- plan, seen from above, port end at the bottom
     r = P["r_out"]
     a1.add_patch(FancyBboxPatch((ox1 + r, oy1 + r), ox2 - ox1 - 2 * r, oy2 - oy1 - 2 * r, boxstyle=f"round,pad={r}", fc="#ecebe7", ec="k", lw=1.2))
     a1.add_patch(Rectangle((cx1, cy1), cx2 - cx1, cy2 - cy1, fc="white", ec="#777", lw=0.6))
-    b1, b2, b3, b4 = geo["battery_rect"]
     a1.add_patch(Rectangle((0, 0), h["W"], h["H"], fc="#2e7d32", ec="k", lw=1.0, alpha=0.8))
     for x1, y1, x2, y2 in h["jacks"]:
         a1.add_patch(Rectangle((x1, y1), x2 - x1, y2 - y1, fc="#cfd2d6", ec="k", lw=0.8))
-    a1.text(geo["jacks"][0], 9, "PORT 1", ha="center", fontsize=8); a1.text(geo["jacks"][1], 9, "PORT 2", ha="center", fontsize=8)
+    a1.text(geo["jacks"][0], 7, "PORT 1", ha="center", fontsize=8); a1.text(geo["jacks"][1], 7, "PORT 2", ha="center", fontsize=8)
     for name, x1, y1, x2, y2, hh in h["parts"]:
         a1.add_patch(Rectangle((x1, y1), x2 - x1, y2 - y1, fc="#222" if name.startswith("U") else "#b7a07a", ec="k", lw=0.4))
     for x, y in h["j3"]:
         a1.add_patch(Circle((x, y), 0.8, fc="#d8c36a", ec="k", lw=0.4))
-    a1.text(h["j3"][0][0] - 1.5, h["j3"][0][1], "J3", ha="right", va="center", fontsize=7, color="w")
     for x, y in h["holes"]:
         a1.add_patch(Circle((x, y), P["post_d"] / 2, fc="#ecebe7", ec="k", lw=0.7))
-        a1.add_patch(Circle((x, y), h["hole_d"] / 2 - 0.15, fc="#8f9094", ec="k", lw=0.4))
-    m = h["module_pcb"]; g = h["glass"]
+        a1.add_patch(Circle((x, y), h["hole_d"] / 2 - 0.15, fc=part, ec="k", lw=0.4))
+    a1.add_patch(Rectangle((c["xa"] - 2.0, c["y1"]), c["xb"] - c["xa"] + 4.0, c["y2"] - c["y1"], fc=part, ec="k", lw=0.7))
+    a1.add_patch(Rectangle((tx1, ty1), tx2 - tx1, ty2 - ty1, fc=part, ec="k", lw=0.7, alpha=0.75))
+    a1.add_patch(Rectangle((geo["ws_xc"] - bw / 2, py1 + 0.2), bw, bl, fc="#3a4254", ec="k", lw=0.6))
+    a1.text(geo["ws_xc"], py1 + bl / 2, f"battery\n{bw:.0f} x {bl:.0f} x {bt:.0f}", ha="center", va="center", fontsize=7.5, color="w")
     a1.add_patch(Rectangle((m[0], m[1]), m[2] - m[0], m[3] - m[1], fc="none", ec="#1f3b73", lw=1.2, ls="--"))
     a1.add_patch(FancyBboxPatch((g[0] + 2.6, g[1] + 2.6), g[2] - g[0] - 5.2, g[3] - g[1] - 5.2, boxstyle="round,pad=2.6", fc="none", ec="k", lw=1.0, ls=":"))
     for x in h["hdr_x"]:
         for i in range(14):
             a1.add_patch(Circle((x, h["hdr_y"][0] + i * 2.54), 0.35, fc="#c9a227", ec="none"))
+    for name, (x, y) in h["plugs"].items():
+        a1.add_patch(Rectangle((x - plug_w / 2, y - plug_w / 2), plug_w, plug_w, fc="#111", ec="k", lw=0.4))
     for x, y in h["standoffs_base"]:
-        a1.add_patch(Circle((x, y), 2.25, fc="#8f9094", ec="k", lw=0.7))
-    sr = h["standoffs_rest"]
-    xs = sorted(q[0] for q in sr)
-    a1.add_patch(Rectangle((xs[0] - 3.95, sr[0][1] - h["rest_t"] / 2), xs[1] - xs[0] + 7.9, h["rest_t"], fc="#8f9094", ec="k", lw=0.7))
+        a1.add_patch(Circle((x, y), 2.25, fc=part, ec="k", lw=0.7))
     for x, y in sr:
         a1.add_patch(Circle((x, y), 1.75, fc="none", ec="#7a5c00", lw=0.9))
-    a1.add_patch(Rectangle((b1, b2), b3 - b1, b4 - b2, fc="none", ec="#555", lw=0.9, ls="-."))
-    a1.text((b1 + b3) / 2, b4 - 9, f"battery below the board\nup to {geo['battery'][0]:.0f} x {geo['battery'][1]:.0f} x 7", ha="center", fontsize=7.5, color="#333")
-    a1.annotate("module PCB (dashed)\nglass (dotted)", (m[2], m[3] - 12), (ox2 + 3, m[3] - 13), arrowprops=dict(arrowstyle="->", lw=0.6), fontsize=7.5, color="#1f3b73")
-    a1.annotate("module rest: stands on the board,\ncarries two standoffs", (xs[1] + 2, sr[0][1]), (ox2 + 3, sr[0][1] + 3), arrowprops=dict(arrowstyle="->", lw=0.6), fontsize=7.5)
-    a1.annotate("posts on the base carry\nthe other two standoffs", (h["standoffs_base"][1][0] + 2, h["standoffs_base"][1][1] - 1), (ox2 + 3, h["standoffs_base"][1][1] - 19), arrowprops=dict(arrowstyle="->", lw=0.6), fontsize=7.5)
-    a1.annotate("four posts with pins\nin the board's holes", (h["holes"][-1][0], min(q[1] for q in h["holes"])), (ox2 + 3, 0), arrowprops=dict(arrowstyle="->", lw=0.6), fontsize=7.5)
-    a1.text((ox1 + ox2) / 2, oy2 + 1.2, "USB-C, RST, BOOT", ha="center", fontsize=8)
+    tx = ox2 + 3
+    pr = max(h["plugs"].values(), key=lambda q: (q[0], q[1]))
+    a1.annotate("plugs of the jumper wires\non the module's pins", (pr[0] + 1.3, pr[1]), (tx, pr[1] + 4), arrowprops=dict(arrowstyle="->", lw=0.6), fontsize=7.5)
+    a1.annotate("cradle: bar under two standoffs,\ntube for the battery", (c["xb"] + 2, (c["y1"] + c["y2"]) / 2), (tx, c["y1"] - 4), arrowprops=dict(arrowstyle="->", lw=0.6), fontsize=7.5)
+    a1.annotate("posts on the base under\nthe other two standoffs", (h["standoffs_base"][1][0] + 2, h["standoffs_base"][1][1] - 1), (tx, h["standoffs_base"][1][1] - 8), arrowprops=dict(arrowstyle="->", lw=0.6), fontsize=7.5)
+    a1.annotate("module PCB (dashed)\nglass (dotted)", (m[2], m[3] - 4), (tx, m[3] + 2), arrowprops=dict(arrowstyle="->", lw=0.6), fontsize=7.5, color="#1f3b73")
+    a1.annotate("J3, wires soldered in", (h["j3"][-1][0] + 1, h["j3"][-1][1]), (tx, h["j3"][-1][1] - 4.5), arrowprops=dict(arrowstyle="->", lw=0.6), fontsize=7.5)
+    a1.annotate("four posts with pins\nin the board's holes", (h["holes"][-1][0], min(q[1] for q in h["holes"])), (tx, 0), arrowprops=dict(arrowstyle="->", lw=0.6), fontsize=7.5)
+    a1.text((ox1 + ox2) / 2, oy2 + 1.2, "USB-C, BOOT, RST", ha="center", fontsize=8)
     dim(a1, (ox1, oy1), (ox2, oy1), f"{ox2 - ox1:.1f}", off=-9)
     dim(a1, (ox1, oy1), (ox1, oy2), f"{oy2 - oy1:.1f}", off=-7, side="v")
-    dim(a1, (0, 0), (h["W"], 0), f"board {h['W']:.0f}", off=-4.5)
-    dim(a1, (h["W"], 0), (h["W"], h["H"]), f"board {h['H']:.0f}", off=6.5, side="v")
-    dim(a1, (geo["jacks"][0], 14.0), (geo["jacks"][1], 14.0), f"{geo['jacks'][1] - geo['jacks'][0]:.1f}", off=0.0, fs=7)
-    a1.annotate(f"glass ends {g[3] - h['H']:.1f}\npast the board", (g[2] - 1, g[3]), (ox2 + 3, g[3] - 3), arrowprops=dict(arrowstyle="->", lw=0.6), fontsize=7.5)
-    a1.set_xlim(ox1 - 12, ox2 + 34); a1.set_ylim(oy1 - 13, oy2 + 5); a1.set_aspect("equal"); a1.axis("off")
+    dim(a1, (0, 0), (h["W"], 0), f"board {h['W']:.0f} x {h['H']:.0f}", off=-4.5)
+    a1.set_xlim(ox1 - 12, ox2 + 36); a1.set_ylim(oy1 - 13, oy2 + 5); a1.set_aspect("equal"); a1.axis("off")
     a1.set_title("Two-port case from above (mm)", fontsize=11)
-    # ---------------- lengthwise section through a row of standoffs
-    grey, part = "#d9d7d2", "#8f9094"
-    a2.add_patch(Rectangle((oy1, z["bot"]), cy1 - oy1, z["top"] - z["bot"], fc=grey, ec="k", lw=0.8))                    # port wall
-    a2.add_patch(Rectangle((cy2, z["bot"]), oy2 - cy2, z["top"] - z["bot"], fc=grey, ec="k", lw=0.8))                    # USB-C wall
-    a2.add_patch(Rectangle((cy1, z["plate"]), g[1] - P["glass_clr"] - cy1, z["top"] - z["plate"], fc=grey, ec="k", lw=0.8))   # top over the jacks
-    a2.add_patch(Rectangle((g[1] - P["glass_clr"], z["plate"]), m[1] - 0.3 - g[1] + P["glass_clr"], z["glass"] - z["plate"], fc=grey, ec="k", lw=0.8))   # ledge
-    a2.add_patch(Rectangle((cy1 + P["base_clr"], z["base_bot"]), cy2 - cy1 - 2 * P["base_clr"], z["base_top"] - z["base_bot"], fc=part, ec="k", lw=0.8))
-    a2.add_patch(Rectangle((b2 + 1.5, z["base_top"] + 0.1), geo["battery"][1] - 2, 5.0, fc="#3a4254", ec="k", lw=0.6))
-    a2.text(b2 + geo["battery"][1] / 2, z["base_top"] + 2.6, "battery", ha="center", va="center", fontsize=8, color="w")
+    # ---------------- lengthwise section through the pin row that carries five of the plugs
+    zb, zt = z["base_top"], z["top"]
+    a2.add_patch(Rectangle((oy1, z["bot"]), cy1 - oy1, zt - z["bot"], fc=grey, ec="k", lw=0.8))
+    a2.add_patch(Rectangle((cy2, z["bot"]), oy2 - cy2, zt - z["bot"], fc=grey, ec="k", lw=0.8))
+    a2.add_patch(Rectangle((cy1, z["plate"]), g[1] - P["glass_clr"] - cy1, zt - z["plate"], fc=grey, ec="k", lw=0.8))
+    a2.add_patch(Rectangle((g[1] - P["glass_clr"], z["plate"]), m[1] - 0.3 - g[1] + P["glass_clr"], z["glass"] - z["plate"], fc=grey, ec="k", lw=0.8))
+    a2.add_patch(Rectangle((cy1 + P["base_clr"], z["base_bot"]), cy2 - cy1 - 2 * P["base_clr"], zb - z["base_bot"], fc=part, ec="k", lw=0.8))
     a2.add_patch(Rectangle((0, -1.6), h["H"], 1.6, fc="#2e7d32", ec="k", lw=0.8))
     j = h["jacks"][0]
     a2.add_patch(Rectangle((j[1], 0), j[3] - j[1], geo["jack_h"], fc="#cfd2d6", ec="k", lw=0.8))
@@ -337,34 +352,45 @@ def hat_layout(geo):
         a2.add_patch(Rectangle((y, -1.6 - h["pin_below"]), 0.5, h["pin_below"], fc="#c9a227", ec="none"))
     hy = sorted(q[1] for q in h["holes"])
     for y in (hy[0], hy[-1]):
-        a2.add_patch(Rectangle((y - 2.5, 0), 5.0, z["plate"], fc=grey, ec="k", lw=0.6, alpha=0.75))
-        a2.add_patch(Rectangle((y - 2.5, z["base_top"]), 5.0, -1.6 - z["base_top"], fc=part, ec="k", lw=0.6, alpha=0.75))
-        a2.add_patch(Rectangle((y - 1.2, -3.6), 2.4, 3.6, fc=grey, ec="k", lw=0.5))
-    sy, sz = sr[0][1], h["standoff_z"]
-    a2.add_patch(Rectangle((sy - h["rest_t"] / 2, 0), h["rest_t"], sz - P["rest_gap"], fc=part, ec="k", lw=0.7))
+        a2.add_patch(Rectangle((y - 2.5, 0), 5.0, z["plate"], fc=grey, ec="k", lw=0.6, alpha=0.55))
+        a2.add_patch(Rectangle((y - 2.5, zb), 5.0, -1.6 - zb, fc=part, ec="k", lw=0.6, alpha=0.75))
+    sz = h["standoff_z"]
+    a2.add_patch(Rectangle((c["y1"], 0), c["y2"] - c["y1"], c["z_seat"], fc=part, ec="k", lw=0.7))
+    a2.add_patch(Rectangle((ty1, tz1), ty2 - ty1, tz2 - tz1, fc=part, ec="k", lw=0.7))
+    a2.add_patch(Rectangle((py1, pz1), py2 - py1, pz2 - pz1, fc="white", ec="k", lw=0.5))
+    a2.add_patch(Rectangle((py1 + 0.2, pz1 + 0.2), bl, bt, fc="#3a4254", ec="k", lw=0.5))
+    a2.add_patch(Rectangle((ty1, 0), c["fin_y"] - ty1, tz1, fc=part, ec="k", lw=0.5, alpha=0.45))
     by_ = h["standoffs_base"][0][1]
-    a2.add_patch(Rectangle((by_ - 2.25, z["base_top"]), 4.5, sz - P["rest_gap"] - z["base_top"], fc=part, ec="k", lw=0.7))
-    for y in (sy, by_):
+    a2.add_patch(Rectangle((by_ - 2.25, zb), 4.5, sz - P["rest_gap"] - zb, fc=part, ec="k", lw=0.7))
+    for y in (sr[0][1], by_):
         a2.add_patch(Rectangle((y - 1.75, sz), 3.5, 4.0, fc="#c9a227", ec="k", lw=0.5))
     a2.add_patch(Rectangle((m[1], h["pcb_z"][0]), m[3] - m[1], 1.6, fc="#1f3b73", ec="k", lw=0.8))
     a2.add_patch(Rectangle((m[1] + 0.2, h["pcb_z"][1]), m[3] - m[1] - 0.4, z["glass"] - h["pcb_z"][1], fc="#b9babd", ec="k", lw=0.6))
-    a2.add_patch(Rectangle((g[1], z["glass"]), g[3] - g[1], z["top"] - z["glass"], fc="#1c1d22", ec="k", lw=0.8))
+    a2.add_patch(Rectangle((g[1], z["glass"]), g[3] - g[1], zt - z["glass"], fc="#1c1d22", ec="k", lw=0.8))
+    a2.add_patch(Rectangle((h["hdr_y"][0] - 1.27, h["hdr_plastic_z"]), 14 * 2.54, 2.5, fc="#2a2a2d", ec="k", lw=0.5))
     for i in range(14):
-        a2.add_patch(Rectangle((h["hdr_y"][0] + i * 2.54 - 0.3, h["pin_tip_z"]), 0.6, h["pcb_z"][0] - h["pin_tip_z"], fc="#c9a227", ec="none"))
+        a2.add_patch(Rectangle((h["hdr_y"][0] + i * 2.54 - 0.3, h["pin_tip_z"]), 0.6, h["hdr_plastic_z"] - h["pin_tip_z"], fc="#c9a227", ec="none"))
+    row_x = max(q[0] for q in h["plugs"].values())
+    ys = sorted(q[1] for q in h["plugs"].values() if abs(q[0] - row_x) < 0.1)
+    for y in ys:
+        a2.add_patch(Rectangle((y - plug_w / 2, h["hdr_plastic_z"] - plug_len), plug_w, plug_len, fc="#111", ec="#555", lw=0.5))
+        a2.plot([y, y, y + 2.0], [h["hdr_plastic_z"] - plug_len, h["hdr_plastic_z"] - plug_len - bend + 0.6, h["hdr_plastic_z"] - plug_len - bend + 0.2], color="#c33", lw=1.0)
     a2.text((m[1] + m[3]) / 2, (h["pcb_z"][1] + z["glass"]) / 2, "display", ha="center", va="center", fontsize=8)
-    zt, zb = z["top"] + 4.2, z["bot"] - 8.5
-    a2.annotate("module rest", (sy, 4.0), (sy - 5, zt), arrowprops=dict(arrowstyle="->", lw=0.6), fontsize=7.5)
-    a2.annotate("post under a standoff", (by_, 0), (by_ - 16, zt), arrowprops=dict(arrowstyle="->", lw=0.6), fontsize=7.5)
-    a2.annotate(f"jack front {j[1] - oy1:.1f} behind the outer face", (j[1], 5), (oy1 - 10, zt), arrowprops=dict(arrowstyle="->", lw=0.6), fontsize=7.5)
-    a2.annotate(f"pin tips {h['pin_tip_z']:.1f} above the board", (h["hdr_y"][0] + 9 * 2.54, h["pin_tip_z"]), (h["hdr_y"][0] + 12, zb), arrowprops=dict(arrowstyle="->", lw=0.6), fontsize=7.5)
-    a2.annotate("pin of the body post in the board's hole,\nits end in the post of the base", (hy[-1], -2.6), (oy1 - 10, zb - 1.2), arrowprops=dict(arrowstyle="->", lw=0.6), fontsize=7.5)
-    dim(a2, (oy1, z["bot"]), (oy1, z["top"]), f"{z['top'] - z['bot']:.1f}", off=-4, side="v")
+    ya, yb_ = zt + 4.2, z["bot"] - 8.0
+    a2.annotate(f"plug {plug_len:.0f} long, {bend:.0f} below it for the wire to turn", (ys[0], h["hdr_plastic_z"] - plug_len / 2), (oy1 - 8, ya), arrowprops=dict(arrowstyle="->", lw=0.6), fontsize=7.5)
+    a2.annotate("post under a standoff", (by_, 2), (by_ - 14, ya), arrowprops=dict(arrowstyle="->", lw=0.6), fontsize=7.5)
+    a2.annotate("battery in the cradle's tube", (py2 - 4, pz1 + 1.5), (py1 + 2, yb_ - 0.2), arrowprops=dict(arrowstyle="->", lw=0.6), fontsize=7.5)
+    a2.annotate("cradle bar under a standoff", (c["y2"], 3.0), (oy1 - 8, yb_), arrowprops=dict(arrowstyle="->", lw=0.6), fontsize=7.5)
+    a2.annotate(f"pin tips {h['pin_tip_z']:.1f} above the board", (h["hdr_y"][0] + 12 * 2.54, h["pin_tip_z"]), (h["hdr_y"][0] + 34, yb_ + 3.5), arrowprops=dict(arrowstyle="->", lw=0.6), fontsize=7.5)
+    dim(a2, (oy1, z["bot"]), (oy1, zt), f"{zt - z['bot']:.1f}", off=-4, side="v")
     dim(a2, (oy1, z["bot"]), (oy2, z["bot"]), f"{oy2 - oy1:.1f}", off=-3.0)
-    dim(a2, (j[3], geo["jack_h"]), (j[3], z["plate"]), f"{z['plate'] - geo['jack_h']:.1f}", off=3.5, side="v", fs=7)
-    a2.set_xlim(oy1 - 12, oy2 + 6); a2.set_ylim(zb - 4, zt + 3); a2.set_aspect("equal"); a2.axis("off")
-    a2.set_title("Section along the length, through one row of standoffs (port end on the left)", fontsize=11)
-    fig.text(0.50, 0.21, "Assembly\n1. Solder the six wires from J3 to the module's pins.\n2. Both keys into their tunnels, module into the body from above, body face down.\n"
-                         "3. Module rest onto the two standoffs next to the jacks.\n4. Board onto the four pins, its parts towards the module.\n5. Battery, then press the base in.",
+    a2.set_xlim(oy1 - 12, oy2 + 6); a2.set_ylim(yb_ - 3, ya + 3); a2.set_aspect("equal"); a2.axis("off")
+    a2.set_title("Section along the length, through the pin row with five of the six plugs (port end on the left)", fontsize=10.5)
+    fig.text(0.50, 0.25, "Assembly\n1. Set the solder jumpers JP1 to JP4.  Solder the six jumper wires into J3.\n"
+                         "2. Both keys into their tunnels, module into the body from above, body face down.\n"
+                         "3. Battery into the tube of the cradle.  Cradle onto the two standoffs next to the jacks, tube between the pin rows.\n"
+                         "4. Plug the six wires onto the module's pins and the battery into the module.\n"
+                         "5. Board onto the four pins, its parts towards the module.  Press the base in.",
              fontsize=9.5, va="top", linespacing=1.5)
     fig.savefig(os.path.join(OUT, "hat_layout.png"), dpi=125)
 
