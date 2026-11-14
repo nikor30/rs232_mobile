@@ -1789,7 +1789,7 @@ static void screenStatus() {
   int top = HEAD_H, bottom = buttonRow(defs, n) - 2;
   cTop = cBot = 0;
 
-  const char *state = TR("Ready", "Bereit", "Pronto");
+  const char *state = "Ready";             // the same word in every language: the owner finds it punchier
   uint32_t color = C_GREEN;
   if (S.conState == 2) { state = TR("Remote console", "Fernkonsole", "Console remoto"); color = C_RED; }
   else if (S.autobaud[selPort]) { state = "Auto-Baud ..."; color = C_AMBER; }
