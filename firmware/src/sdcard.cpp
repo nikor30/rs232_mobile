@@ -546,23 +546,35 @@ static bool stickIoRaw(bool write, uint8_t *buffer, uint32_t lba, uint32_t count
 // format wrote its heap into the partition table. A flash stick is slow enough
 // not to meet this, the board's RAM or an SD card at SPI speed is not. So the
 // first chunk of a request is answered no sooner than STICK_FIRST_MS after it
-// arrived. TinyUSB hands a request over in chunks of 4 kB; a chunk that follows
-// at once (same place, within STICK_CONT_MS) counts as part of the request and
-// waits stickNextMs only. Both can be set at run time for measuring
-// (/api/stick/delay).
-static const uint32_t STICK_FIRST_MS = 60, STICK_CONT_MS = 25;
+// arrived. TinyUSB hands a request over in chunks of 4 kB; the following chunks
+// of the same request wait stickNextMs only. Where a request ends, TinyUSB says
+// (the *_complete_cb below) - not timing: reading a file, the switch sends one
+// 4 kB request right after the other, and taking those for one long request
+// gave a 25 MB image a wrong MD5 (14 November 2026). Both delays can be set at
+// run time for measuring (/api/stick/delay).
+static const uint32_t STICK_FIRST_MS = 60;
 static volatile uint32_t stickFirstMs = STICK_FIRST_MS, stickNextMs = 0;
-static uint32_t stickLastEnd = 0xFFFFFFFF, stickLastAt = 0;
+static uint32_t stickLastEnd = 0xFFFFFFFF;
+static bool stickInReq = false;          // USB task only: a chunk of the current request was answered
 
 static bool stickIo(bool write, uint8_t *buffer, uint32_t lba, uint32_t count) {
   uint32_t t0 = millis();
-  bool cont = lba == stickLastEnd && t0 - stickLastAt < STICK_CONT_MS;
+  bool cont = stickInReq && lba == stickLastEnd;
   bool ok = stickIoRaw(write, buffer, lba, count);
-  uint32_t want = cont ? stickNextMs : stickFirstMs, used = millis() - t0;
+  // A write's data is here already; its wait came before (stickBeforeWrite()).
+  uint32_t want = cont || write ? stickNextMs : stickFirstMs, used = millis() - t0;
   if (used < want) vTaskDelay(pdMS_TO_TICKS(want - used));
   stickLastEnd = lba + count;
-  stickLastAt = millis();
+  stickInReq = ok;                         // a failed chunk ends the request
   return ok;
+}
+
+// The same race on the way in: a 25 MB copy from the switch onto the card came
+// out with the same wrong MD5 on every read while reads were right. TinyUSB asks
+// whether the medium is writable right before it takes each chunk of a write,
+// so the first chunk of a request is not taken before stickFirstMs.
+static void stickBeforeWrite() {
+  if (!stickInReq) vTaskDelay(pdMS_TO_TICKS(stickFirstMs));
 }
 
 // The last requests of the host, for /api/status: which sectors a host reads
@@ -939,5 +951,16 @@ int32_t tud_msc_write10_cb(uint8_t lun, uint32_t lba, uint32_t offset, uint8_t *
 int32_t tud_msc_scsi_cb(uint8_t lun, uint8_t const cmd[16], void *buffer, uint16_t size) {
   return Sd::stickScsi(lun, cmd, (uint8_t *)buffer, size);
 }
+
+bool tud_msc_is_writable_cb(uint8_t lun) {
+  (void)lun;
+  Sd::stickBeforeWrite();
+  return true;
+}
+
+// The end of a request: the next chunk is the first of a new one (stickIo()).
+void tud_msc_read10_complete_cb(uint8_t lun) { (void)lun; Sd::stickInReq = false; }
+void tud_msc_write10_complete_cb(uint8_t lun) { (void)lun; Sd::stickInReq = false; }
+void tud_msc_scsi_complete_cb(uint8_t lun, uint8_t const cmd[16]) { (void)lun; (void)cmd; Sd::stickInReq = false; }
 
 }  // extern "C"
