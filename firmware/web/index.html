@@ -18,6 +18,7 @@
   <span id="dot" class="dot off" title="Connection"></span>
   <span id="host" class="host">rs232</span>
   <span id="conn" class="chip static warn" role="status"></span>
+  <span id="rcon" class="chip static warn" role="status" hidden></span>
   <button id="serChip" class="chip" type="button" title="Serial settings">-- ---</button>
   <span id="batChip" class="chip static" title="Battery" hidden>--</span>
   <span class="grow"></span>
@@ -68,6 +69,15 @@
     <p id="stickState"></p>
     <p class="hint" id="stickNote">The SD card belongs to the USB port now: the switch, firewall or computer it is plugged into sees a USB stick. Eject it there, then restart this device to get the card back.</p>
     <button id="stickEnd" class="btn primary" type="button">Restart</button>
+  </div>
+</div>
+
+<!-- the device is restarting: nothing works until it is back -->
+<div id="waitDlg" class="modal" role="alertdialog" aria-modal="true" aria-labelledby="waitTitle" hidden>
+  <div class="modal-box">
+    <h3 id="waitTitle">Restarting …</h3>
+    <p class="hint">The page continues by itself as soon as the device is back.</p>
+    <button id="waitClose" class="btn" type="button">Close</button>
   </div>
 </div>
 

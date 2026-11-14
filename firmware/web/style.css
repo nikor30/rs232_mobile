@@ -70,7 +70,7 @@ body:not(.admin) [data-admin] { display: none; }
 @keyframes pulse { 50% { opacity: .35; } }
 .host { font-weight: 600; letter-spacing: -.01em; max-width: 28vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .grow { flex: 1; }
-@media (max-width: 419px) { .host { display: none; } }      /* three letters of a name say nothing; the tab title has it */
+@media (max-width: 419px) { .host, body.rcon #batChip { display: none; } }      /* three letters of a name say nothing; the tab title has it */
 /* No session with the device: say so in a word, and take away what cannot work. */
 #conn { display: none; }
 body.offline #conn { display: inline; }

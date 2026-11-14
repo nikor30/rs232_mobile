@@ -336,6 +336,16 @@
     d.title = mode === 'on' ? tr('Connected') : mode === 'wait' ? tr('Connecting …') : tr('Disconnected');
     $('#conn').textContent = d.title;                    // never the colour alone
     document.body.classList.toggle('offline', mode !== 'on');
+    if (mode !== 'on') wasGone = true;
+    else if (wasGone) $('#waitDlg').hidden = true;          // back after a restart
+  }
+
+  // The device restarts: say so until it is back, instead of a page that looks alive.
+  let wasGone = false;
+  function restarting() {
+    wasGone = false;
+    $('#waitDlg').hidden = false;
+    $('#waitClose').focus();
   }
 
   // Blinking cursor = "you can type now". There's no DCD/DSR wiring on the MAX3232
@@ -477,6 +487,9 @@
       : s.sd ? tr('inserted') : tr('none');
     $('#devStick').hidden = !(s.sd || s.sdRaw) || !!k;
     $('#stickHint').hidden = !s.sd || !!k;
+    $('#rcon').hidden = !s.rcon;
+    document.body.classList.toggle('rcon', !!s.rcon);
+    if (s.rcon) $('#rcon').textContent = tr('Remote console') + ' · ' + s.rcon;
     if (k) $('#stickState').textContent = $('#dSd').textContent;
     if ($('#stickDlg').hidden === !!k) { $('#stickDlg').hidden = !k; if (k) $('#stickEnd').focus(); }
     document.title = s.host + ' · RS232';
@@ -596,7 +609,7 @@
     try {
       const r = await fetch('/api/usbdebug', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on }) });
       if (!r.ok) throw new Error();
-      toast(tr('Restarting …'));
+      toast(tr('Restarting …')); restarting();
     } catch (err) { e.target.checked = !on; toast(tr('Device not reachable')); }
   });
   $('#btnMenu').addEventListener('click', () => openPanel());
@@ -1188,7 +1201,7 @@
     try {
       const r = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const j = await r.json();
-      if (j.ok) { toast(tr('Saved – restarting …'), 4000); closePanel(); }
+      if (j.ok) { toast(tr('Saved – restarting …'), 4000); restarting(); closePanel(); }
       else toast(tr('Error: ') + (j.error || r.status), 5000);
     } catch (e) {
       toast(tr('Error while saving'));
@@ -1236,12 +1249,13 @@
       toast(j.ok ? tr('USB stick mode is on') : j.error || tr('Error'));
     } catch (e) { toast(tr('Error')); }
   });
+  $('#waitClose').addEventListener('click', () => { $('#waitDlg').hidden = true; });
   $('#stickEnd').addEventListener('click', async () => {
-    try { await fetch('/api/reboot', { method: 'POST' }); toast(tr('Restarting …')); } catch (e) { toast(tr('Error')); }
+    try { await fetch('/api/reboot', { method: 'POST' }); toast(tr('Restarting …')); restarting(); } catch (e) { toast(tr('Error')); }
   });
   $('#devReboot').addEventListener('click', async () => {
     if (!confirm(tr('Restart the device?'))) return;
-    try { await fetch('/api/reboot', { method: 'POST' }); toast(tr('Restarting …')); } catch (e) { toast(tr('Error')); }
+    try { await fetch('/api/reboot', { method: 'POST' }); toast(tr('Restarting …')); restarting(); } catch (e) { toast(tr('Error')); }
   });
 
   // ------------------------------------------------------------------ setup tab
@@ -1302,7 +1316,7 @@
     try {
       const r = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const j = await r.json();
-      if (j.ok) { toast(tr('Saved – restarting …'), 4000); closePanel(); }
+      if (j.ok) { toast(tr('Saved – restarting …'), 4000); restarting(); closePanel(); }
       else toast(tr('Error: ') + (j.error || r.status), 4000);
     } catch (err) {
       toast(tr('Error while saving'));
@@ -1326,7 +1340,7 @@
       btn.disabled = false;
       let j = {};
       try { j = JSON.parse(xhr.responseText); } catch (e) { /* ignore */ }
-      if (xhr.status === 200 && j.ok) { toast(tr('Firmware accepted – restarting …'), 5000); }
+      if (xhr.status === 200 && j.ok) { toast(tr('Firmware accepted – restarting …'), 5000); restarting(); }
       else { toast(tr('Update failed: ') + (j.error || xhr.status), 6000); prog.hidden = true; }
     };
     xhr.onerror = () => { btn.disabled = false; prog.hidden = true; toast(tr('Upload error')); };
@@ -1337,7 +1351,7 @@
 
   $('#factory').addEventListener('click', async () => {
     if (!confirm(tr('Erase all settings?\nA new hotspot password is created (it is on the display and in the USB log afterwards).'))) return;
-    try { await fetch('/api/factory', { method: 'POST' }); toast(tr('Factory reset – restarting …'), 4000); } catch (e) { toast(tr('Error')); }
+    try { await fetch('/api/factory', { method: 'POST' }); toast(tr('Factory reset – restarting …'), 4000); restarting(); } catch (e) { toast(tr('Error')); }
   });
 
   // ------------------------------------------------------------------ net tab (WLAN client, HTTPS, certificates)
@@ -1529,7 +1543,7 @@
     try {
       const r = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const j = await r.json();
-      if (j.ok) { toast(tr('Saved – restarting …'), 4000); closePanel(); }
+      if (j.ok) { toast(tr('Saved – restarting …'), 4000); restarting(); closePanel(); }
       else toast(tr('Error: ') + (j.error || r.status), 5000);
     } catch (err) {
       toast(tr('Error while saving'));

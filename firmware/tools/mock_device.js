@@ -337,7 +337,7 @@ http.createServer((req, res) => {
         broadcastText(status());
         return sendJson(res, 200, { ok: true, mv: 5010, pct: 60, calEmpty: batCal.empty, calFull: batCal.full });
       }
-      if (url === '/api/reboot') stick = null;            // a restart gives the card back
+      if (url === '/api/reboot') { stick = null; setTimeout(() => wss.clients.forEach((c) => c.close()), 800); }   // a restart gives the card back and drops the sessions
       if (url === '/api/reboot' || url === '/api/factory') return sendJson(res, 200, { ok: true });
       res.writeHead(404); res.end('404');
     });

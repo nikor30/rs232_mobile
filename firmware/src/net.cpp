@@ -311,6 +311,7 @@ static String statusJson() {
   d["host"] = settings.hostname;
   d["adminUi"] = settings.adminUi;
   d["usbDebug"] = settings.usbDebug;
+  if (C2::console().state == 2) d["rcon"] = C2::console().port + 1;   // somebody far away is on this port
   d["sd"] = Sd::mounted();
   d["sdRaw"] = Sd::unreadable();
   d["sdLog"] = Sd::history();          // how the last starts went with the card (sdcard.cpp: note): K/R start, + mounted, -xx answer to CMD0
@@ -453,8 +454,28 @@ static void sendAsset(const WebAsset *a) {
   http.sendHeader("Content-Encoding", "gzip");
   http.sendHeader("Cache-Control", "no-cache");
   http.sendHeader("ETag", a->etag);
-  uint32_t t0 = millis();
-  http.send_P(200, a->mime, (const char *)a->data, a->len);
+  uint32_t t0 = millis(), last = t0;
+  http.setContentLength(a->len);
+  http.send(200, a->mime, "");
+  // The body ourselves, without waiting: over a bad radio link the core's write()
+  // holds the main loop for 10 s, reports nothing, and the dead connection keeps
+  // its buffers for minutes - a few of those and the heap is too small for the
+  // radio to send anything at all (measured: 31 kB -> 10 kB after four). Here a
+  // transfer that makes no progress for 3 s is given up, and the log says so.
+  WiFiClient c = http.client();
+  int fd = c.fd();
+  size_t off = 0;
+  while (off < a->len && millis() - last < 3000) {
+    int n = ::send(fd, a->data + off, min<size_t>(a->len - off, 2872), MSG_DONTWAIT);
+    if (n > 0) { off += n; last = millis(); }
+    else if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) break;
+    else delay(2);
+  }
+  if (off < a->len) {                      // its buffer (5.7 kB) stays until TCP gives up: this SDK has no SO_LINGER to reset it
+    c.stop();
+    Serial.printf("[HTTP]   -> abgebrochen nach %u von %u Bytes, %lu ms\n", (unsigned)off, (unsigned)a->len, (unsigned long)(millis() - t0));
+    return;
+  }
   Serial.printf("[HTTP]   -> 200 %u Bytes in %lu ms\n", (unsigned)a->len, (unsigned long)(millis() - t0));
 }
 
