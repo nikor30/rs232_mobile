@@ -8,6 +8,7 @@ struct SerialCfg {
   char     parity = 'N';   // N, E, O
   uint8_t  stop = 1;       // 1, 2
   bool     swap = false;   // swap RX/TX GPIOs (TTL side, e.g. MAX3232 labels)
+  bool     cross = false;  // carrier: cross the two RS232 lines at the jack (PINS_PORT_SWAP)
 };
 
 struct PortCfg {

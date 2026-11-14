@@ -14,6 +14,7 @@ import math
 import os
 import sys
 import time
+import zlib
 
 import numpy as np
 
@@ -21,6 +22,17 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import generate as G                     # noqa: E402
 from kigen import U, f                   # noqa: E402
+
+# Where the router has to choose between equals (which nets to rip up first) it follows this number, so a
+# run can be repeated exactly.  A plane pad that gets no track of its own is left to the pour; whether the
+# pour really reaches it only shows in KiCad's fill (drc.py).  If drc.py reports unconnected items, try
+# another seed:  ROUTE_SEED=3 python3 route.py
+SEED = int(os.environ.get("ROUTE_SEED", "1"))
+
+
+def tie(name):
+    return zlib.crc32(f"{SEED}:{name}".encode())
+
 
 GRID = 0.2
 CLR = 0.2                 # default copper clearance
@@ -42,6 +54,12 @@ def group(net: str) -> int:
     return 0
 
 
+def locked(net: str) -> bool:
+    """Short channel-local nets (optocoupler, relay and transceiver pins) are routed first and then stay:
+    a long net must go around them instead of tearing them up."""
+    return net.startswith("/CH") and net.split("/")[2] != "ISOGND"
+
+
 def clearance(ga: int, gb: int) -> float:
     if ga == gb:
         return CLR
@@ -51,7 +69,10 @@ def clearance(ga: int, gb: int) -> float:
 
 
 def half_width(net: str) -> float:
-    if net in ("+5V", "VBAT", "SW", "GND") or net.startswith("ISO_IN") or net.endswith("/ISO5V") or net.endswith("/ISOGND"):
+    # ISO_IN (one port, <= 0.25 A) runs at signal width: 0.25 mm drops about 40 mV over the board
+    # ground links are thin as well: the pours on both layers carry the current, the tracks only tie them together
+    # the island supply VISO carries about 20 mA: signal width
+    if net in ("+5V", "VBAT", "BATP", "SW"):
         return HW_PWR
     return HW_SIG
 
@@ -153,10 +174,13 @@ class Router:
         self.static[:, XS > W - EDGE, :] = True
         self.static[:, :, YS < EDGE] = True
         self.static[:, :, YS > H - EDGE] = True
-        sx1, sy1, sx2, sy2 = G.BAT_SLOT
-        sl, m = rect_mask((sx1 + sx2) / 2, (sy1 + sy2) / 2, sx2 - sx1, sy2 - sy1, 0, EDGE)
-        self.static[0][sl] |= m
-        self.static[1][sl] |= m
+        R = G.BOARD_R                # rounded board corners
+        gx, gy = np.meshgrid(XS, YS, indexing="ij")
+        for cx, cy in ((R, R), (W - R, R), (W - R, H - R), (R, H - R)):
+            corner = ((gx < R) if cx == R else (gx > W - R)) & ((gy < R) if cy == R else (gy > H - R))
+            outside = corner & (((gx - cx) ** 2 + (gy - cy) ** 2) > (R - EDGE) ** 2)
+            self.static[0] |= outside
+            self.static[1] |= outside
         b1, b2 = G.BARRIER
         ko = HW_PWR + SLACK          # keep the track copper out of the rule areas
         sl, m = rect_mask(W / 2, (b1 + b2) / 2, W, b2 - b1, 0, ko)
@@ -174,10 +198,8 @@ class Router:
         # pads
         for p, pin_nets, _ in placed:
             fp = G.FPS[p.fp]
-            t = math.radians(p.rot)
-            c, s = math.cos(t), math.sin(t)
             for pad in fp.pads:
-                px, py = p.x + pad.x * c + pad.y * s, p.y - pad.x * s + pad.y * c
+                px, py = G.pad_xy(p, pad)      # bottom-side parts are mirrored
                 if pad.kind == "npth":
                     sl, m = disc_mask(px, py, pad.drill / 2 + 0.4 + self.max_hw)
                     self.static[0][sl] |= m
@@ -186,7 +208,7 @@ class Router:
                 sl, m = disc_mask(px, py, max(pad.w, pad.h) / 2 + VIA_D / 2 + CLR + SLACK)
                 self.novia[sl] |= m
                 net = pin_nets.get(pad.number, "NC")
-                layers = [F] if pad.kind == "smd" else [F, B]
+                layers = [B if p.side == "B" else F] if pad.kind == "smd" else [F, B]
                 if pad.shape == "circle":
                     item = Item("disc", net, layers, (px, py, pad.w / 2))
                 else:
@@ -337,30 +359,33 @@ class Router:
                 continue
             path = self.astar(net, connected, target, tc)
             if path is None and allow_ripup:
-                # transactional rip-up: tear up the signal nets around the target, link, re-route
-                # them without further rip-up; if any of them fails, roll everything back
-                snap = self.snapshot()
-                conn_snap = set(connected)
-                victims = sorted((v for v in self.nets_near(net, tc[0], tc[1], 2.5) if not self.plane_polygon(v)), key=lambda n: half_width(n))[:6]
-                for v in victims:
-                    self.rip_up(v)
-                if victims:
-                    path = self.astar(net, connected, target, tc)
-                if path is not None:
-                    self.commit(net, path, None, connected)
-                    saved_ripped = self.ripped
-                    good = all(self.route_net(v, allow_ripup=False) for v in victims)
-                    self.ripped = saved_ripped
-                    if good:
-                        print(f"  rip-up for {net}: {victims} (re-routed)")
-                        connected |= target
-                        cents.append(tc)
-                        continue
-                    path = None
-                if path is None:
+                # transactional rip-up: tear up the nets around the target, link, re-route them without
+                # further rip-up; if any of them fails, roll everything back and try a wider circle
+                linked = False
+                for radius in (2.5, 4.0, 6.0):
+                    snap = self.snapshot()
+                    conn_snap = set(connected)
+                    victims = sorted((v for v in self.nets_near(net, tc[0], tc[1], radius) if not self.plane_polygon(v)), key=lambda n: (half_width(n), tie(n)))[:10]
+                    for v in victims:
+                        self.rip_up(v)
+                    path = self.astar(net, connected, target, tc) if victims else None
+                    if path is not None:
+                        self.commit(net, path, None, connected)
+                        saved_ripped = self.ripped
+                        good = all(self.route_net(v, allow_ripup=False) for v in victims)
+                        self.ripped = saved_ripped
+                        if good:
+                            print(f"  rip-up for {net}: {victims} (re-routed)")
+                            linked = True
+                            break
                     self.restore(snap)
                     connected.clear()
                     connected |= conn_snap
+                    path = None
+                if linked:
+                    connected |= target
+                    cents.append(tc)
+                    continue
             if path is None:
                 # the pour on both layers normally reaches it anyway; the DRC's unconnected-items
                 # check is the arbiter, so do not tear up signal nets for a redundant link
@@ -407,7 +432,7 @@ class Router:
                 victims = self.nets_near(net, tx, ty)
                 for cx, cy in connected_centres[-2:]:
                     victims |= self.nets_near(net, cx, cy)
-                victims = sorted((v for v in victims if not self.plane_polygon(v)), key=lambda n: half_width(n))[:6]
+                victims = sorted((v for v in victims if not self.plane_polygon(v) and not (locked(v) and not locked(net))), key=lambda n: (half_width(n), tie(n)))[:6]
                 for v in victims:
                     self.rip_up(v)
                     self.ripped.add(v)
@@ -552,6 +577,127 @@ class Router:
         for l, i, j in path:
             connected.add((l, i, j))
 
+    def stitch(self, net, poly, pitch=2.4):
+        """Tie the two pours of a plane net together.  The pours are modelled as the cells that are free for
+        this net (eroded by one cell, so only solid copper counts); their connected pieces are found per
+        layer and joined through the net's own vias and through-hole pads.  Then (1) a coarse stitching
+        grid and (2) targeted vias wherever a piece that is still separate overlaps another piece on the
+        other layer.  Returns (vias added, separate pieces left that carry a pad or via)."""
+        from collections import deque
+        x1, y1, x2, y2 = poly
+        obs = self.obstacles(net)
+        inz = np.zeros((NX, NY), bool)
+        inz[(XS >= x1 + 0.4) & (XS <= x2 - 0.4), :] = True
+        inz[:, (YS < y1 + 0.4) | (YS > y2 - 0.4)] = False
+        free = (~obs) & inz[None, :, :]
+        solid = free.copy()                       # erode: a cell counts if its 4 neighbours are free too
+        solid[:, 1:, :] &= free[:, :-1, :]
+        solid[:, :-1, :] &= free[:, 1:, :]
+        solid[:, :, 1:] &= free[:, :, :-1]
+        solid[:, :, :-1] &= free[:, :, 1:]
+
+        def add_via(i, j):
+            vx, vy = i * GRID, j * GRID
+            self.vias.append((net, vx, vy))
+            self.add_item(Item("disc", net, [F, B], (vx, vy, VIA_D / 2), routed=True))
+            sl, m = disc_mask(vx, vy, VIA_D + 0.3)
+            self.novia[sl] |= m
+
+        added = 0
+        lab = np.zeros((2, NX, NY), np.int32)     # (2) pieces
+        n = 0
+        for l in (F, B):
+            for i0, j0 in zip(*np.nonzero(solid[l])):
+                if lab[l, i0, j0]:
+                    continue
+                n += 1
+                lab[l, i0, j0] = n
+                q = deque([(i0, j0)])
+                while q:
+                    i, j = q.popleft()
+                    for di, dj in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                        a, b = i + di, j + dj
+                        if 0 <= a < NX and 0 <= b < NY and solid[l, a, b] and not lab[l, a, b]:
+                            lab[l, a, b] = n
+                            q.append((a, b))
+        parent = list(range(n + 1))
+
+        def find(k):
+            while parent[k] != k:
+                parent[k] = parent[parent[k]]
+                k = parent[k]
+            return k
+
+        def near(l, i, j, r=2):                   # piece label next to a point (a via barrel sits in a gap of its own)
+            best = 0
+            for a in range(max(0, i - r), min(NX, i + r + 1)):
+                for b in range(max(0, j - r), min(NY, j + r + 1)):
+                    if lab[l, a, b]:
+                        best = lab[l, a, b]
+            return best
+        anchors = [(int(round(vx / GRID)), int(round(vy / GRID))) for nn, vx, vy in self.vias if nn == net]
+        anchors += [(int(round(c[0] / GRID)), int(round(c[1] / GRID))) for item, layer, cells, c in self.pads.get(net, []) if len(item.layers) > 1]
+        has_item = set()
+        for i, j in anchors:
+            a, b = near(F, i, j), near(B, i, j)
+            if a and b:
+                parent[find(a)] = find(b)
+            has_item.update(k for k in (a, b) if k)
+        for item, layer, cells, c in self.pads.get(net, []):
+            k = near(layer, int(round(c[0] / GRID)), int(round(c[1] / GRID)), 4)
+            if k:
+                has_item.add(k)
+        sizes = np.bincount(lab.ravel(), minlength=n + 1)
+        for _ in range(60):                       # join the pieces that are still separate
+            roots = {}
+            for k in range(1, n + 1):
+                roots.setdefault(find(k), 0)
+                roots[find(k)] += sizes[k]
+            main = max(roots, key=roots.get)
+            both = (lab[F] > 0) & (lab[B] > 0)
+            done = False
+            for i, j in zip(*np.nonzero(both)):
+                a, b = find(lab[F, i, j]), find(lab[B, i, j])
+                if a != b and self.via_ok(obs, i, j) and not self.novia[i, j]:
+                    add_via(i, j)
+                    added += 1
+                    parent[a] = b
+                    has_item.update((lab[F, i, j], lab[B, i, j]))
+                    done = True
+                    break
+            if not done:
+                break
+        roots = {}
+        for k in range(1, n + 1):
+            roots.setdefault(find(k), 0)
+            roots[find(k)] += sizes[k]
+        main = max(roots, key=roots.get)
+        row = 0
+        y = y1 + 1.0
+        while y <= y2 - 1.0:                      # coarse grid, only where both layers belong to the main piece
+            x = x1 + 1.0 + (pitch / 2 if row % 2 else 0.0)
+            while x <= x2 - 1.0:
+                i, j = int(round(x / GRID)), int(round(y / GRID))
+                if lab[F, i, j] and lab[B, i, j] and find(lab[F, i, j]) == main and find(lab[B, i, j]) == main and self.via_ok(obs, i, j):
+                    add_via(i, j)
+                    added += 1
+                x += pitch
+            y += pitch * 0.866
+            row += 1
+        roots = {}
+        for k in range(1, n + 1):
+            roots.setdefault(find(k), [0, False])
+            roots[find(k)][0] += sizes[k]
+            roots[find(k)][1] |= k in has_item
+        main = max(roots, key=lambda k: roots[k][0])
+        left = [(k, v[0]) for k, v in roots.items() if k != main and v[1]]
+        for k, size in left:
+            cells = np.argwhere(np.isin(lab, [m for m in range(1, n + 1) if find(m) == k]))
+            l0, i0, j0 = cells.min(axis=0)
+            l1, i1, j1 = cells.max(axis=0)
+            print(f"     piece on {'F' if l0 == 0 else 'B'}{'+B' if l1 != l0 else ''}: {size * GRID * GRID:6.1f} mm2  x[{i0 * GRID:.1f},{i1 * GRID:.1f}] y[{j0 * GRID:.1f},{j1 * GRID:.1f}]")
+        return added, len(left)
+
     def debug_image(self, net, sources, targets):
         import matplotlib
         matplotlib.use("Agg")
@@ -581,6 +727,54 @@ class Router:
         plt.close(fig)
 
     # ----- output
+    def prune_stubs(self, max_len=0.6):
+        """Drop short track ends that lead nowhere (left behind by rip-up and re-route)."""
+        pads = [it for lst in self.own_items.values() for it in lst if not it.routed]
+
+        def anchored(net, layer, x, y, me):
+            for k, (n, l, x1, y1, x2, y2, hw) in enumerate(self.tracks):
+                if k == me or n != net or l != layer:
+                    continue
+                dx, dy = x2 - x1, y2 - y1
+                L2 = dx * dx + dy * dy
+                t = 0.0 if L2 == 0 else max(0.0, min(1.0, ((x - x1) * dx + (y - y1) * dy) / L2))
+                if math.hypot(x - (x1 + t * dx), y - (y1 + t * dy)) < 0.02:
+                    return True
+            if any(n == net and math.hypot(x - vx, y - vy) < VIA_D / 2 for n, vx, vy in self.vias):
+                return True
+            for it in pads:
+                if it.net != net or layer not in it.layers:
+                    continue
+                if it.kind == "disc":
+                    cx, cy, r = it.geom
+                    if math.hypot(x - cx, y - cy) <= r + 0.05:
+                        return True
+                else:
+                    cx, cy, w, h, rot = it.geom
+                    a = math.radians(rot)
+                    u = (x - cx) * math.cos(a) - (y - cy) * math.sin(a)
+                    v = (x - cx) * math.sin(a) + (y - cy) * math.cos(a)
+                    # a rotated rectangle: test both senses of rotation, pads are symmetric
+                    u2 = (x - cx) * math.cos(a) + (y - cy) * math.sin(a)
+                    v2 = -(x - cx) * math.sin(a) + (y - cy) * math.cos(a)
+                    if (abs(u) <= w / 2 + 0.05 and abs(v) <= h / 2 + 0.05) or (abs(u2) <= w / 2 + 0.05 and abs(v2) <= h / 2 + 0.05):
+                        return True
+            return False
+
+        removed = 0
+        for _ in range(6):
+            drop = set()
+            for k, (net, layer, x1, y1, x2, y2, hw) in enumerate(self.tracks):
+                if math.hypot(x2 - x1, y2 - y1) > max_len:
+                    continue
+                if not anchored(net, layer, x1, y1, k) or not anchored(net, layer, x2, y2, k):
+                    drop.add(k)
+            if not drop:
+                break
+            self.tracks = [t for k, t in enumerate(self.tracks) if k not in drop]
+            removed += len(drop)
+        return removed
+
     def sexp(self, net_idx):
         o = []
         for k, (net, layer, x1, y1, x2, y2, hw) in enumerate(self.tracks):
@@ -604,21 +798,21 @@ def main():
         if len(cs) < 2:
             return 0
         return sum(math.hypot(cs[k][0] - cs[k - 1][0], cs[k][1] - cs[k - 1][1]) for k in range(1, len(cs)))
-    IC_NETS = {"T1IN", "BUF_OUT", "RXA", "TXA", "RX_O", "R1OUT", "R1IN", "T1OUT"}
+    IC_NETS = {"T1IN", "BUF_OUT", "RXA", "TXA", "RX_O", "R1OUT", "R1IN", "T1OUT", "RJ3", "RJ6", "SWA1", "SWA2", "SWB1", "SWB2", "SWK"}
 
     def prio(net):
         if net.startswith("/CH") and net.split("/")[2] in IC_NETS:
             return 0            # pins of the optocouplers / MAX3232 / buffer first
-        if net.startswith("/CH") and not (net.endswith("ISOGND") or net.endswith("ISO5V")):
+        if net.startswith("/CH") and net.endswith("VISO"):
+            return 0.6          # island supply, right after the other island nets
+        if net.startswith("/CH") and not net.endswith("ISOGND"):
             return 0.5          # charge pump caps, LED, jack
-        if net.startswith("ISO_IN") or net in ("SW", "VBAT", "+5V", "VBUS"):
+        if net.startswith("ISO_IN") or net in ("SW", "VBAT", "BATP", "+5V", "VBUS"):
             return 1
-        if net.startswith("ESP_") or net in ("SDA", "SCL", "FB", "PWR_EN") or net.startswith("ENP") or net.startswith("PG") or net.startswith("IO"):
+        if net.startswith("ESP_") or net in ("SDA", "SCL", "FB", "PWR_EN", "TXD0") or net.startswith("PG") or net.startswith("IO") or net.startswith("SWAP"):
             return 2
         if net.startswith("EN"):
             return 3
-        if net.endswith("ISO5V"):
-            return 4
         if net == "+3V3":
             return 5
         return 6                # GND and the ISOGND islands (also covered by pours)
@@ -653,22 +847,40 @@ def main():
                     failed.remove(v)
                 queue.insert(0, v)   # re-route the victims right away
 
-    run(queue)
-    # plane trees last: short links between the fanout vias, no rip-up (the pour is the fallback,
-    # the DRC's unconnected-items check is the arbiter)
-    for net in plane:
+    def tree(net):
         t1 = time.time()
         ok = r.plane_tree(net)
         print(f"tree   {net:22s} {'ok' if ok else 'FAILED'}  {time.time() - t1:5.1f}s  tracks={len(r.tracks)} vias={len(r.vias)}")
         if not ok:
             failed.append(net)
+
+    # 1. the channel-local nets (islands and the short ESP-side nets), 2. the island ground trees - an island
+    # shares no routing space with the long ESP-side nets, so its ground can be tied up before those exist,
+    # 3. the long nets, 4. the ESP-side ground tree, 5. stitching.
+    run([n for n in queue if prio(n) < 1])
+    for net in plane:
+        if net != "GND":
+            tree(net)
+    run([n for n in queue if prio(n) >= 1])
+    for net in plane:
+        if net != "GND":
+            continue
+        t1 = time.time()
+        ok = r.plane_tree(net)
+        print(f"tree   {net:22s} {'ok' if ok else 'FAILED'}  {time.time() - t1:5.1f}s  tracks={len(r.tracks)} vias={len(r.vias)}")
+        if not ok:
+            failed.append(net)
+    for net in plane:
+        nv, left = r.stitch(net, r.plane_polygon(net))
+        print(f"stitch {net:22s} {nv:3d} vias, {left} separate piece(s) left")
     failed = sorted(set(failed))
+    print(f"pruned {r.prune_stubs()} dangling stub(s)")
     pcb = os.path.join(G.OUT, f"{G.PROJECT}.kicad_pcb")
     txt = open(pcb).read()
     idx = txt.rstrip().rfind(")")
     txt = txt[:idx] + r.sexp(net_idx) + "\n)\n"
     open(pcb, "w").write(txt)
-    print(f"routing done in {time.time() - t0:.0f}s: {len(r.tracks)} segments, {len(r.vias)} vias, failed nets: {failed}")
+    print(f"routing done in {time.time() - t0:.0f}s (seed {SEED}): {len(r.tracks)} segments, {len(r.vias)} vias, failed nets: {failed}")
     return 1 if failed else 0
 
 

@@ -61,7 +61,7 @@ const configs = new Map([['Beispiel Grundkonfig', 'enable\nconfigure terminal\nh
 class Port {
   constructor(id) {
     this.id = id;
-    this.serial = { baud: 9600, bits: 8, parity: 'N', stop: 1, swap: false };
+    this.serial = { baud: 9600, bits: 8, parity: 'N', stop: 1, swap: false, cross: false };
     this.ring = Buffer.alloc(RING);
     this.total = 0;
     this.rx = 0; this.tx = 0; this.autobaud = false;
@@ -171,7 +171,7 @@ function status() {
     type: 'status', fw: '1.4.0-mock', board: 'Simulator', host: settings.hostname, adminUi: !!settings.adminUi, sd: true, stick: stick || undefined, boot: bootId,
     ports: enabledPorts().map((p) => ({
       id: p.id, name: portName(p), hw: settings.ports[p.id].hw, rxPin: settings.ports[p.id].rx, txPin: settings.ports[p.id].tx,
-      maxBaud: settings.ports[p.id].hw ? 1000000 : 38400, swapOk: ![34, 35, 36, 39].includes(settings.ports[p.id].rx),
+      maxBaud: settings.ports[p.id].hw ? 1000000 : 38400, swapOk: ![34, 35, 36, 39].includes(settings.ports[p.id].rx), crossOk: true,
       serial: { ...p.serial, label: p.label }, autobaud: p.autobaud, rx: p.rx, tx: p.tx, tcp: false, tcpPort: 2000 + p.id,
     })),
     xfer: !!xfer,
@@ -387,7 +387,7 @@ wss.on('connection', (ws, req) => {
       c.ready = true;
       if (xfer) ws.send(JSON.stringify(xferJson(xfer.t0 ? 'run' : 'wait')));
     } else if (m.cmd === 'serial') {
-      Object.assign(p.serial, { baud: m.baud, bits: m.bits, parity: m.parity, stop: m.stop, swap: !!m.swap });
+      Object.assign(p.serial, { baud: m.baud, bits: m.bits, parity: m.parity, stop: m.stop, swap: !!m.swap, cross: !!m.cross });
       msg((enabledPorts().length > 1 ? portName(p) + ' · ' : '') + 'Seriell: ' + p.label);
       broadcastText(status());
     } else if (m.cmd === 'break') {

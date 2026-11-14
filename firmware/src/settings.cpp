@@ -58,6 +58,7 @@ static void loadSerial(uint8_t i) {
   c.parity = (char)prefs.getUChar(key(i, "pa").c_str(), 'N');
   c.stop   = prefs.getUChar(key(i, "st").c_str(), 1);
   c.swap   = prefs.getBool(key(i, "sw").c_str(), false);
+  c.cross  = prefs.getBool(key(i, "cr").c_str(), false);
   if (!Store::validSerial(c)) c = SerialCfg();
 }
 
@@ -68,6 +69,7 @@ static void putSerial(uint8_t i) {
   prefs.putUChar(key(i, "pa").c_str(), (uint8_t)c.parity);
   prefs.putUChar(key(i, "st").c_str(), c.stop);
   prefs.putBool(key(i, "sw").c_str(), c.swap);
+  prefs.putBool(key(i, "cr").c_str(), c.cross);
 }
 
 namespace Store {

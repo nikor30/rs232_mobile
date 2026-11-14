@@ -193,6 +193,10 @@ class FootprintDef:
              nets: Dict[str, Tuple[int, str]], path: str, uid: str, dnp: bool = False,
              props: Optional[Dict[str, str]] = None, side: str = "F") -> str:
         L = side   # "F" or "B": layer prefix for everything that belongs to one side
+        # A part on the bottom is the mirror image of its top-side footprint (seen from above):
+        # every local x is negated, so pin 1 ends up where the real part has it.
+        m = -1.0 if side == "B" else 1.0
+        jm = " (justify mirror)" if side == "B" else ""
         o = [f'  (footprint "{lib}:{self.name}" (layer "{L}.Cu")', f"    (tstamp {uid})",
              f"    (at {f(x)} {f(y)} {f(rot)})"]
         if self.note:
@@ -208,47 +212,55 @@ class FootprintDef:
         ry = cy[3] + 1.0
         ref_layer = f"{L}.Fab" if (len(self.pads) <= 3 and self.attr == "smd") or not self.pads or all(p.kind == "npth" for p in self.pads) else f"{L}.SilkS"
         o.append(f'    (fp_text reference "{ref}" (at 0 {f(cy[1]-0.7)} {f(rot)}) (layer "{ref_layer}") (tstamp {U(uid+"ref")})'
-                 f" (effects (font (size 0.6 0.6) (thickness 0.1))))")
+                 f" (effects (font (size 0.6 0.6) (thickness 0.1)){jm}))")
         o.append(f'    (fp_text value "{value}" (at 0 {f(ry)} {f(rot)}) (layer "{L}.Fab") (tstamp {U(uid+"val")})'
-                 f" (effects (font (size 0.8 0.8) (thickness 0.12))))")
-        o.append(f"    (fp_rect (start {f(cy[0])} {f(cy[1])}) (end {f(cy[2])} {f(cy[3])}) (stroke (width 0.05) (type default)) (fill none) (layer \"{L}.CrtYd\") (tstamp {U(uid+'cy')}))")
+                 f" (effects (font (size 0.8 0.8) (thickness 0.12)){jm}))")
+        o.append(f"    (fp_rect (start {f(m*cy[0])} {f(cy[1])}) (end {f(m*cy[2])} {f(cy[3])}) (stroke (width 0.05) (type default)) (fill none) (layer \"{L}.CrtYd\") (tstamp {U(uid+'cy')}))")
         if self.fab:
             fb = self.fab
-            o.append(f"    (fp_rect (start {f(fb[0])} {f(fb[1])}) (end {f(fb[2])} {f(fb[3])}) (stroke (width 0.1) (type default)) (fill none) (layer \"{L}.Fab\") (tstamp {U(uid+'fab')}))")
+            o.append(f"    (fp_rect (start {f(m*fb[0])} {f(fb[1])}) (end {f(m*fb[2])} {f(fb[3])}) (stroke (width 0.1) (type default)) (fill none) (layer \"{L}.Fab\") (tstamp {U(uid+'fab')}))")
         for i, (x1, y1, x2, y2) in enumerate(self.silk_lines):
-            o.append(f"    (fp_line (start {f(x1)} {f(y1)}) (end {f(x2)} {f(y2)}) (stroke (width 0.12) (type solid)) (layer \"{L}.SilkS\") (tstamp {U(uid+'sl'+str(i))}))")
+            o.append(f"    (fp_line (start {f(m*x1)} {f(y1)}) (end {f(m*x2)} {f(y2)}) (stroke (width 0.12) (type solid)) (layer \"{L}.SilkS\") (tstamp {U(uid+'sl'+str(i))}))")
         for i, (x1, y1, x2, y2) in enumerate(self.fab_lines):
-            o.append(f"    (fp_line (start {f(x1)} {f(y1)}) (end {f(x2)} {f(y2)}) (stroke (width 0.1) (type solid)) (layer \"{L}.Fab\") (tstamp {U(uid+'fl'+str(i))}))")
+            o.append(f"    (fp_line (start {f(m*x1)} {f(y1)}) (end {f(m*x2)} {f(y2)}) (stroke (width 0.1) (type solid)) (layer \"{L}.Fab\") (tstamp {U(uid+'fl'+str(i))}))")
         for i, (layer, pts) in enumerate(self.polys):
-            p = " ".join(f"(xy {f(a)} {f(b)})" for a, b in pts)
+            if side == "B":
+                layer = "B." + layer[2:] if layer.startswith("F.") else layer
+            p = " ".join(f"(xy {f(m*a)} {f(b)})" for a, b in pts)
             o.append(f"    (fp_poly (pts {p}) (stroke (width 0) (type solid)) (fill solid) (layer \"{layer}\") (tstamp {U(uid+'po'+str(i))}))")
         for p in self.pads:
             prot = f(rot + p.rot)
             if p.kind == "npth":
-                o.append(f'    (pad "" np_thru_hole circle (at {f(p.x)} {f(p.y)} {prot}) (size {f(p.w)} {f(p.h)}) (drill {f(p.drill)}) (layers "*.Cu" "*.Mask") (tstamp {U(uid+"pad"+p.number+str(p.x)+str(p.y))}))')
+                o.append(f'    (pad "" np_thru_hole circle (at {f(m*p.x)} {f(p.y)} {prot}) (size {f(p.w)} {f(p.h)}) (drill {f(p.drill)}) (layers "*.Cu" "*.Mask") (tstamp {U(uid+"pad"+p.number+str(p.x)+str(p.y))}))')
                 continue
             net = nets.get(p.number)
             nets_s = f' (net {net[0]} "{net[1]}")' if net else ""
             if p.kind == "tht":
                 shape = p.shape
-                o.append(f'    (pad "{p.number}" thru_hole {shape} (at {f(p.x)} {f(p.y)} {prot}) (size {f(p.w)} {f(p.h)}) (drill {f(p.drill)}) (layers "*.Cu" "*.Mask"){nets_s} (remove_unused_layers) (tstamp {U(uid+"pad"+p.number)}))')
+                o.append(f'    (pad "{p.number}" thru_hole {shape} (at {f(m*p.x)} {f(p.y)} {prot}) (size {f(p.w)} {f(p.h)}) (drill {f(p.drill)}) (layers "*.Cu" "*.Mask"){nets_s} (remove_unused_layers) (tstamp {U(uid+"pad"+p.number)}))')
             else:
                 rr = " (roundrect_rratio 0.25)" if p.shape == "roundrect" else ""
-                o.append(f'    (pad "{p.number}" smd {p.shape} (at {f(p.x)} {f(p.y)} {prot}) (size {f(p.w)} {f(p.h)}) (layers "{L}.Cu" "{L}.Paste" "{L}.Mask"){rr}{nets_s} (tstamp {U(uid+"pad"+p.number)}))')
+                o.append(f'    (pad "{p.number}" smd {p.shape} (at {f(m*p.x)} {f(p.y)} {prot}) (size {f(p.w)} {f(p.h)}) (layers "{L}.Cu" "{L}.Paste" "{L}.Mask"){rr}{nets_s} (tstamp {U(uid+"pad"+p.number)}))')
         o.append("  )")
         return "\n".join(o)
 
-    def courtyard_world(self, x: float, y: float, rot: float) -> Tuple[float, float, float, float]:
-        x1, y1, x2, y2 = self.courtyard
-        pts = [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
+    def local_world(self, x: float, y: float, rot: float, px: float, py: float, side: str = "F") -> Tuple[float, float]:
+        """Footprint-local point -> board coordinates (bottom-side parts are mirrored in local x)."""
+        if side == "B":
+            px = -px
         r = math.radians(rot)
         c, s = math.cos(r), math.sin(r)
-        # KiCad rotates counter-clockwise for positive angles in a y-down system:
-        # world = (x + px*c + py*s, y - px*s + py*c)
-        w = [(x + px * c + py * s, y - px * s + py * c) for px, py in pts]
-        xs = [p[0] for p in w]
-        ys = [p[1] for p in w]
+        return x + px * c + py * s, y - px * s + py * c
+
+    def box_world(self, x: float, y: float, rot: float, box, side: str = "F") -> Tuple[float, float, float, float]:
+        pts = [(box[0], box[1]), (box[2], box[1]), (box[2], box[3]), (box[0], box[3])]
+        w = [self.local_world(x, y, rot, a, b, side) for a, b in pts]
+        xs = [q[0] for q in w]
+        ys = [q[1] for q in w]
         return (min(xs), min(ys), max(xs), max(ys))
+
+    def courtyard_world(self, x: float, y: float, rot: float, side: str = "F") -> Tuple[float, float, float, float]:
+        return self.box_world(x, y, rot, self.courtyard, side)
 
 
 def rect_lines(x1, y1, x2, y2):

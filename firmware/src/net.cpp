@@ -301,6 +301,7 @@ static void serialJson(JsonObject s, const SerialCfg &c) {
   s["stop"] = c.stop;
   s["label"] = Store::serialLabel(c);
   s["swap"] = c.swap;
+  s["cross"] = c.cross;
 }
 
 static String statusJson() {
@@ -329,6 +330,7 @@ static String statusJson() {
     o["hw"] = Bridge::isHardware(p);
     o["maxBaud"] = Bridge::maxBaud(p);
     o["swapOk"] = Bridge::swapOk(p);
+    o["crossOk"] = Bridge::crossOk(p);
     o["rxPin"] = Bridge::rxPin(p);
     o["txPin"] = Bridge::txPin(p);
     serialJson(o["serial"].to<JsonObject>(), settings.port[p].serial);
@@ -478,6 +480,7 @@ String deviceSettings() {
     c["parity"] = String(settings.port[p].serial.parity);
     c["stop"] = settings.port[p].serial.stop;
     c["swap"] = settings.port[p].serial.swap;
+    c["cross"] = settings.port[p].serial.cross;
   }
   static const int8_t RXP[] = PINS_RX, TXP[] = PINS_TX, ADCP[] = PINS_ADC;
   JsonArray a;
@@ -568,6 +571,7 @@ const char *applySettings(const String &json, bool wire) {
         if (c["parity"].is<const char *>() && strlen(c["parity"].as<const char *>()) == 1) sc.parity = c["parity"].as<const char *>()[0];
         if (c["stop"].is<int>()) sc.stop = c["stop"].as<int>();
         if (c["swap"].is<bool>()) sc.swap = c["swap"];
+        if (c["cross"].is<bool>()) sc.cross = c["cross"];
         if (!Store::validSerial(sc)) badSerial = true;
         else n.port[p].serial = sc;
       }
@@ -1086,6 +1090,7 @@ static void handleCommand(uint8_t num, uint8_t *payload, size_t len) {
     c.parity = toupper(p[0]);
     c.stop = d["stop"] | c.stop;
     c.swap = d["swap"] | c.swap;
+    c.cross = d["cross"] | c.cross;
     if (Store::validSerial(c)) Bridge::apply(port, c);
     else sendText(num, TR("{\"type\":\"msg\",\"text\":\"Invalid serial setting\"}", "{\"type\":\"msg\",\"text\":\"Ungültige serielle Einstellung\"}", "{\"type\":\"msg\",\"text\":\"Configuração serial inválida\"}"));
     dirty = true;

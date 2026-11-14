@@ -349,10 +349,6 @@
       },
       {
         "netclass": "ISO1",
-        "pattern": "/CH1/ISO5V"
-      },
-      {
-        "netclass": "ISO1",
         "pattern": "/CH1/ISOGND"
       },
       {
@@ -389,6 +385,10 @@
       },
       {
         "netclass": "ISO1",
+        "pattern": "/CH1/VISO"
+      },
+      {
+        "netclass": "ISO1",
         "pattern": "/CH1/VN"
       },
       {
@@ -414,10 +414,6 @@
       {
         "netclass": "ISO2",
         "pattern": "/CH2/C2P"
-      },
-      {
-        "netclass": "ISO2",
-        "pattern": "/CH2/ISO5V"
       },
       {
         "netclass": "ISO2",
@@ -457,6 +453,10 @@
       },
       {
         "netclass": "ISO2",
+        "pattern": "/CH2/VISO"
+      },
+      {
+        "netclass": "ISO2",
         "pattern": "/CH2/VN"
       },
       {
@@ -482,10 +482,6 @@
       {
         "netclass": "ISO3",
         "pattern": "/CH3/C2P"
-      },
-      {
-        "netclass": "ISO3",
-        "pattern": "/CH3/ISO5V"
       },
       {
         "netclass": "ISO3",
@@ -525,6 +521,10 @@
       },
       {
         "netclass": "ISO3",
+        "pattern": "/CH3/VISO"
+      },
+      {
+        "netclass": "ISO3",
         "pattern": "/CH3/VN"
       },
       {
@@ -550,10 +550,6 @@
       {
         "netclass": "ISO4",
         "pattern": "/CH4/C2P"
-      },
-      {
-        "netclass": "ISO4",
-        "pattern": "/CH4/ISO5V"
       },
       {
         "netclass": "ISO4",
@@ -590,6 +586,10 @@
       {
         "netclass": "ISO4",
         "pattern": "/CH4/T1OUT"
+      },
+      {
+        "netclass": "ISO4",
+        "pattern": "/CH4/VISO"
       },
       {
         "netclass": "ISO4",

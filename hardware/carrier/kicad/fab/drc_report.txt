@@ -1,38 +1,76 @@
 ** Drc report for /home/user/nikor30/rs232_mobile/hardware/carrier/kicad/rs232_carrier.kicad_pcb **
-** Created on 2026-10-27 19:29:37 **
+** Created on 2026-11-14 20:57:22 **
 
-** Found 8 DRC violations **
+** Found 19 DRC violations **
 [silk_overlap]: Silkscreen overlap
     Rule: board setup constraints silk; Severity: warning
-    @(7.6000 mm, 85.5000 mm): PCB Text 'PORT 1' on F.Silkscreen
-    @(18.4500 mm, 85.0000 mm): Line on F.Silkscreen
+    @(61.8000 mm, 87.1000 mm): PCB Text '3=TX 6=RX 4/5=GND' on F.Silkscreen
+    @(71.2750 mm, 86.5250 mm): Line on F.Silkscreen
 [silk_overlap]: Silkscreen overlap
     Rule: board setup constraints silk; Severity: warning
-    @(26.6000 mm, 85.5000 mm): PCB Text 'PORT 2' on F.Silkscreen
-    @(37.4500 mm, 85.0000 mm): Line on F.Silkscreen
+    @(64.6000 mm, 88.5000 mm): PCB Text 'PORT 4' on F.Silkscreen
+    @(75.4500 mm, 88.6000 mm): Line on F.Silkscreen
 [silk_overlap]: Silkscreen overlap
     Rule: board setup constraints silk; Severity: warning
-    @(75.4500 mm, 85.0000 mm): Line on F.Silkscreen
-    @(64.6000 mm, 85.5000 mm): PCB Text 'PORT 4' on F.Silkscreen
+    @(42.8000 mm, 87.1000 mm): PCB Text '3=TX 6=RX 4/5=GND' on F.Silkscreen
+    @(52.2750 mm, 86.5250 mm): Line on F.Silkscreen
 [silk_overlap]: Silkscreen overlap
     Rule: board setup constraints silk; Severity: warning
-    @(56.4500 mm, 85.0000 mm): Line on F.Silkscreen
-    @(45.6000 mm, 85.5000 mm): PCB Text 'PORT 3' on F.Silkscreen
+    @(45.6000 mm, 88.5000 mm): PCB Text 'PORT 3' on F.Silkscreen
+    @(56.4500 mm, 88.6000 mm): Line on F.Silkscreen
+[silk_overlap]: Silkscreen overlap
+    Rule: board setup constraints silk; Severity: warning
+    @(4.8000 mm, 87.1000 mm): PCB Text '3=TX 6=RX 4/5=GND' on F.Silkscreen
+    @(14.2750 mm, 86.5250 mm): Line on F.Silkscreen
+[silk_overlap]: Silkscreen overlap
+    Rule: board setup constraints silk; Severity: warning
+    @(7.6000 mm, 88.5000 mm): PCB Text 'PORT 1' on F.Silkscreen
+    @(18.4500 mm, 88.6000 mm): Line on F.Silkscreen
+[silk_overlap]: Silkscreen overlap
+    Rule: board setup constraints silk; Severity: warning
+    @(26.6000 mm, 88.5000 mm): PCB Text 'PORT 2' on F.Silkscreen
+    @(37.4500 mm, 88.6000 mm): Line on F.Silkscreen
+[silk_overlap]: Silkscreen overlap
+    Rule: board setup constraints silk; Severity: warning
+    @(23.8000 mm, 87.1000 mm): PCB Text '3=TX 6=RX 4/5=GND' on F.Silkscreen
+    @(33.2750 mm, 86.5250 mm): Line on F.Silkscreen
+[silk_overlap]: Silkscreen overlap
+    Rule: board setup constraints silk; Severity: warning
+    @(68.3000 mm, 38.9000 mm): PCB Text 'BAT +' on B.Silkscreen
+    @(67.6000 mm, 39.7000 mm): Line on B.Silkscreen
+[silk_overlap]: Silkscreen overlap
+    Rule: board setup constraints silk; Severity: warning
+    @(68.3000 mm, 30.9000 mm): PCB Text 'BAT +' on B.Silkscreen
+    @(68.0500 mm, 31.8000 mm): Line on B.Silkscreen
 [silk_over_copper]: Silkscreen clipped by solder mask
     Local override; Severity: warning
-    @(39.0000 mm, 54.5000 mm): PCB Text 'RS232 ISO CARRIER v0.1 2026-10-27 ...' on B.Silkscreen
+    @(39.0000 mm, 46.5000 mm): PCB Text 'RS232 ISO CARRIER v0.4 2026-11-14 ...' on B.Silkscreen
+[silk_over_copper]: Silkscreen clipped by solder mask
+    Local override; Severity: warning
+    @(68.3000 mm, 30.9000 mm): PCB Text 'BAT +' on B.Silkscreen
+[silk_over_copper]: Silkscreen clipped by solder mask
+    Local override; Severity: warning
+    @(68.3000 mm, 38.9000 mm): PCB Text 'BAT +' on B.Silkscreen
+[silk_over_copper]: Silkscreen clipped by solder mask
+    Local override; Severity: warning
+    @(61.8000 mm, 87.1000 mm): PCB Text '3=TX 6=RX 4/5=GND' on F.Silkscreen
+[silk_over_copper]: Silkscreen clipped by solder mask
+    Local override; Severity: warning
+    @(4.8000 mm, 87.1000 mm): PCB Text '3=TX 6=RX 4/5=GND' on F.Silkscreen
+[silk_over_copper]: Silkscreen clipped by solder mask
+    Local override; Severity: warning
+    @(42.8000 mm, 87.1000 mm): PCB Text '3=TX 6=RX 4/5=GND' on F.Silkscreen
+[silk_over_copper]: Silkscreen clipped by solder mask
+    Local override; Severity: warning
+    @(23.8000 mm, 87.1000 mm): PCB Text '3=TX 6=RX 4/5=GND' on F.Silkscreen
 [silk_edge_clearance]: Silkscreen clipped by board edge
     Rule: board setup constraints silk; Severity: warning
-    @(0.0000 mm, 0.0000 mm): Line on Edge.Cuts
-    @(2.5000 mm, -0.3000 mm): Reference 'J3'
+    @(3.0000 mm, 0.0000 mm): Line on Edge.Cuts
+    @(58.7600 mm, -0.3000 mm): Reference 'J3'
 [silk_edge_clearance]: Silkscreen clipped by board edge
     Rule: board setup constraints silk; Severity: warning
-    @(78.0000 mm, 107.0000 mm): Line on Edge.Cuts
-    @(67.4000 mm, 107.4000 mm): Reference 'J14'
-[silk_edge_clearance]: Silkscreen clipped by board edge
-    Rule: board setup constraints silk; Severity: warning
-    @(78.0000 mm, 0.0000 mm): Line on Edge.Cuts
-    @(78.4000 mm, 55.0000 mm): Reference 'PS4'
+    @(78.0000 mm, 3.0000 mm): Line on Edge.Cuts
+    @(78.4000 mm, 58.0000 mm): Reference 'PS4'
 
 ** Found 0 unconnected pads **
 

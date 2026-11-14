@@ -60,8 +60,12 @@
 #define PINS_RX  {9, 11, 12, 13, 14, 15, 21, 44}
 #define PINS_TX  {9, 11, 12, 13, 14, 15, 21, 44}
 #define PINS_PORT_EN {16, 17, 18, 10}   // carrier: high = isolated supply of port 1..4 on (-1 = none)
+// Carrier rev 0.4: two solid-state relays per port choose which jack pin sends.
+// Low (also the carrier's pull-down and a port without supply) = pin 3 sends and
+// pin 6 receives, for a rollover cable; high = crossed, for a straight patch cable.
+#define PINS_PORT_SWAP {2, 4, 6, 7}     // -1 = none
 #define PINS_ADC {5}              // battery voltage divider of the LiPo connector
-#define PIN_NAMES "44:RXD,5:BAT,21:TX1,15:RX2,13:TX2,11:RX3,12:TX3,14:RX4,9:TX4,16:EN1,17:EN2,18:EN3,10:EN4"
+#define PIN_NAMES "44:RXD,5:BAT,21:TX1,15:RX2,13:TX2,11:RX3,12:TX3,14:RX4,9:TX4,16:EN1,17:EN2,18:EN3,10:EN4,2:X1,4:X2,6:X3,7:X4"
 #define PIN_PREFIX "IO"
 
 #define BAT_PIN_DEFAULT   5       // BAT_ADC: divider on the board, measured against a LiPo (WAVESHARE.md)

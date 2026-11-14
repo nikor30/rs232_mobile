@@ -14,6 +14,10 @@ namespace Bridge {
 // Isolated supply of a port on the carrier board (PINS_PORT_EN). begin() switches
 // the enabled ports on; powerOff() switches all of them off before deep sleep.
 void portPower(uint8_t p, bool on);
+// Line cross-over of a port on the carrier board rev 0.4 (PINS_PORT_SWAP): off =
+// pin 3 sends, pin 6 receives (rollover cable), on = crossed (straight patch cable).
+void portCross(uint8_t p, bool on);
+bool crossOk(uint8_t p);                    // the board has a cross-over switch for this port
 void allPortsOff();
   void loop();
   bool busy();                                // bytes waiting to be bit-banged (skip loop delay)

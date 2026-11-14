@@ -5,17 +5,17 @@
       "Application": "Pcbnew",
       "Version": "7.0.11+dfsg-1build4"
     },
-    "CreationDate": "2026-10-27T19:29:38+00:00"
+    "CreationDate": "2026-11-14T20:57:22+00:00"
   },
   "GeneralSpecs": {
     "ProjectId": {
       "Name": "rs232_carrier",
       "GUID": "72733233-325f-4636-9172-726965722e6b",
-      "Revision": "0.1"
+      "Revision": "0.4"
     },
     "Size": {
       "X": 78.1,
-      "Y": 107.1
+      "Y": 110.1
     },
     "LayerNumber": 2,
     "BoardThickness": 1.6,
@@ -28,8 +28,8 @@
       "PadToTrack": 0.2,
       "TrackToTrack": 0.2,
       "MinLineWidth": 0.25,
-      "TrackToRegion": 0.25,
-      "RegionToRegion": 0.25
+      "TrackToRegion": 0.2,
+      "RegionToRegion": 0.2
     }
   ],
   "FilesAttributes": [

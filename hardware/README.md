@@ -1,195 +1,244 @@
 # Hardware: Trägerplatine mit vier galvanisch getrennten RS232-Ports und Gehäuse
 
-Stand 27. Oktober 2026, Revision 0.3 (Modul mittig, Gehäuse aus Körper und Boden) — **entworfen und per KiCad-DRC geprüft, noch nicht gebaut.**
-Vor der Bestellung die Liste unter „Vor der Bestellung prüfen“ abarbeiten.
+Stand 14. November 2026, **Revision 0.4** (Neuanfang auf Grundlage des 3D-Modells des Herstellers).
+Entworfen, geroutet, KiCad-DRC ohne elektrische Fehler, Gehäuse rechnerisch gegen das Herstellermodell
+geprüft — **nicht gebaut, nicht gedruckt.** Vor der Bestellung die Liste „Vor der Bestellung prüfen“ abarbeiten.
 
-## Was es ist
+> **Revision 0.3.1 und älter nicht bauen.** Dort waren die beiden Buchsenleisten für das Modul spiegelverkehrt
+> belegt: Die Pinbelegung stammte aus einem Foto der Modulrückseite und wurde wie eine Ansicht von oben
+> eingetragen. Jedes Signal lag am falschen Pin, VBAT und Masse eingeschlossen. Revision 0.4 nimmt die Lage
+> der Stifte aus dem 3D-Modell des Herstellers, und `generate.py` prüft sie bei jedem Lauf dagegen (`HEADER`).
 
-Eine Trägerplatine (78 × 107 mm, zweilagig), auf die das **Waveshare ESP32-S3-Touch-LCD-2** mit seinen
-beiden 14-poligen Stiftleisten gesteckt wird. Das Modul bringt Display, Touch, Lagesensor (QMI8658),
-SD-Slot, LiPo-Lader und USB-C mit; die Trägerplatine ergänzt:
+## Was neu ist in Revision 0.4
 
-- **vier RS232-Ports auf RJ45** (Cisco-Konsolenbelegung: Pin 3 TX, Pin 6 RX, Pin 4/5 GND), jeder Port
-  galvanisch getrennt — zwei Optokoppler **TLP2361** (10 MBd, einer je Richtung), ein **MAX3232E** und ein
-  eigener isolierter 1-W-Wandler **B0505S-1WR3** (1,5 kV). Die vier Inseln sind auch voneinander getrennt.
-- **Versorgung der Ports aus dem Akku**: VBAT → Aufwärtswandler MT3608 (5,1 V) → je Port ein High-Side-Schalter
-  (2N7002 + AO3401), den die Firmware über GPIO16/17/18/10 schaltet. Ein abgeschalteter Port zieht nichts;
-  ein eingeschalteter Port kostet rund 30–40 mA am Akku (Wandler im Leerlauf + MAX3232 + LED).
-- **Lötbrücken** je Port, um TX/RX an der Buchse zu tauschen (JPx01/JPx02), und je Port eine Lötbrücke,
-  ob der Port ohne Firmware-Unterstützung dauerhaft versorgt wird (JP11–JP14, Brücke 2-3 = immer an).
-- Akku liegt **unter** der Trägerplatine im Gehäuse hinter einer Klappe und steckt an einer JST-PH-Buchse (J4) auf der
-  Unterseite der Trägerplatine; BAT+ erreicht das Modul über Pin 14 (VBAT) der Stiftleiste. Falls dieser Pin nicht der
-  Zellenanschluss ist (prüfen!), bleibt der Schlitz für ein Kabel zum MX1.25-Anschluss des Moduls.
-- Stecker J3: 3V3, GND, I²C (GPIO47/48) und GPIO2/4/6 für spätere Erweiterungen.
+- **Modul exakt vermessen**: Alle Maße kommen aus dem STEP-Modell von Waveshare (Abschnitt „Das Modul“).
+- **Buchsenleisten richtig herum**, Pin 1 liegt 7,60 mm vom antennenseitigen Platinenrand (vorher 7,3 mm geschätzt).
+- **TX/RX per Software kreuzen**: Die Lötbrücken sind entfallen. Je Port schalten zwei Halbleiterrelais
+  (CPC2330N) die beiden Leitungen an der Buchse um; die Firmware steuert das über GPIO2/4/6/7.
+- **Prüfung der Schaltung, Korrekturen**: isolierter Wandler mit 3,3 V statt 5 V Ausgang (der B0505S liefert
+  im Leerlauf über 5,5 V, mehr als der MAX3232 verträgt), Ladungspumpen-Kondensatoren 470 nF, Teiler des
+  Aufwärtswandlers 270k/36k, BSS138 statt 2N7002 (schaltet mit 3,3 V sicher), TVS-Dioden an jeder Buchse,
+  Verpolschutz am Akkuanschluss, zweiter Akkustecker (MX1.25 wie am Modul).
+- **Gehäuse neu in echtem CAD** (CadQuery/OpenCascade, STEP und STL): Das Displayglas liegt in einer Tasche
+  der Oberseite auf einer umlaufenden Auflage und schließt bündig ab; der Boden rastet mit fünf Federarmen;
+  um die USB-C-Buchse liegt eine flache Mulde mit **zwei Tasten für RST und BOOT**. Das alte OpenSCAD-Gehäuse
+  ist entfernt (es war zusätzlich seitenverkehrt).
 
-Der Lagesensor für die automatische Drehung sitzt auf dem Modul; auf der Trägerplatine ist dafür nichts nötig.
+## Das Modul
 
-### Externe Antenne
+Waveshare ESP32-S3-Touch-LCD-2. Der Hersteller stellt ein vollständiges 3D-Modell bereit
+(`esp32-s3-touch-lcd-2_20241108.stp`, STEP AP203 aus Creo, 314 Körper, von CATIA V5 und 3DEXPERIENCE direkt
+lesbar), dazu Maßzeichnung und Schaltplan. Die Dateien liegen **nicht im Repository** (Herkunft und Lizenz
+beim Hersteller); `vendor/README.md` nennt die Adressen. `enclosure/case.py` prüft das Gehäuse gegen dieses
+Modell, wenn es in `hardware/vendor/` liegt.
 
-Das Modul hat eine Keramikantenne; das Bauteilfoto von Waveshare zeigt keine IPEX-Buchse, die
-Schwesterboards haben eine mit 0-Ω-Umschaltwiderstand — am Modul nachsehen. Das Gehäuse hat links eine Bohrung (6,5 mm) für eine
-RP-SMA-Einbaubuchse; ein U.FL/IPEX-Pigtail von dort zum Modul. **Am Modul nachsehen**, ob eine IPEX-Buchse
-bestückt ist; wenn nicht, bleibt nur die Keramikantenne (das Gehäuse setzt sie an die linke, metallfreie Seite,
-rund 50 mm von den RJ45-Buchsen entfernt).
+Koordinaten des Herstellermodells: x quer, y längs (USB-C bei −y, Antenne bei +y), z nach oben zur
+Displayseite; Glasoberseite z = +3,60, Platine z = −3,60 … −2,00.
+
+| Maß | Wert (mm) |
+|---|---|
+| Deckglas | 37,10 × 58,80 × 1,10, Ecken R 2,60 |
+| Platine | 35,02 × 48,22 × 1,60 |
+| Glasüberstand über die Platine | 5,08 an der USB-C-Seite, 5,50 an der Antennenseite, 1,04 je Längsseite |
+| Stapel | Glas 1,10, Touchfolie 0,40, LCD 2,10, Acrylplatte 2,00, Platine 1,60 |
+| Glasoberseite bis Platinenunterseite | 7,20 |
+| Glasoberseite bis Unterkante der Stiftleistenkörper | 9,70 |
+| Glasoberseite bis Stiftspitzen | 15,50 |
+| Stiftleisten | 2 × 14 Stifte, Raster 2,54, Reihen 30,48 auseinander; Pin 1 und Pin 28 an der Antennenseite, 7,60 vom Platinenrand |
+| Abstandsbolzen M2 | vier, 29,00 × 42,20 |
+| Sichtfläche des Displays | 30,99 × 41,20 (240 × 320 Bildpunkte) |
+| USB-C-Buchse | Schale außen 8,94 × 3,16, Öffnung 8,34 × 2,56, Achse 1,67 unter der Platinenunterseite, Vorderkante 1,18 über dem Platinenrand und 3,90 hinter der Glaskante; ein Steckerblech taucht 4,78 ein |
+| Taster RST und BOOT | TS24CA, seitlich betätigt, Gehäuse 4,55 × 2,30 × 1,80; Stößel 2,00 × 1,00, 1,20 vor dem Tastergehäuse, Spitze 0,28 hinter dem Platinenrand, Achse 0,90 unter der Platinenunterseite; Stößel 18,92 auseinander (RST bei x = +9,47, BOOT bei x = −9,45) |
+
+Das Maßblatt `enclosure/out/waveshare_module_dimensions.pdf` zeigt alles in drei Ansichten. Alle Zahlen stehen
+in `carrier/generate.py` im Wörterbuch `WS`; Platine und Gehäuse lesen sie von dort.
+
+Aus dem Schaltplan des Herstellers: Stift 14 (VBAT) ist das Akkunetz des Laders, am MX1.25-Stecker ist Pin 1
+der Pluspol, der Stift „5V“ ist USB-VBUS. **Das Modul hat nur eine Keramikantenne und keine IPEX-Buchse**;
+eine externe Antenne ginge nur mit Umbau am Modul. Das Gehäuse hat deshalb keine SMA-Bohrung mehr.
 
 ## Verzeichnis
 
 | Pfad | Inhalt |
 |---|---|
-| `carrier/generate.py` | **Die Quelle.** Erzeugt Schaltplan, Platine, Projekt, DRC-Regeln, `bom.csv` und `preview.png`. Alle Maße stehen hier (`VERIFY`, Platzierungen). |
-| `carrier/kigen.py` | Schreiber für KiCad-7-Dateien (Symbole, Footprints, eingebettet — keine Bibliothek nötig) |
-| `carrier/route.py` | Eigener Gitter-Autorouter (zwei Lagen, Vias, netzklassen-abhängige Abstände, Rip-up) |
-| `carrier/drc.py` | Zonen füllen, KiCad-DRC, Fertigungsdaten exportieren (`kicad/fab/`) |
-| `carrier/kicad/` | KiCad-7-Projekt: `rs232_carrier.kicad_pro/.kicad_sch/.kicad_pcb`, `channel.kicad_sch` (ein Port, viermal eingebunden), `.kicad_dru` |
-| `carrier/kicad/fab/` | **Gerber + Bohrdaten als ZIP für PCBWay**, Bestückungsdaten (`-pos.csv`), Schaltplan-PDF, Platinen-PDF, DRC-Bericht |
-| `carrier/bom.csv` | Stückliste mit Vorschlägen für Bauteile |
-| `carrier/render3d.py` | Bestückte Platine als 3D-Ansicht von oben und unten (`kicad/fab/rs232_carrier-3d-*.png`), aus den Footprint-Maßen, ohne Herstellermodelle |
-| `enclosure/generate_enclosure.py` | Erzeugt `rs232_console_case.scad` aus denselben Maßen und rendert die STL-Dateien |
-| `enclosure/body.stl`, `base.stl` | Körper und Bodenplatte zum Drucken; `preview_*.png` zur Ansicht |
+| `carrier/generate.py` | **Die Quelle.** Maße des Moduls (`WS`), Schaltplan, Platine, DRC-Regeln, `bom.csv`, `preview.png` |
+| `carrier/kigen.py` | Schreiber für KiCad-7-Dateien (Symbole und Footprints eingebettet, auch für die Unterseite) |
+| `carrier/route.py` | Eigener Gitter-Autorouter (zwei Lagen, Vias, Bauteile auf beiden Seiten, Masseflächen) |
+| `carrier/drc.py` | Zonen füllen, KiCad-DRC, Fertigungsdaten nach `kicad/fab/` |
+| `carrier/check_pours.py` | Prüft unabhängig vom DRC, dass jede Massefläche zusammenhängt, und nennt den Ort einer abgetrennten Insel |
+| `carrier/kicad/` | KiCad-7-Projekt; `channel.kicad_sch` ist ein Port und viermal eingebunden |
+| `carrier/kicad/fab/` | **Gerber und Bohrdaten als ZIP**, Bestückungsdaten, Schaltplan- und Platinen-PDF, DRC-Bericht |
+| `enclosure/case.py` | Gehäuse: Körper, Boden, Taste; STEP, STL, Prüfungen. Braucht CadQuery |
+| `enclosure/render.py` | Bilder (POV-Ray) und die Schnittzeichnung `out/detail_sections.png` |
+| `enclosure/module_sheet.py` | Maßblatt des Moduls |
+| `enclosure/out/` | `body.step/.stl`, `base.step/.stl`, `key.step/.stl`, `rs232_console_assembly.step`, Bilder |
+| `vendor/` | Hinweis, woher das Herstellermodell kommt (die Dateien selbst nicht) |
 
-Neu erzeugen (KiCad 7 und OpenSCAD müssen installiert sein):
+Neu erzeugen (KiCad 7, POV-Ray und `pip install cadquery`):
 
 ```bash
-cd hardware/carrier && python3 generate.py && python3 route.py && python3 drc.py
-cd ../enclosure && python3 generate_enclosure.py
+cd hardware/carrier && python3 generate.py && python3 route.py && python3 drc.py && python3 check_pours.py
+cd ../enclosure && python3 case.py && python3 render.py && python3 module_sheet.py
 ```
 
-`generate.py` ist deterministisch (feste UUIDs); Änderungen an Maßen oder Bauteilen dort eintragen, nicht in
-den KiCad-Dateien — die werden überschrieben. Wer lieber in KiCad weiterarbeitet, nimmt die erzeugten Dateien
-als Ausgangspunkt und lässt den Generator danach in Ruhe.
+`generate.py` ist deterministisch. Änderungen gehören dorthin, nicht in die KiCad-Dateien. Immer in dieser
+Reihenfolge laufen lassen und nie zwei Läufe zugleich: `route.py` hängt seine Bahnen an die Platinendatei an.
+
+Der Router ist seit diesem Stand wiederholbar (gleiche Eingabe, gleiches Ergebnis). Drei Masseanschlüsse
+bekommen keine eigene Bahn und hängen nur an der Massefläche (`route.py` meldet „left to the pour“). Ob die
+Fläche sie wirklich erreicht, entscheidet erst die Füllung in KiCad; `drc.py` und `check_pours.py` prüfen das.
+Meldet eines der beiden nach einer Änderung an der Platzierung eine offene Verbindung, hilft ein anderer
+Startwert: `ROUTE_SEED=2 python3 route.py`.
 
 ## Pinbelegung am Modul
 
-| Port | RX (ESP-Eingang) | TX (ESP-Ausgang) | Versorgung an |
-|---|---|---|---|
-| 1 | GPIO44 | GPIO21 | GPIO16 |
-| 2 | GPIO15 | GPIO13 | GPIO17 |
-| 3 | GPIO11 | GPIO12 | GPIO18 |
-| 4 | GPIO14 | GPIO9 | GPIO10 |
+| Port | RX (ESP-Eingang) | TX (ESP-Ausgang) | Versorgung an | Kreuzen |
+|---|---|---|---|---|
+| 1 | GPIO44 | GPIO21 | GPIO16 | GPIO2 |
+| 2 | GPIO15 | GPIO13 | GPIO17 | GPIO4 |
+| 3 | GPIO11 | GPIO12 | GPIO18 | GPIO6 |
+| 4 | GPIO14 | GPIO9 | GPIO10 | GPIO7 |
 
-Port 1 behält die bisherige Belegung (RX 44 / TX 21). GPIO43 (U0TXD) bleibt frei, weil das ROM beim Reset dort
-schreibt. Die TX-LED des Optokopplers liegt zwischen 3V3 und dem GPIO (Katode am GPIO): während des Resets ist
-der Pin hochohmig, die LED aus, die RS232-Leitung in Ruhe — **beim Reset erscheint nichts auf dem Sendepin.**
-Das Häkchen „RX/TX tauschen“ der Firmware darf mit dieser Platine nicht gesetzt werden (die Optokoppler haben
-eine feste Richtung; 100 Ω in der RX-Leitung begrenzen den Strom, falls es doch passiert).
-
-Firmware (geändert in diesem Stand, **nicht kompiliert und nicht am Gerät geprüft**):
-`config.h` (Pin-Freigabe, `PINS_PORT_EN`), `serial_bridge.cpp/.h` (`portPower()`, `allPortsOff()`),
-`lcd_ui.cpp` (Versorgungen vor dem Tiefschlaf aus und gehalten, nach dem Aufwachen freigegeben).
-Ein aktivierter Port bekommt beim Start seine Versorgung, deaktivierte Ports bleiben stromlos.
+GPIO2/4/6/7 gehören am Modul zum Kamerastecker und sind ohne Kamera frei. GPIO43 (U0TXD) bleibt frei, weil
+das ROM beim Reset dort schreibt; er liegt mit 3V3, Masse, I²C (GPIO47/48), GPIO8 und VBUS an Stecker J3.
+Das Häkchen „RX/TX am Pegelwandler tauschen“ der Firmware darf mit dieser Platine nicht gesetzt werden
+(die Optokoppler haben eine feste Richtung).
 
 ## Signalweg eines Ports
 
 ```
-ESP GPIO (TX) ─330Ω/LED─▶ TLP2361 ─▶ T1IN  MAX3232E  T1OUT ─JP01─▶ RJ45 Pin 3
-ESP GPIO (RX) ◀─100Ω──── TLP2361 ◀─ 74LVC1G17 ◀─ R1OUT   R1IN ◀─JP02─ RJ45 Pin 6
-                 3V3-Seite  ║ 1,5 kV ║  ISO5V-Seite (B0505S aus dem geschalteten 5 V)
+ESP TX ─330Ω/LED─▶ TLP2361 ─▶ T1IN  MAX3232E  T1OUT ─┐ zwei CPC2330N  ┌─▶ RJ45 Pin 3 ─ TVS
+ESP RX ◀─100Ω──── TLP2361 ◀─ 74LVC1G17 ◀─ R1OUT  R1IN ◀┘ (umschaltend) └── RJ45 Pin 6 ─ TVS
+           3V3-Seite ║ 1,5 kV ║ isolierte 3,3 V (B0503S-1WR3 aus dem geschalteten 5 V)
 ```
 
-Beide LEDs sind in Ruhe (UART-Mark) aus, also kein Ruhestrom durch die Koppler. Der Schmitt-Puffer treibt die
-RX-LED, weil der Empfängerausgang des MAX3232 dafür zu schwach ist.
+Beide Koppler-LEDs sind in Ruhe (UART-Mark) aus. Der Schmitt-Puffer treibt die RX-LED, weil der
+Empfängerausgang des MAX3232 dafür zu schwach ist.
 
-## Mechanik und Gestaltung
+### TX/RX per Software kreuzen
 
-Leitlinie (Rams, Ive): ein ruhiger Körper mit durchlaufenden Radien, symmetrische Flächen, außen nur, was
-täglich gebraucht wird, keine sichtbaren Schrauben, Fugen nur dort, wo man sie nicht sieht.
+Jedes CPC2330N enthält einen Schließer und einen Öffner. Zwei davon je Port bilden einen zweipoligen
+Umschalter für die Buchsenstifte 3 und 6. Die Relais sitzen auf der Unterseite über der Trenngrenze: ihre
+LEDs auf der ESP-Seite, die Kontakte auf der Insel (1500 V Isolation laut Datenblatt).
 
-- Modul **hochkant und mittig** auf der Trägerplatine, 11 mm darüber: USB-C in der Mitte der oberen Stirnseite,
-  die Nadellöcher für BOOT/RST symmetrisch daneben, die Antenne des Moduls zeigt zu den Ports. Links vom Modul
-  der Aufwärtswandler mit den Entkoppeldioden, rechts die vier Portschalter, darunter die vier Inseln und die
-  RJ45-Reihe — die Platine ist um ihre Mittellinie symmetrisch aufgeteilt.
-- **Das Displayglas ist die Oberseite** (bündig, 0,15 mm Spiel im Rahmen; der Rahmen ist zur USB-C-Seite
-  offen, die Stirnwand liegt unter dem Glasüberstand). Über den Buchsen sind die Ziffern 1–4 in die Oberseite
-  vertieft (0,4 mm) — die einzige Beschriftung.
-- **Zwei gedruckte Teile, keine Schraube** (`enclosure/`):
-  - `body.stl` — der ganze Körper: Oberseite mit Glasrahmen und alle vier Wände bis zur Unterkante, Ecken
-    R 5, Kanten R 1,2. Öffnungen: vier geschlossene Fenster für die RJ45 (die Buchsen sitzen 0,6 mm hinter
-    der Platinenkante, also ganz in der Wand), eine Mulde für USB-C, zwei Nadellöcher (1,5 mm), die
-    RP-SMA-Bohrung rechts oben an der Seitenwand. Innen vier Pfosten, die die Trägerplatine auf die Zapfen
-    des Bodens drücken, und eine Nut, in die die Haken des Bodens greifen.
-  - `base.stl` — Bodenplatte, **liegt innen in den Wänden**, 0,6 mm zurückgesetzt: die Fuge ist nur von unten
-    zu sehen. Sechs Rasthaken (10 × 1,6 × 6 mm, 0,8 mm Nase, 30° Einführ-, 45° Haltewinkel, Wurzelradius
-    0,8 mm) klicken in die Nut; zwei Kerben in der Unterkante nehmen einen Fingernagel oder Spatel zum Öffnen.
-    Acht Zapfen tragen die Trägerplatine (Schulter 5,5 mm, Stift 2,4 bzw. 1,9 mm durch die Bohrungen),
-    ein 1,5 mm hoher Rahmen hält den Akku (bis 60 × 70 × 6 mm) an seinem Platz, vier Vertiefungen für
-    8-mm-Gummifüße, Schriftzug vertieft. Boden abziehen = Akku wechseln (Stecker J4 auf der Unterseite der
-    Trägerplatine), ohne Werkzeug.
-- Einbau: Trägerplatine mit Modul von unten in den Körper schieben (die Buchsen fahren in ihre Fenster, das
-  Glas in den Rahmen), Boden mit Akku aufsetzen, bis die sechs Haken klicken.
-- Nicht nach außen geführt: der SD-Slot (sitzt beim mittigen Modul 22 mm von der Wand; die Karte bleibt
-  eingebaut, Zugriff über den USB-Stick-Modus oder nach Abnehmen des Bodens).
-- Außen **83 × 114 × 31 mm**. Drucken: Körper mit der Oberseite nach unten (Pfosten wachsen nach oben, der
-  Glasrahmen wird glatt), Boden flach (Haken wachsen nach oben); PETG oder ABS, nicht PLA. Farbe nach Rams:
-  helles Warmgrau oder Anthrazit, matt. Regeln aus den FDM-Leitfäden (Hubs, Formlabs, Core77): Spiel 0,3 mm,
-  Hakenlänge ≈ 4 × Dicke mit Wurzelradius, in Z gedruckte Haken dicker als flach gedruckte. **Erster Druck als
-  Probe**: Haken und Nut sind nicht gedruckt worden; Spiel ggf. in `generate_enclosure.py` (`clr`,
-  `hook_catch`) anpassen.
-- Isolationsabstand auf der Platine: 5 mm kupferfreies Band zwischen ESP-Seite und Inseln (DRC-Regel 3 mm),
-  1,8 mm zwischen den Inseln (DRC-Regel 1,5 mm). Unter den Zapfen/Pfosten ist das Kupfer ausgespart.
+- **Aus** (Pegel low, auch ohne Firmware und bei abgeschaltetem Port): Pin 3 sendet, Pin 6 empfängt. Das ist die
+  Belegung für das **blaue Rollover-Kabel** an Cisco-, HP- und Juniper-Konsolen.
+- **Ein**: gekreuzt, Pin 6 sendet, Pin 3 empfängt. Das ist die Belegung für ein **gerades Patchkabel**.
+
+Die LEDs hängen an der geschalteten Versorgung des Ports (je Relais zwei LEDs in Reihe über 470 Ω, rund
+5 mA, geschaltet von einem BSS138 mit 100 kΩ nach Masse). Ein Port ohne Versorgung ist deshalb immer
+ungekreuzt. In der Weboberfläche: Einstellungen des Ports, „TX/RX an der RJ45-Buchse kreuzen“.
+
+Firmware dazu (`config.h`: `PINS_PORT_SWAP`; `serial_bridge.cpp`: `portCross()`, `crossOk()`; Einstellung
+`cross` je Port, gespeichert, in `/api/status`, im Befehl `serial` und in den Einstellungen der Leitstelle):
+**nicht kompiliert und nicht am Gerät geprüft** (in der Arbeitsumgebung war die PlatformIO-Registry nicht
+erreichbar). `tools/i18n_check.py` läuft durch.
+
+## Versorgung
+
+VBAT (Stift 14) → Aufwärtswandler MT3608 auf 5,1 V → je Port ein High-Side-Schalter (BSS138 + AO3401A) →
+isolierter Wandler B0503S-1WR3. Standard ist „aus“ (Pull-down). Der Akku steckt auf der Unterseite an J4
+(JST-PH 2,0) oder J5 (MX1.25, wie am Modul); Q5 schützt vor Verpolung. Geladen wird über das Modul.
+
+## Gehäuse
+
+Außen **83,8 × 118,6 × 32,3 mm**. Vier gedruckte Teile, keine Schraube:
+
+- **`body`** — Oberseite und alle vier Wände. Das Glas liegt in einer 1,10 mm tiefen Tasche mit 0,25 mm Spiel
+  ringsum auf einer Auflage (0,74 mm an den Längsseiten, rund 5 mm an den Stirnseiten, zusammen 423 mm²) und
+  ist bündig mit der Oberseite. Der Druck beim Tippen geht ins Gehäuse, nicht in die Stiftleisten. Vier
+  Fenster für die RJ45-Buchsen, darüber die Ziffern 1 bis 4 vertieft.
+- **`base`** — Bodenplatte, liegt innen in den Wänden. Fünf Federarme (16 × 2 × 5 mm) biegen sich in der
+  Plattenebene und rasten mit 0,9 mm Nase in Taschen der Wände; 30° Einführschräge, 45° Haltefläche mit
+  0,2 mm Vorspannung. Rechnerisch 1,07 % Dehnung beim Einrasten (PETG verträgt rund 2 %), etwa 28 N zum
+  Eindrücken, etwa 49 N zum Abziehen. Zwei Kerben an den Längsseiten zum Aufhebeln. Vier Pfosten klemmen die
+  Trägerplatine gegen die Pfosten des Körpers, vier Winkel halten einen Akku bis 40 × 60 × 7 mm.
+- **`key`** — zweimal drucken. Tasten für RST und BOOT, siehe unten.
+
+### USB-C-Ende: Stecker und Tasten
+
+Um die Buchse liegt eine 1 mm tiefe Mulde mit 45°-Flanken (28 × 11,6 mm). Darin:
+
+- **Öffnung für den USB-C-Stecker**, 13,4 × 7,5 mm, auf der Achse der Buchse. Die Buchse sitzt wegen des
+  Glasüberstands 6,55 mm hinter der Außenfläche; ein Steckerblech ist nur 6,65 mm lang, also muss der
+  Kunststoffgriff des Steckers mit hinein. Ganz eingesteckt endet er 4,68 mm unter der Außenfläche. Die
+  USB-IF erlaubt Griffe bis 12,35 × 6,5 mm; es bleiben 0,53 mm je Seite und 0,50 mm oben und unten. Dickere
+  Stecker (manche gewebeummantelte Kabel) passen nicht.
+- **Zwei Tasten**, 3 × 6 mm, links und rechts der Buchse. Blick auf das USB-C-Ende, Display oben:
+  **links BOOT, rechts RST**. Jede Taste ist ein flacher Schieber, der in einem Tunnel unter der Deckplatte
+  läuft und mit einer Nase unter den Platinenrand bis vor den Stößel des Tasters reicht (0,15 mm Luft). Die
+  Kappe steht 0,8 mm über dem Muldenboden und bleibt 0,2 mm unter der Außenfläche, damit in der Tasche nichts
+  versehentlich drückt. Schultern am Schieber verhindern, dass er nach außen herausfällt; nach innen hält ihn
+  der Taster. Zurück federt der Taster selbst.
+
+Schnitte mit Maßen: `enclosure/out/detail_sections.png`.
+
+### Zusammenbau
+
+1. Beide Tasten von innen in ihre Tunnel schieben, Kappe voran, bis die Schultern an der Wand anliegen.
+2. Körper mit der Oberseite nach oben. Modul von oben einsetzen, bis das Glas auf der Auflage liegt. Die
+   Tasten dabei ganz außen lassen; rutscht eine nach innen, liegt der Taster auf ihrer Nase auf.
+3. Körper umdrehen (Glas auf eine weiche Unterlage), Trägerplatine auf die Stifte drücken. Die Buchsen fahren
+   in ihre Fenster.
+4. Akku anstecken, Boden eindrücken, bis die fünf Arme einrasten.
+
+Der SD-Slot ist nicht nach außen geführt (USB-Stick-Modus der Firmware oder Boden abnehmen).
+
+### Drucken
+
+PETG oder ABS, nicht PLA (die Federarme). Körper mit der Oberseite nach unten: Stützmaterial nur in der
+1,1 mm tiefen Glastasche. Fenster, Stecköffnung und Tastentunnel werden überbrückt (längste Brücke 16,5 mm). Boden flach, die Arme liegen dann in der Schichtebene. Tasten so, wie `key.stl`
+liegt (flach auf der Seite, 8,0 × 7,7 × 3,0 mm), ohne Stützen. **Der erste Druck ist eine Probe:** Spiel der
+Glastasche (`glass_clr`), Rastnase (`bump`) und Tastenspiel (`key_clr`, `key_gap`) stehen oben in `case.py`.
+
+### Was `case.py` prüft
+
+Boolesche Durchdringung, jeweils 0 mm³ gefordert: Körper gegen Modul (Hüllmodell und Herstellermodell),
+Körper und Boden gegen Trägerplatine, Modul beim Einsetzen von oben, Trägerplatine beim Herausziehen, Boden
+beim Eindrücken (nur die fünf Nasen dürfen berühren), Tasten in Ruhe und 0,6 mm gedrückt, Tasten beim
+Einschieben, Modul beim Einsetzen an den Tasten vorbei, USB-C-Stecker mit dem größten erlaubten Griff
+eingesteckt und auf dem Weg hinein. Dazu: Die Tastennase trifft den Stößel des Herstellermodells.
 
 ## Bestellen bei PCBWay
 
-Datei `carrier/kicad/fab/rs232_carrier-gerbers-pcbway.zip` hochladen. Einstellungen: 2 Lagen, 78 × 107 mm,
-FR-4 1,6 mm, 1 oz Kupfer, Lötstopplack beliebig, HASL bleifrei oder ENIG, kleinste Leiterbahn/Abstand
-0,25/0,2 mm (Mindestwerte der Platine: 0,25 mm Bahn, 0,2 mm Abstand, Via 0,7/0,3 mm). Keine besonderen
-Anforderungen. Für Bestückung durch PCBWay: `rs232_carrier-pos.csv` und `bom.csv` (Bauteile dort ergänzen).
+`carrier/kicad/fab/rs232_carrier-gerbers-pcbway.zip`. 2 Lagen, **78 × 110 mm**, Ecken R 3, FR-4 1,6 mm,
+1 oz Kupfer, HASL bleifrei oder ENIG, kleinste Bahn 0,25 mm, kleinster Abstand 0,2 mm, Via 0,7/0,3 mm.
+**Bestückung auf beiden Seiten** (unten: Relais, TVS-Dioden, vier Widerstände 0805, Akkustecker).
+Bestückungsdaten `rs232_carrier-pos.csv`, Stückliste `carrier/bom.csv`.
+
+Isolation: 5 mm kupferfreies Band zwischen ESP-Seite und Inseln (DRC-Regel 3 mm), 1,5 mm zwischen den
+Inseln. KiCad-DRC: 0 unverbundene Anschlüsse, 0 elektrische Fehler, 19 Silkscreen-Warnungen (kosmetisch).
+`check_pours.py`: alle fünf Masseflächen (GND und vier Inseln) hängen je in einem Stück zusammen.
 
 ## Vor der Bestellung prüfen
 
-Die Maße des Waveshare-Moduls stammen aus der offiziellen Maßzeichnung (Platine 35,00 × 48,20 mm, vier
-Bohrungen 29,00 × 42,20 mm im Abstand 3,00 mm von den Kanten, Glas 37,10 × 58,80 mm mit R2,60, Stapel
-9,70 mm gesamt bzw. 7,20 mm von der Glasoberseite bis zur Platinenunterseite, Stiftleisten 30,48 mm
-auseinander, USB-C mittig). Alles steht in `carrier/generate.py` unter `VERIFY`; nach einer Korrektur die
-drei Skripte neu laufen lassen.
+1. **CPC2330N**: Anschlussbelegung im Datenblatt gegen `channel.kicad_sch` prüfen (angenommen: 1/2 und 3/4
+   die beiden LEDs, 5/6 und 7/8 die beiden Kontakte; welcher Kontakt Schließer und welcher Öffner ist,
+   entscheidet, was „aus“ bedeutet). Ebenso den LED-Strom (ausgelegt rund 5 mA).
+2. **RJ45-Buchse**: `RJ45_Generic` ist ein Platzhalter. Buchse festlegen (etwa Amphenol 54602-908LF) und den
+   Footprint in `generate.py` an ihr Datenblatt anpassen. Die Vorderkante liegt bündig mit dem Platinenrand.
+3. **B0503S-1WR3** (nicht B0505S): Pins auf 0 / 2,54 / 10,16 / 12,7 mm, Pin 1 = −Vin.
+4. **TLP2361**: Pin 1 Anode, 3 Katode, 4 GND, 5 Ausgang, 6 Vcc.
+5. **MT3608**: 0,6 V · (1 + 270k/36k) = 5,1 V. Spule L1 mit mindestens 1 A Sättigungsstrom.
+6. **Akku**: Polung am Stecker mit dem Multimeter prüfen. Q5 schützt die Platine, nicht den Akku.
+7. **Buchsenleisten**: 8,5 mm hoch. Damit liegt die Platinenunterseite des Moduls 11,0 mm über der
+   Trägerplatine; das Gehäuse lässt 0,3 mm Luft, damit zuerst das Glas aufliegt.
+8. **Taster**: Der Hub des TS24CA war nicht aus einem Datenblatt zu bestätigen (üblich rund 0,25 mm); die
+   Taste hat 0,6 mm Weg. Am gedruckten Teil prüfen, dass RST und BOOT sicher schalten und nicht hängen.
+9. **USB-C**: Mit den eigenen Kabeln prüfen, ob der Griff in die Öffnung passt.
 
-1. **Lage von Pin 1** der Stiftleisten in Längsrichtung (7,3 mm vom USB-C-fernen Rand, aus der Zeichnung
-   abgeleitet, nicht bemaßt). Ein Fehler von mehr als 0,3 mm und das Modul passt nicht in die Buchsen —
-   vor dem Einlöten der Buchsenleisten mit dem Modul abgleichen.
-2. **Glasüberstand**: Das Glas (58,80 mm) ist 10,6 mm länger als die Platine (48,20 mm); angenommen ist je
-   5,3 mm Überstand an beiden kurzen Seiten und 1,05 mm an den langen. Die Zeichnung bemaßt den Überstand
-   nicht getrennt — am Modul nachmessen, sonst stimmt das Gehäusefenster nicht.
-3. **Stapelhöhe** 11 mm (Buchsenleiste 8,5 mm + Stiftleistenkörper 2,5 mm) und Glasoberkante 5,6 mm über
-   der Modulplatine (7,20 − 1,60 aus der Seitenansicht). Bestimmt, ob das Glas bündig mit dem Körper
-   abschließt; mit 1-mm-Unterlegscheiben unter den Buchsenleisten lässt sich das ausgleichen.
-4. **RJ45-Buchse**: Der Footprint `RJ45_Generic` ist ein Platzhalter (Pins 1,27 mm Raster, zwei Reihen 2,54 mm,
-   Zapfen 3,25 mm im Abstand 11,43 mm). Vor der Bestellung die Buchse festlegen (z. B. Amphenol 54602-908LF
-   oder RJHSE-5380) und den Footprint in `generate.py` an deren Datenblatt anpassen — oder in KiCad den
-   Bibliotheks-Footprint zuweisen. Pin 1 ist links, wenn man von vorn in die Buchse sieht, die Rastnase unten.
-5. **B0505S-1WR3**: Pins auf 0 / 2,54 / 10,16 / 12,7 mm, Pin 1 = −Vin. Im Datenblatt gegenprüfen.
-6. **TLP2361**: Pin 1 Anode, 3 Katode, 4 GND, 5 Ausgang, 6 Vcc (Pin 2 fehlt). Ebenso für ACPL-M61L.
-   LED-Vorwiderstände (330 Ω / 680 Ω ≈ 5 mA) an den gewählten Typ anpassen.
-7. **MT3608**: Vout = 0,6 V · (1 + 75k/10k) = 5,1 V — innerhalb der 4,5–5,5 V des B0505S.
-8. **Spule** L1: Footprint ist ein generisches 5 × 5 mm mit zwei Pads; Bauteil mit ≥ 1 A Sättigungsstrom.
-9. **Antenne**: IPEX-Buchse am Modul vorhanden? Sonst SMA-Bohrung verschließen.
-10. **VBAT an Pin 14 der Stiftleiste**: Mit dem Multimeter prüfen, dass der Pin direkt mit BAT+ des MX1.25-Anschlusses
-    verbunden ist (0 Ω). Nur dann lädt und versorgt der Akku an J4 das Modul über die Stiftleiste. Sonst ein kurzes
-    Kabel von J4 durch den Schlitz zum MX1.25-Anschluss ziehen und J4 nicht bestücken.
-11. **USB-C-Überstand** des Moduls (angenommen 1,9 mm über die Platinenkante) — bestimmt den Abstand der
-    Stirnwand zur Modulkante.
-
-Was sonst noch offen ist: Die Firmwareänderung ist ungetestet (kein PlatformIO in der Sandbox); die
-Optokoppler-Schaltung ist nach Datenblattwerten ausgelegt, nicht gemessen; der Autorouter hat keine
-Längen- oder Impedanzregeln (bei 115 200 Baud belanglos). Die Silkscreen-Warnungen des DRC (Texte
-überlappen Bauteilumrisse) sind kosmetisch.
+Nicht gemessen: die Optokoppler-Schaltung (nach Datenblattwerten ausgelegt). Der Autorouter kennt keine
+Längenregeln (bei 115 200 Baud belanglos). Maße der USB-C-Stecker nach dem Compliance-Dokument der USB-IF.
 
 ## Entscheidungen
 
-- **Trägerplatine statt eigener Hauptplatine**: Die Firmware ist auf dieses Modul (Display, Touch, SD,
-  Lagesensor, Lader) eingerichtet; ein Nachbau dieser Funktionen auf einer eigenen Platine wäre ein
-  Vielfaches an Aufwand ohne Nutzen. Nachteil: die Antenne bleibt die des Moduls.
-- **RJ45 statt DB9**: Vier DB9 wären 130 mm breit. Mit der Cisco-Belegung passt das vorhandene blaue
-  Rollover-Kabel direkt an Cisco/HP/Juniper-Konsolen; an DB9-Geräte kommt man mit dem üblichen
-  RJ45-DB9-Adapter des Kabelsatzes. Wer eine andere Belegung braucht, lötet JPx01/JPx02 um.
-- **Optokoppler statt digitaler Isolatoren** (Wunsch): TLP2361 ist mit 10 MBd und 2,7–5,5 V Versorgung
-  für beide Seiten geeignet; ein ADuM1201 wäre kleiner und ohne LED-Strom, aber eine andere Schaltung.
-- **Ein Wandler je Port** statt einem gemeinsamen: nur so sind die Ports auch untereinander getrennt
-  (zwei Geräte mit verschiedenem Erdpotential gleichzeitig).
-- **Schaltbare Versorgung**: Die vier Wandler zögen sonst dauerhaft 30–60 mA; am 1000-mAh-Akku wären das
-  Stunden. Standard ist „aus“ (Pull-down), die Firmware schaltet ein.
-- **Abstände**: 19 mm Portraster, weil 17,5/18 mm für Ladungspumpen-Kondensatoren, MAX3232 und Wandler in
-  einer Spalte nicht reichten — die Platine wurde dafür von 72 auf 78 mm breiter; mit dem hochkant stehenden
-  Modul (Wunsch: USB-C an der Stirnseite, Glas als Oberseite) 107 mm lang.
-- **Zusammenstecken statt Schrauben** (Wunsch): Körper und innenliegender Boden mit sechs lösbaren Haken; die
-  Trägerplatine ist zwischen Zapfen und Pfosten geklemmt. Boden ab = Akku zugänglich (J4 auf der Platinenunterseite).
-- **Modul mittig** (Wunsch): Versorgung links und rechts aufgeteilt; dafür ist der SD-Slot nicht mehr von außen
-  erreichbar — die Karte bleibt eingebaut.
+- **Trägerplatine statt eigener Hauptplatine**: Die Firmware ist auf dieses Modul eingerichtet.
+- **RJ45 statt DB9**: Vier DB9 wären 130 mm breit; mit Rollover-Kabel passt es direkt an Netzwerkgeräte.
+- **Optokoppler statt digitaler Isolatoren** (Wunsch), ein Wandler je Port, damit die Ports auch
+  untereinander getrennt sind.
+- **Halbleiterrelais zum Kreuzen** statt Lötbrücken (Wunsch): Ein Analogschalter auf der Insel hätte eine
+  weitere Leitung über die Trenngrenze gebraucht und verträgt keine ±15 V; die Relais trennen selbst.
+- **Modul von oben eingesetzt**: Nur so kann das Glas auf einer Auflage liegen und bündig sein.
+- **Tasten als lose Schieber** statt Federzungen in der Wand: Eine Zunge müsste beim Druck des Körpers frei
+  in der Luft beginnen oder quer zu den Schichten biegen.
+- **Kappen unter der Außenfläche**: RST und BOOT sollen in der Werkzeugtasche nicht auslösen.

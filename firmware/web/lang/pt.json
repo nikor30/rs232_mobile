@@ -26,6 +26,8 @@
   "Stop bits": "Bits de parada",
   "Swap RX/TX at the TTL level converter": "Trocar RX/TX no conversor de nível TTL",
   "Only in case the labels TXD/RXD on the module mean the opposite of how it is wired (the loopback test shows it). This swaps the two lines": "Apenas para o caso de as marcações TXD/RXD do módulo significarem o contrário da ligação feita (o teste de loopback mostra). Isto troca as duas linhas",
+  "Cross TX/RX at the RJ45 jack": "Cruzar TX/RX no conector RJ45",
+  "Off: the jack is wired for a rollover cable (pin 3 sends, pin 6 receives). On: the two lines are crossed inside the device, for a straight patch cable. Needs the carrier board from revision 0.4.": "Desligado: o conector está ligado para um cabo rollover (o pino 3 transmite, o pino 6 recebe). Ligado: as duas linhas são cruzadas dentro do aparelho, para um cabo de rede direto. Requer a placa de suporte a partir da revisão 0.4.",
   "between the ESP32 and the level converter": "entre o ESP32 e o conversor de nível",
   "– nothing changes on the DB9 side. So a missing crossover in the cable (null modem) can": "– nada muda no lado do DB9. Portanto, a falta de cruzamento no cabo (null modem)",
   "not": "não",

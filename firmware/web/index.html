@@ -104,6 +104,8 @@
       </div>
       <label class="check"><input id="sSwap" type="checkbox"> Swap RX/TX at the TTL level converter</label>
       <p class="hint">Only in case the labels TXD/RXD on the module mean the opposite of how it is wired (the loopback test shows it). This swaps the two lines <b>between the ESP32 and the level converter</b> – nothing changes on the DB9 side. So a missing crossover in the cable (null modem) can <b>not</b> be made up for with it; that takes a crossed adapter.</p>
+      <label class="check" id="sCrossWrap"><input id="sCross" type="checkbox"> Cross TX/RX at the RJ45 jack</label>
+      <p class="hint" id="sCrossHint">Off: the jack is wired for a rollover cable (pin 3 sends, pin 6 receives). On: the two lines are crossed inside the device, for a straight patch cable. Needs the carrier board from revision 0.4.</p>
       <label class="inline">Line ending when sending
         <select id="sEol"><option value="cr">CR (\r) – Cisco, Fortinet …</option><option value="crlf">CR+LF</option><option value="lf">LF</option></select>
       </label>

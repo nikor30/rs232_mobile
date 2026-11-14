@@ -254,6 +254,7 @@ static void abTry() {
   SerialCfg c;
   c.baud = AB_RATES[ab.idx];
   c.swap = ab.orig.swap;
+  c.cross = ab.orig.cross;
   openPort(ab.port, c);
   delay(5);
   discardInput(pt);
@@ -271,6 +272,7 @@ static void abFinish(bool found) {
     SerialCfg c;
     c.baud = AB_RATES[ab.idx];
     c.swap = ab.orig.swap;
+    c.cross = ab.orig.cross;
     settings.port[p].serial = c;
     Store::saveSerial(p);
     openPort(p, c);
@@ -346,8 +348,25 @@ void portPower(uint8_t p, bool on) {
   Serial.printf("[PORT] %u: Versorgung %s (IO%d)\n", p + 1, on ? "ein" : "aus", PORT_EN[p]);
 }
 
+static const int8_t PORT_SWAP[MAX_PORTS] = PINS_PORT_SWAP;
+
+bool crossOk(uint8_t p) { return p < MAX_PORTS && PORT_SWAP[p] >= 0; }
+
+// Carrier rev 0.4: the relay LEDs hang on the port's switched supply, so a port
+// that is off is always straight, whatever this pin says.
+void portCross(uint8_t p, bool on) {
+  if (!crossOk(p)) return;
+  pinMode(PORT_SWAP[p], OUTPUT);
+  digitalWrite(PORT_SWAP[p], on ? HIGH : LOW);
+  Serial.printf("[PORT] %u: Leitungen %s (IO%d)\n", p + 1, on ? "gekreuzt" : "gerade", PORT_SWAP[p]);
+}
+
 void allPortsOff() {
   for (uint8_t p = 0; p < MAX_PORTS; p++) {
+    if (PORT_SWAP[p] >= 0) {                // the carrier's pull-down keeps it low while asleep
+      pinMode(PORT_SWAP[p], OUTPUT);
+      digitalWrite(PORT_SWAP[p], LOW);
+    }
     if (PORT_EN[p] < 0) continue;
     pinMode(PORT_EN[p], OUTPUT);
     digitalWrite(PORT_EN[p], LOW);
@@ -361,6 +380,7 @@ void begin(DataSink onData, MsgSink onMsg) {
   for (uint8_t p = 0; p < MAX_PORTS; p++) {
     Port &pt = ports[p];
     portPower(p, settings.port[p].enabled);
+    portCross(p, settings.port[p].enabled && settings.port[p].serial.cross);
     if (!settings.port[p].enabled) continue;
     pt.hw = p < HW_PORTS;
     if (pt.hw) {
@@ -392,8 +412,11 @@ void apply(uint8_t p, const SerialCfg &cfg) {
     return;
   }
   flushPending(p);
+  bool crossed = settings.port[p].serial.cross;
   settings.port[p].serial = cfg;
+  if (!crossOk(p)) settings.port[p].serial.cross = false;
   Store::saveSerial(p);
+  if (settings.port[p].serial.cross != crossed) portCross(p, settings.port[p].serial.cross);
   openPort(p, cfg);
   msg(prefix(p) + TR("Serial: ", "Seriell: ", "Serial: ") + Store::serialLabel(cfg));
 }

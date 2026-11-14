@@ -608,6 +608,8 @@
     $('#sSwap').checked = !!s.swap;
     $('#sSwap').disabled = p.info.swapOk === false && !s.swap;
     $('#sSwap').parentElement.title = p.info.swapOk === false ? tr('This port\'s RX pin cannot send (input only)') : '';
+    $('#sCross').checked = !!s.cross;
+    $('#sCrossWrap').hidden = $('#sCrossHint').hidden = p.info.crossOk !== true;
     $('#sEol').value = store.get('eol', 'cr');
   }
   $('#sBaud').addEventListener('change', () => { $('#sBaudCustomWrap').hidden = $('#sBaud').value !== 'custom'; });
@@ -616,7 +618,7 @@
     if (!(baud >= 300 && baud <= 1000000)) { toast(tr('Invalid baud rate')); return; }
     const p = act();
     if (p.info && p.info.maxBaud && baud > p.info.maxBaud) { toast(tr('Software UART: {0} baud at most', [p.info.maxBaud])); return; }
-    if (sendCmd({ cmd: 'serial', port: p.id, baud, bits: +$('#sBits').value, parity: $('#sParity').value, stop: +$('#sStop').value, swap: $('#sSwap').checked })) closePanel();
+    if (sendCmd({ cmd: 'serial', port: p.id, baud, bits: +$('#sBits').value, parity: $('#sParity').value, stop: +$('#sStop').value, swap: $('#sSwap').checked, cross: $('#sCross').checked })) closePanel();
   });
   $('#sEol').addEventListener('change', () => store.set('eol', $('#sEol').value));
   $('#sAuto').addEventListener('click', () => { if (sendCmd({ cmd: 'autobaud', port: state.active })) closePanel(); });

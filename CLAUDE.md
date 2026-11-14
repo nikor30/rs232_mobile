@@ -17,23 +17,33 @@ Englisch ist die Quellsprache aller Oberflächen und immer die Vorgabe; dazu Deu
 - Neue Texte: in allen drei Sprachen anlegen; die Prüfskripte lassen sonst `ui.sh` scheitern bzw. melden es. Variablen mit Namen `t` verdecken in den Skripten die Übersetzungsfunktion (im Geräteskript heißt sie deshalb `tr`).
 - `src/web_assets.h` im Repository ist der englische Stand; ein Build für `-de`/`-pt` schreibt die Datei um — nicht mit committen.
 
-## Hardware: Trägerplatine und Gehäuse (seit 27. Oktober 2026)
+## Hardware: Trägerplatine und Gehäuse (Revision 0.4 seit 14. November 2026)
 
-`hardware/` enthält den Entwurf einer Trägerplatine für das Waveshare-Modul mit **vier galvanisch getrennten
-RS232-Ports** (TLP2361-Optokoppler, MAX3232E, je Port ein B0505S-Wandler mit schaltbarer Versorgung über
-GPIO16/17/18/10, RJ45 in Cisco-Belegung) und ein 3D-druckbares Gehäuse aus Körper und innenliegendem Boden,
-zusammengesteckt ohne Schrauben (83 × 114 × 31 mm, Modul hochkant und mittig mit USB-C an der Stirnseite,
-Displayglas als Oberseite, Akku unter der Platine, Boden ab = Akku wechseln, SMA-Bohrung für eine externe Antenne). Alles wird aus `hardware/carrier/generate.py` erzeugt
-(KiCad-7-Projekt, eigener Autorouter `route.py`, DRC und Fertigungsdaten über `drc.py`,
-Gehäuse über `hardware/enclosure/generate_enclosure.py`). Stand: entworfen, geroutet, KiCad-DRC ohne
-elektrische Fehler, **nicht gebaut**. Die Maße des Moduls sind aus Produktfotos gemessen — vor der Bestellung
-die Liste in `hardware/README.md` („Vor der Bestellung prüfen“) abarbeiten. Die Firmware hat dafür
-`PINS_PORT_EN` und `Bridge::portPower()` bekommen (ungetestet, siehe `hardware/README.md`).
+`hardware/` enthält eine Trägerplatine für das Waveshare-Modul mit **vier galvanisch getrennten RS232-Ports**
+(TLP2361-Optokoppler, MAX3232E, je Port ein isolierter Wandler B0503S mit schaltbarer Versorgung über
+GPIO16/17/18/10, RJ45) und ein 3D-druckbares Gehäuse (83,8 × 118,6 × 32,3 mm, ohne Schrauben). Stand:
+entworfen, geroutet, KiCad-DRC ohne elektrische Fehler, Gehäuse rechnerisch gegen das 3D-Modell des Herstellers
+geprüft — **nicht gebaut, nicht gedruckt**. Details und die Liste „Vor der Bestellung prüfen“: `hardware/README.md`.
+
+- **Revision 0.3.1 und älter nicht bauen:** Die Buchsenleisten des Moduls waren spiegelverkehrt belegt (Foto der
+  Rückseite wie eine Ansicht von oben gelesen). Seit 0.4 kommen alle Maße des Moduls aus dem STEP-Modell von
+  Waveshare (Wörterbuch `WS` in `hardware/carrier/generate.py`); `generate.py` prüft die Stiftlage dagegen.
+  Die Herstellerdateien liegen nicht im Repository (`hardware/vendor/README.md` nennt die Adressen).
+- **TX/RX per Software kreuzen** statt Lötbrücken: zwei Halbleiterrelais CPC2330N je Port, gesteuert über
+  GPIO2/4/6/7 (`PINS_PORT_SWAP`, `Bridge::portCross()`, Einstellung `cross` je Port, Schalter in der
+  Weboberfläche). Aus = Pin 3 sendet (Rollover-Kabel), ein = gekreuzt (gerades Patchkabel). **Die
+  Firmwareänderung ist nicht kompiliert und nicht am Gerät geprüft**, ebenso wie `PINS_PORT_EN`/`portPower()`.
+- **Gehäuse** in CadQuery (`hardware/enclosure/case.py`, STEP und STL in `enclosure/out/`): Körper, Boden mit
+  fünf Federarmen, zwei Tasten für RST und BOOT. Das Glas liegt bündig in einer Tasche der Oberseite auf einer
+  Auflage; das Modul wird von oben eingesetzt. `case.py` prüft Durchdringungen und Montagewege, auch den
+  USB-C-Stecker und die Tasten. Das Modul hat nur eine Keramikantenne, keine IPEX-Buchse.
+- Erzeugen: `generate.py` → `route.py` → `drc.py` in `hardware/carrier/`, dann `case.py`, `render.py`,
+  `module_sheet.py` in `hardware/enclosure/` (KiCad 7, POV-Ray, `pip install cadquery`).
 
 ## Aufbau
 
 - `firmware/` — PlatformIO-Projekt (`src/`, `web/`, `tools/`)
-- `hardware/` — Trägerplatine (KiCad 7, generiert) und Gehäuse (OpenSCAD/STL), siehe `hardware/README.md`
+- `hardware/` — Trägerplatine (KiCad 7, generiert) und Gehäuse (CadQuery, STEP/STL), siehe `hardware/README.md`
 - `tests/` — Host-Unittests (g++, laufen auf dem PC), Anleitung in `tests/README.md`; `tests/c2/run.sh` prüft den Protokollcode der Firmware gegen den Server
 - `server/` — Leitstelle (Command-and-Control-Server) in Go, läuft im Docker-Container. Konzept, Protokoll und Phasen: `server/KONZEPT.md`; Start und Admin-API: `server/README.md`. Test: `server/test/e2e.sh` (Go ist nicht installiert, gebaut wird im Container; erster Bau auf dem Pi rund 10 Minuten)
 - Doku: `firmware/WAVESHARE.md` (das Board, meistgebraucht), `firmware/README.md` (Weboberfläche, Netz, 802.1X/HTTPS, Diagnose)
