@@ -61,6 +61,7 @@ global_settings { assumed_gamma 1.0 max_trace_level 8
 #ifndef (AR) #declare AR = 4/3; #end         // width / height of the picture
 #ifndef (Lcd) #declare Lcd = 1; #end         // 1 home page, 2 sheet with the baud ruler, 3 sheet with the QR code
 #ifndef (Zf) #declare Zf = __ZFLOOR__; #end  // height of the floor
+#ifndef (Empty) #declare Empty = 0; #end     // 1: the floor alone, the picture a light-sweep render is divided by
 #ifndef (SBa) #declare SBa = 62; #end        // soft box: what it covers on the glass, across and along the view (mm)
 #ifndef (SBl) #declare SBl = 84; #end
 #ifndef (SBo) #declare SBo = 0; #end         // shifted along the view (mm on the glass)
@@ -72,7 +73,7 @@ sphere { <40, 55, 0>, 2500 hollow no_image no_shadow no_reflection
   texture { pigment { gradient z color_map { [0.0 rgb <0.05, 0.055, 0.07>] [0.3 rgb <0.10, 0.11, 0.14>] [1.0 rgb <0.30, 0.32, 0.38>] } scale 2500 } finish { emission 1.0 ambient 0 diffuse 0 } } }
 #if (Floor = 2)   // far away and large: the same light everywhere on the floor, shadows still soft
 light_source { <40, 55, 0> + <-300, 325, 420> * 8 color rgb <1.0, 0.99, 0.97> * 1.0 area_light <1100, 0, 0>, <0, 1100, 0>, 9, 9 adaptive 1 jitter circular orient }
-light_source { <40, 55, 0> + <280, -135, 260> * 8 color rgb <0.9, 0.94, 1.0> * 0.35 area_light <640, 0, 0>, <0, 640, 0>, 5, 5 adaptive 1 jitter circular orient shadowless }
+light_source { <40, 55, 0> + <280, -135, 260> * 8 color rgb <0.9, 0.94, 1.0> * 0.4 area_light <1100, 0, 0>, <0, 1100, 0>, 9, 9 adaptive 1 jitter circular orient }
 #else
 light_source { <-260, 380, 420> color rgb <1.0, 0.98, 0.95> * 1.15 area_light <120, 0, 0>, <0, 120, 0>, 9, 9 adaptive 1 jitter circular orient }
 light_source { <320, -80, 260> color rgb <0.85, 0.9, 1.0> * 0.5 area_light <80, 0, 0>, <0, 80, 0>, 5, 5 adaptive 1 jitter circular orient shadowless }
@@ -153,7 +154,7 @@ __REST_DECL__
 plane { z, Zf pigment { rgb 0 } finish { diffuse 0 ambient 0 specular 0 reflection { 0.02, 0.45 fresnel on } } interior { ior 1.5 } }
 #end
 #if (Floor = 2)
-plane { z, Zf pigment { rgb <0.80, 0.80, 0.81> } finish { diffuse 0.9 ambient 0 } }
+plane { z, Zf pigment { rgb <0.96, 0.96, 0.97> } finish { diffuse 0.95 ambient 0 } }   // brighter than the case, so the case stands out
 #end
 #declare Feet = union {
 __FEET__
@@ -185,6 +186,11 @@ __FEET__
       <JX + Side * 46, JY - 104, Zf + 2.7>, 2.7, <JX + Side * 120, JY - 116, Zf + 2.7>, 2.7, <JX + Side * 280, JY - 108, Zf + 2.7>, 2.7
       tolerance 0.05 texture { T_patch } }
   }
+#end
+#if (Empty)
+  #declare Nothing = sphere { <0, 0, -100000>, 0.001 }
+  #declare Body = Nothing; #declare Base = Nothing; #declare Module = Nothing; #declare Carrier = Nothing;
+  #declare Keys = Nothing; #declare Feet = Nothing; #declare Plug = Nothing; #declare UsbCable = Nothing;
 #end
 #switch (View)
 #case (21)  // studio: the whole device, USB-C end towards the viewer
@@ -221,7 +227,7 @@ __FEET__
 #case (27)  // studio: at work - a patch cable in port 1, charging over USB-C
   Cam(176, -232, 124, 46, 36, -2, 33)
   object { Body } object { Base } object { Module } object { Carrier } object { Keys } object { Feet } object { Plug } object { UsbCable }
-  Patch(0, -1)
+  Patch(0, 1)
 #break
 #case (1)   // hero: USB-C end towards the viewer
   Cam(-85, 300, 150, 40, 62, 0, 30)
@@ -402,20 +408,26 @@ STUDIO_VIEWS = [
 LIGHT_BG = (245, 245, 247)       # the light slides of the presentation
 
 
-def flatten_backdrop(path):
-    """Light sweep: scale the picture so that the open floor comes out in exactly LIGHT_BG, and let the edges
-    run into that colour, so the picture has no visible border on a slide of the same colour."""
+def flatten_backdrop(path, flat):
+    """Light sweep: divide the picture by the picture of the empty floor, so that the open floor comes out in
+    exactly LIGHT_BG and only the shadows remain.  On a slide of that colour the picture then has no border."""
     import numpy as np
-    from PIL import Image
+    from PIL import Image, ImageFilter
     a = np.asarray(Image.open(path).convert("RGB")).astype(float)
+    b = np.asarray(Image.open(flat).convert("RGB").filter(ImageFilter.GaussianBlur(12))).astype(float)
+    a = np.minimum(a / np.maximum(b, 1.0) / 0.985, 1.0) * np.array(LIGHT_BG)     # nothing brighter than the backdrop
+    Image.fromarray(feather(a)).save(path)
+    os.remove(flat)
+
+
+def feather(a):
+    """Let the outer 7 % of a light picture run into LIGHT_BG: a shadow that reaches the edge then ends softly."""
+    import numpy as np
     h, w, _ = a.shape
-    corners = np.concatenate([a[:40, :40].reshape(-1, 3), a[:40, -40:].reshape(-1, 3)])      # the far floor
-    a = a * (np.array(LIGHT_BG) / np.median(corners, axis=0))
     yy, xx = np.mgrid[0:h, 0:w]
-    edge = np.minimum.reduce([xx, yy, w - 1 - xx, h - 1 - yy]) / (0.05 * w)
-    k = np.clip(edge, 0, 1)[..., None] ** 0.8
-    a = a * k + np.array(LIGHT_BG) * (1 - k)
-    Image.fromarray(np.clip(a, 0, 255).astype("uint8")).save(path)
+    t = np.clip(np.minimum.reduce([xx, yy, w - 1 - xx, h - 1 - yy]) / (0.07 * w), 0, 1)
+    k = (t * t * (3 - 2 * t))[..., None]
+    return np.clip(a * k + np.array(LIGHT_BG) * (1 - k), 0, 255).astype("uint8")
 
 
 def studio():
@@ -437,7 +449,9 @@ def studio():
         r = subprocess.run(args, cwd=OUT, capture_output=True, text=True)
         good = r.returncode == 0 and os.path.exists(out)
         if good and floor == 2:
-            flatten_backdrop(out)
+            flat = os.path.join(OUT, "_flat.png")
+            subprocess.run([a for a in args if not a.startswith("+O")] + [f"+O{flat}", "Declare=Empty=1"], cwd=OUT, capture_output=True, text=True)
+            flatten_backdrop(out, flat)
         ok &= good
         print("studio", name, "ok" if good else r.stderr[-900:])
     return 0 if ok else 1

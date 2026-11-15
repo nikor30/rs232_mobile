@@ -178,7 +178,9 @@ Um die Buchse liegt eine 1 mm tiefe Mulde mit 45°-Flanken (28 × 11,6 mm). Dari
   versehentlich drückt. Schultern am Schieber verhindern, dass er nach außen herausfällt; nach innen hält ihn
   der Taster. Zurück federt der Taster selbst.
 
-Schnitte mit Maßen: `enclosure/out/detail_sections.png`.
+Schnitte mit Maßen: `enclosure/out/detail_sections.png`. Studiobilder für Präsentationen (Boden mit Spiegelung
+oder heller Hintergrund, Kabel, die Seiten der Firmware auf dem Display): `python3 render.py --studio`,
+Ergebnis in `enclosure/out/studio_*.png`.
 
 ### Zusammenbau
 
