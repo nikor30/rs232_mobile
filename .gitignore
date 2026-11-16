@@ -13,5 +13,6 @@ hardware/vendor/*
 hardware/enclosure/out*/_*.stl
 hardware/enclosure/out*/*.inc
 hardware/enclosure/out*/scene.pov
+hardware/enclosure/out*/*.pov-state
 hardware/enclosure/out*/rs232_console_assembly_vendor_module.step
 hardware/enclosure/out*/carrier_envelope.step

@@ -84,9 +84,8 @@ JACK_BACK = min(j[2] for j in JACKS)
 # J3: six pads, wires soldered in
 J3 = sorted(PTH[1.0])
 
-# Where the module sits over the board: centred across, its standoffs at the antenna end over the
-# free strip between the resistor row (y = 22) and the jumper row (y = 27).
-STANDOFF_Y = 24.5
+# Where the module sits over the board: centred across.  Along the board the case generator places it,
+# so that the battery finds room behind the board, under the module's USB-C half.
 WS_XC = W / 2
 
 # Wiring: jumper wires, plugged onto the module's pins and soldered into J3.  A plug (Dupont housing)
@@ -94,13 +93,9 @@ WS_XC = W / 2
 PLUG_LEN, PLUG_W, WIRE_BEND = 14.0, 2.54, 3.0
 MODULE_PINS = {"3V3": 1, "GND": 2, "RX1 (GPIO44)": 4, "RX2 (GPIO15)": 7, "TX2 (GPIO13)": 8, "TX1 (GPIO21)": 22}   # header pin numbers
 
-# Battery: a small pouch cell that lies between the two pin rows, in a pocket of the cradle
-BATTERY = (20.0, 30.0, 3.0)        # width, length, thickness
-
-
-def ws_yc(ws):
-    """KiCad y of the module's origin (ws: the measurement table of carrier/generate.py)."""
-    return STANDOFF_Y - max(y for _, y in ws["standoffs"])
+# Battery: the owner's pouch cell, 1000 mAh.  It lies flat on the base behind the board (30 mm is wider than
+# the 27.9 mm between the plugs on the two pin rows, so it cannot lie between them).
+BATTERY = (40.0, 30.0, 7.8)        # across the case, along the case, thickness
 
 
 def boxes():

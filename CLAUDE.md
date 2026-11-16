@@ -17,13 +17,13 @@ Englisch ist die Quellsprache aller Oberflächen und immer die Vorgabe; dazu Deu
 - Neue Texte: in allen drei Sprachen anlegen; die Prüfskripte lassen sonst `ui.sh` scheitern bzw. melden es. Variablen mit Namen `t` verdecken in den Skripten die Übersetzungsfunktion (im Geräteskript heißt sie deshalb `tr`).
 - `src/web_assets.h` im Repository ist der englische Stand; ein Build für `-de`/`-pt` schreibt die Datei um — nicht mit committen.
 
-## Hardware: Trägerplatine und Gehäuse (Revision 0.4 seit 14. November 2026)
+## Hardware: Trägerplatine (Revision 0.4) und Gehäuse (Revision 0.5 seit 15. November 2026)
 
 `hardware/` enthält eine Trägerplatine für das Waveshare-Modul mit **vier galvanisch getrennten RS232-Ports**
 (TLP2361-Optokoppler, MAX3232E, je Port ein isolierter Wandler B0503S mit schaltbarer Versorgung über
-GPIO16/17/18/10, RJ45) und ein 3D-druckbares Gehäuse (83,8 × 118,6 × 32,4 mm, ohne Schrauben, für PLA auf einem Bambu Lab mit 0,4-mm-Düse). Stand:
+GPIO16/17/18/10, RJ45) und ein 3D-druckbares Gehäuse (83,8 × 118,6 × 33,9 mm, ohne Schrauben, für PLA auf einem Bambu Lab mit 0,4-mm-Düse). Stand:
 entworfen, geroutet, KiCad-DRC ohne elektrische Fehler, Gehäuse rechnerisch gegen das 3D-Modell des Herstellers
-geprüft — **nicht gebaut, nicht gedruckt**. Details und die Liste „Vor der Bestellung prüfen“: `hardware/README.md`.
+geprüft — **Platine nicht gebaut; das Gehäuse in der jetzigen Fassung nicht gedruckt**. Details und die Liste „Vor der Bestellung prüfen“: `hardware/README.md`.
 
 - **Revision 0.3.1 und älter nicht bauen:** Die Buchsenleisten des Moduls waren spiegelverkehrt belegt (Foto der
   Rückseite wie eine Ansicht von oben gelesen). Seit 0.4 kommen alle Maße des Moduls aus dem STEP-Modell von
@@ -33,17 +33,27 @@ geprüft — **nicht gebaut, nicht gedruckt**. Details und die Liste „Vor der 
   GPIO2/4/6/7 (`PINS_PORT_SWAP`, `Bridge::portCross()`, Einstellung `cross` je Port, Schalter in der
   Weboberfläche). Aus = Pin 3 sendet (Rollover-Kabel), ein = gekreuzt (gerades Patchkabel). **Die
   Firmwareänderung ist nicht kompiliert und nicht am Gerät geprüft**, ebenso wie `PINS_PORT_EN`/`portPower()`.
-- **Gehäuse** in CadQuery (`hardware/enclosure/case.py`, STEP und STL in `enclosure/out/`): Körper, Boden mit
-  fünf Federarmen, zwei Tasten für RST und BOOT. Das Glas liegt in einer Tasche der Oberseite auf einer
-  Auflage (0,1 mm unter der Fläche); das Modul wird von oben eingesetzt. Druckfertige Dateien liegen in
-  `enclosure/out*/print/` (Körper mit der Oberseite auf dem Bett, Abbrechrippen in der Glastasche, keine
-  Stützen); `printcheck.py` rechnet die Druckbarkeit nach. `case.py` prüft Durchdringungen und Montagewege, auch den
-  USB-C-Stecker und die Tasten. Das Modul hat nur eine Keramikantenne, keine IPEX-Buchse.
+- **Gehäuse** in CadQuery (`hardware/enclosure/case.py`, STEP und STL in `enclosure/out/`), drei Teile, nichts Loses:
+  Körper, **Rahmen**, Boden mit vier Federarmen. Die **Tasten für RST und BOOT sind Teil des Rahmens**: je eine
+  Fläche neben der USB-C-Buchse an einer Blattfeder (0,84 mm, zwei Bahnen), die auf dem Druckbett steht und sich in der
+  Schichtebene biegt (Wunsch des Besitzers vom 15. November 2026: mitgedruckt, ohne Löcher und Überhänge; RST liegt
+  1 mm tief, BOOT 0,2 mm). Das Glas liegt bündig in einer Öffnung der
+  Deckhaut (1,2 mm) auf dem Rahmen; im Rahmen klemmen zwei Federbacken die Modulplatine gegen eine feste Seite
+  (kein Haken möglich: Platine, Abstandshalter und Anzeige sind gleich breit). Beide Stirnseiten des Körpers sind
+  zum Rand offen; der Boden schließt sie mit einer Schwelle (Buchsen) und einer Zunge (USB-C). Die Platine wird
+  zwischen Pfosten des Bodens und Beinen des Rahmens geklemmt. Druckfertige Dateien in `enclosure/out*/print/`,
+  `printcheck.py` rechnet die Druckbarkeit nach. Das Modul hat nur eine Keramikantenne, keine IPEX-Buchse.
+- **Probedruck am 15. November 2026** (Zwei-Port-Gehäuse Revision 0.4, PLA, Bambu Lab) und was daraus gilt:
+  Abbrechrippen im Teil taugen nicht (kaum zu entfernen, raue Fläche); Brücken von 16 mm hängen durch; stehend
+  gedruckte Zapfen von 2,4 mm brechen; das Modul lag nur auf. **Regeln seitdem:** kein Überhang flacher als 45°,
+  keine Brücke über 5 mm (`printcheck.py` erlaubt 6), nichts Schlankes steht unter Biegung, Federn liegen flach
+  in der Schichtebene, keine Stützen. Der Besitzer will das **Glas bündig** und **schraubenlose Klemmung**; sein
+  Akku misst 40 × 30 × 7,8 mm (1000 mAh). Wenn etwas unsicher ist, will er **Bilder sehen**, bevor gedruckt wird.
 - **Zwei-Port-Prototyp** (`hardware/hat/`): die vorhandene, gebaute Platine „RS232 CONSOLE HAT v3.0“ (50 × 50 mm, ein MAX3232,
   zwei RJ45, nicht isoliert, mit sechs Steckbrücken von J3 am Modul: TX1 GPIO21, RX1 GPIO44, TX2 GPIO13, RX2 GPIO15). Ihre
-  Fertigungsdaten liegen in `hardware/hat/gerber/`; `case.py --hat` baut dasselbe Gehäuse um sie (56,8 × 81,0 × 35,8 mm,
-  `enclosure/out_hat/`, nicht gedruckt): Platine unten, Modul oben, dazwischen die Stecker der Steckbrücken (14 mm) und der
-  Akku (20 × 30 × 3 mm) in einer Tasche der Wiege. Beschreibung: `hardware/hat/README.md`.
+  Fertigungsdaten liegen in `hardware/hat/gerber/`; `case.py --hat` baut dasselbe Gehäuse um sie (56,8 × 88,2 × 35,8 mm,
+  `enclosure/out_hat/`): Platine unten, Modul oben, dazwischen die Stecker der Steckbrücken (14 mm); der Akku liegt flach auf
+  dem Boden hinter der Platine (zwischen die Stecker passt er nicht). Beschreibung: `hardware/hat/README.md`.
 - Erzeugen: `generate.py` → `route.py` → `drc.py` in `hardware/carrier/`, dann `case.py`, `printcheck.py`, `render.py`,
   `module_sheet.py` in `hardware/enclosure/` (KiCad 7, POV-Ray, `pip install cadquery`).
 

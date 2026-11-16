@@ -10,7 +10,6 @@ vertical) is an overhang.  Each overhang is then judged by what holds it in the 
 
   bridge      material on both sides in x or in y, at most BRIDGE_MAX apart
   ledge       material on one side only, at most LEDGE_MAX away
-  on a rib    one of the built-in break-away ribs ends one layer below it
 
 Anything else would need support from the slicer and fails the check.  The faces themselves decide the angle,
 the columns decide the support, so a face that merely looks like a bridge but hangs free on one side is caught.
@@ -25,9 +24,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "out_hat" if "--hat" in sys.argv else "out", "print")
 G = 0.2                 # mm, grid pitch
 LIMIT_DEG = 50.0        # overhang measured from the vertical
-BRIDGE_MAX = 18.0       # mm, a span PLA bridges cleanly with the part fan on
-LEDGE_MAX = 1.0         # mm, about two lines of a 0.4 mm nozzle
-RIB_GAP = 0.25          # mm, a rib ending this close below a face carries it (one layer of 0.2 mm)
+BRIDGE_MAX = 6.0        # mm.  The first print showed it: 16 mm bridges sag and leave strings.  Guides say 5 mm is safe, 10 the limit.
+LEDGE_MAX = 0.6         # mm, a line and a half of a 0.4 mm nozzle
 
 
 def load(path):
@@ -124,14 +122,11 @@ def check(path):
     c = columns(v)
     nx, ny, zmin = c["nx"], c["ny"], c["zmin"]
     enter = (c["rank"] % 2 == 0) & ~c["odd"][c["col"]]
-    prev_z = np.r_[-np.inf, c["z"][:-1]]
-    gap = np.where(c["rank"] > 0, c["z"] - prev_z, np.inf)        # air between this face and the material below it
     flat = c["nz"] < -np.sin(np.radians(LIMIT_DEG))
     start = enter & flat & (c["z"] > zmin + 0.05)
-    on_rib = start & (gap <= RIB_GAP)
-    free = start & ~on_rib
+    free = start
     print(f"{os.path.basename(path)}: {hi[0] - lo[0]:.1f} x {hi[1] - lo[1]:.1f} x {hi[2] - lo[2]:.1f} mm on the bed, {len(v)} triangles, "
-          f"{free.sum() * G * G:.0f} mm2 start above the bed, {on_rib.sum() * G * G:.0f} mm2 of that over ribs"
+          f"{free.sum() * G * G:.0f} mm2 start above the bed"
           + (f", {int(c['odd'].sum())} rays left out" if c["odd"].any() else ""))
     rows, bad = [], 0
     level = np.round((c["z"] - zmin) / 0.1).astype(int)
@@ -139,16 +134,14 @@ def check(path):
         q = zmin + lv * 0.1
         ovh = np.zeros(nx * ny, bool)
         ovh[c["col"][free & (level == lv)]] = True
-        rib = np.zeros(nx * ny, bool)
-        rib[c["col"][on_rib & (level == lv)]] = True
-        ovh, rib = ovh.reshape(nx, ny), rib.reshape(nx, ny)
+        ovh = ovh.reshape(nx, ny)
         if not ovh.any():
             continue
         # a rounded ceiling starts a little lower from cell to cell: what began up to 0.3 mm below is already
         # printed and carries on the span, so the walk to the support goes through it
         near = np.zeros(nx * ny, bool)
         near[c["col"][free & (level < lv) & (level >= lv - 3)]] = True
-        sup = solid_at(c, q - 0.1) | rib
+        sup = solid_at(c, q - 0.1)
         walk = (ovh | near.reshape(nx, ny)) & ~sup
         d = [reach(walk, sup, ax, rv) for ax in (0, 1) for rv in (False, True)]
         span = np.minimum(d[0] + d[1], d[2] + d[3]) - G            # between the two supports
@@ -160,14 +153,11 @@ def check(path):
             as_ledge = lg <= LEDGE_MAX
             as_bridge = ~as_ledge & (sp <= BRIDGE_MAX)
             fail = ~as_ledge & ~as_bridge
-            over_rib = bool(rib[max(i.min() - 1, 0):i.max() + 2, max(j.min() - 1, 0):j.max() + 2].any())
             parts = []
             if as_bridge.any():
                 parts.append(f"bridge, longest span {sp[as_bridge].max():.1f} mm")
             if as_ledge.any():
                 parts.append(f"ledge, {max(lg[as_ledge].max(), 0):.1f} mm from its support")
-            if over_rib:
-                parts.append("between break-away ribs")
             if fail.any():
                 parts.append(f"NEEDS SUPPORT ({fail.sum() * G * G:.1f} mm2 hang free)")
                 bad += 1

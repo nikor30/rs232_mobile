@@ -1,8 +1,10 @@
 # Hardware: Trägerplatine mit vier galvanisch getrennten RS232-Ports und Gehäuse
 
-Stand 14. November 2026, **Revision 0.4** (Neuanfang auf Grundlage des 3D-Modells des Herstellers).
+Stand 15. November 2026: Platine **Revision 0.4** (Neuanfang auf Grundlage des 3D-Modells des Herstellers),
+Gehäuse **Revision 0.5** (neu aufgebaut nach dem ersten Probedruck).
 Entworfen, geroutet, KiCad-DRC ohne elektrische Fehler, Gehäuse rechnerisch gegen das Herstellermodell
-geprüft — **nicht gebaut, nicht gedruckt.** Vor der Bestellung die Liste „Vor der Bestellung prüfen“ abarbeiten.
+geprüft — **Platine nicht gebaut, Gehäuse in dieser Fassung nicht gedruckt.** Vor der Bestellung die Liste
+„Vor der Bestellung prüfen“ abarbeiten.
 
 > **Revision 0.3.1 und älter nicht bauen.** Dort waren die beiden Buchsenleisten für das Modul spiegelverkehrt
 > belegt: Die Pinbelegung stammte aus einem Foto der Modulrückseite und wurde wie eine Ansicht von oben
@@ -19,10 +21,10 @@ geprüft — **nicht gebaut, nicht gedruckt.** Vor der Bestellung die Liste „V
   im Leerlauf über 5,5 V, mehr als der MAX3232 verträgt), Ladungspumpen-Kondensatoren 470 nF, Teiler des
   Aufwärtswandlers 270k/36k, BSS138 statt 2N7002 (schaltet mit 3,3 V sicher), TVS-Dioden an jeder Buchse,
   Verpolschutz am Akkuanschluss, zweiter Akkustecker (MX1.25 wie am Modul).
-- **Gehäuse neu in echtem CAD** (CadQuery/OpenCascade, STEP und STL): Das Displayglas liegt in einer Tasche
-  der Oberseite auf einer umlaufenden Auflage und schließt bündig ab; der Boden rastet mit fünf Federarmen;
-  um die USB-C-Buchse liegt eine flache Mulde mit **zwei Tasten für RST und BOOT**. Das alte OpenSCAD-Gehäuse
-  ist entfernt (es war zusätzlich seitenverkehrt).
+- **Gehäuse neu in echtem CAD** (CadQuery/OpenCascade, STEP und STL), seit dem ersten Probedruck in
+  Revision 0.5: Das Displayglas liegt bündig in einer Öffnung der Oberseite auf einem eigenen Rahmen, in dem
+  das Modul geklemmt ist; der Boden rastet mit vier Federarmen; am USB-C-Ende **zwei Tasten für RST und
+  BOOT, mitgedruckt als Federzungen des Rahmens**. Drei Teile, nichts Loses, kein Teil braucht Stützen. Das alte OpenSCAD-Gehäuse ist entfernt (es war zusätzlich seitenverkehrt).
 
 ## Das Modul
 
@@ -68,13 +70,14 @@ eine externe Antenne ginge nur mit Umbau am Modul. Das Gehäuse hat deshalb kein
 | `carrier/check_pours.py` | Prüft unabhängig vom DRC, dass jede Massefläche zusammenhängt, und nennt den Ort einer abgetrennten Insel |
 | `carrier/kicad/` | KiCad-7-Projekt; `channel.kicad_sch` ist ein Port und viermal eingebunden |
 | `carrier/kicad/fab/` | **Gerber und Bohrdaten als ZIP**, Bestückungsdaten, Schaltplan- und Platinen-PDF, DRC-Bericht |
-| `enclosure/case.py` | Gehäuse: Körper, Boden, Taste; STEP, STL, Prüfungen. Braucht CadQuery |
+| `enclosure/case.py` | Gehäuse: Körper, Rahmen (mit den beiden Tasten), Boden; STEP, STL, Prüfungen. Braucht CadQuery |
+| `enclosure/printcheck.py` | Prüft die druckfertigen Dateien: Was beginnt über dem Bett in der Luft, und was hält es |
 | `enclosure/render.py` | Bilder (POV-Ray) und die Schnittzeichnung `out/detail_sections.png` |
 | `enclosure/module_sheet.py` | Maßblatt des Moduls |
-| `enclosure/out/` | `body.step/.stl`, `base.step/.stl`, `key.step/.stl`, `rs232_console_assembly.step`, Bilder |
+| `enclosure/out/` | `body`, `frame`, `base` als STEP und STL, `print/` mit den Teilen in Drucklage, `rs232_console_assembly.step`, Bilder |
 | `vendor/` | Hinweis, woher das Herstellermodell kommt (die Dateien selbst nicht) |
 | `hat/` | **Zwei-Port-Prototyp** „RS232 CONSOLE HAT v3.0“: Fertigungsdaten, `board.py`, Beschreibung des Gehäuses dazu (`hat/README.md`) |
-| `enclosure/out_hat/` | Gehäuse für den Zwei-Port-Prototyp (`case.py --hat`): `body`, `base`, `key`, `cradle` als STEP und STL, Zusammenbau, Bilder |
+| `enclosure/out_hat/` | Gehäuse für den Zwei-Port-Prototyp (`case.py --hat`): dieselben Dateien |
 
 Neu erzeugen (KiCad 7, POV-Ray und `pip install cadquery`):
 
@@ -142,111 +145,155 @@ VBAT (Stift 14) → Aufwärtswandler MT3608 auf 5,1 V → je Port ein High-Side-
 isolierter Wandler B0503S-1WR3. Standard ist „aus“ (Pull-down). Der Akku steckt auf der Unterseite an J4
 (JST-PH 2,0) oder J5 (MX1.25, wie am Modul); Q5 schützt vor Verpolung. Geladen wird über das Modul.
 
-## Gehäuse
+## Gehäuse (Revision 0.5, nach dem ersten Probedruck)
 
-Außen **83,8 × 118,6 × 32,4 mm**. Vier gedruckte Teile, keine Schraube. Ausgelegt für **PLA** auf einem
-Bambu Lab mit 0,4-mm-Düse, ohne Stützen des Slicers (Abschnitt „Drucken“):
+Der erste Druck des Zwei-Port-Gehäuses (PLA, Bambu Lab, 0,4-mm-Düse) hat fünf Fehler der Konstruktion
+gezeigt. Revision 0.5 ist deshalb neu aufgebaut, für beide Gehäuse gleich:
 
-- **`body`** — Oberseite und alle vier Wände. Das Glas liegt in einer 1,20 mm tiefen Tasche (sechs Schichten
-  zu 0,2 mm) mit 0,25 mm Spiel ringsum auf einer Auflage (0,74 mm an den Längsseiten, rund 5 mm an den
-  Stirnseiten, zusammen 423 mm²). Es liegt damit 0,1 mm unter der Oberseite, praktisch bündig. Der Druck beim
-  Tippen geht ins Gehäuse, nicht in die Stiftleisten. Vier Fenster für die RJ45-Buchsen, darüber die Ziffern
-  1 bis 4 vertieft. Die Oberkante hat eine 45°-Fase von 1,2 mm statt einer Rundung, weil der Körper auf der
-  Oberseite gedruckt wird.
-- **`base`** — Bodenplatte, liegt innen in den Wänden. Fünf Federarme (18 × 1,6 × 5 mm) biegen sich in der
-  Plattenebene und rasten mit 0,9 mm Nase in Taschen der Wände; 30° Einführschräge, 45° Haltefläche mit
-  0,2 mm Vorspannung. Für PLA gerechnet (E rund 3300 MPa): 0,65 % Dehnung beim Einrasten bei einer Grenze von
-  1,0 %, etwa 16 N zum Eindrücken, etwa 27 N zum Abziehen. Eingerastet bleiben 0,20 % Dehnung durch die
-  Vorspannung; PLA gibt unter Dauerlast nach, die Vorspannung wird also mit der Zeit kleiner, die Nase hält
-  weiter durch ihre Form. Zwei Kerben an den Längsseiten zum Aufhebeln. Vier Pfosten klemmen die
-  Trägerplatine gegen die Pfosten des Körpers, vier Winkel halten einen Akku bis 40 × 60 × 7 mm.
-- **`key`** — zweimal drucken. Tasten für RST und BOOT, siehe unten.
+| Im Probedruck | Ursache | Jetzt |
+|---|---|---|
+| Abbrechrippen in der Glastasche kaum zu entfernen, Auflage rau | Die Auflage begann beim Druck in der Luft | Die Auflage ist ein eigenes Teil (Rahmen), flach gedruckt. Im Körper hängt nichts mehr über |
+| Kanten über den Portfenstern hingen durch | Brücken von 16 mm | Die Ports sitzen in einem Schlitz, der zum Rand offen ist; der Boden schließt ihn |
+| Zapfen für die Platine abgebrochen | 2,4 mm dünn, stehend gedruckt | Keine Zapfen mehr; die Platine wird geklemmt |
+| Modul von nichts gehalten | Es lag nur auf | Zwei Federbacken im Rahmen klemmen es |
+| Akkuträger zu klein | falsches Maß | Akku 40 × 30 × 7,8 mm, eigener Platz |
+| Tasten als lose Schieber in Tunneln (Löcher, Brücken) | so konstruiert | Tasten sind Teil des Rahmens: Wippe an einer Blattfeder, nur senkrechte Wände |
+
+**Regeln, nach denen jetzt konstruiert ist** (aus Konstruktionsrichtlinien für FDM und aus diesem Druck):
+kein Überhang flacher als 45°, keine Brücke über 5 mm (`printcheck.py` lässt höchstens 6 mm zu), nichts
+Schlankes steht unter Biegung (keine Zapfen, Pfosten mindestens 5 mm), was federn muss, liegt flach auf dem
+Druckbett und biegt sich in der Schichtebene, keine Stützen im Teil und keine vom Slicer.
+
+Außen **83,8 × 118,6 × 33,9 mm** (vier Ports). Drei gedruckte Teile, nichts Loses, keine Schraube, kein Kleber:
+
+- **`body`** — Deckhaut, Seitenwände, Eckstücke. Über dem Display ist die Oberseite nur eine Haut von
+  1,2 mm, so dick wie das Glas, mit einer Öffnung in der Größe des Glases (0,25 mm Spiel ringsum): Das Glas
+  liegt 0,1 mm unter der Oberseite, praktisch bündig. Beide Stirnseiten sind bis zum Rand offen, sodass im
+  Körper nichts überbrückt werden muss. Über den Buchsen die Ziffern der Ports, vertieft.
+- **`frame`** — der Rahmen unter der Deckhaut, in ihm ist das Modul geklemmt. Seine Oberseite ist die
+  Auflage des Glases (337 mm²; am USB-C-Ende ist er zwischen den Tasten offen). Die Modulplatine steckt in seiner Öffnung: an einer Längsseite ein
+  fester Anschlag, am USB-C-Ende einer mit 0,15 mm Spiel, am anderen Ende zwei Quetschrippen, die die
+  Platinenkante beim Eindrücken passend schabt; an der anderen Längsseite **zwei Federbacken**
+  (19 × 2,6 × 6 mm), die 0,4 mm in den Platz der Platine stehen und sie gegen die feste Seite drücken.
+  Gerechnet: 7 N je Backe bei 0,54 % Dehnung; es braucht 9 bis 14 N, um das Modul herauszuschieben. Am
+  USB-C-Ende die **beiden Tasten**, aus einem Stück mit dem Rahmen (siehe unten). Zwei Beine stehen auf der
+  Platine.
+- **`base`** — Bodenplatte innen in den Wänden, vier Federarme (18 × 1,6 × 5 mm) rasten in Taschen der
+  Wände (0,65 % Dehnung beim Einrasten, 13 N zum Eindrücken, 22 N zum Abziehen). Der Boden schließt die
+  offenen Stirnseiten: eine **Schwelle** unter den Buchsen, eine **Zunge** unter USB-C-Buchse und Tasten.
+  Seine Pfosten drücken die Platine gegen die Beine des Rahmens und die Pfosten des Körpers, und über die
+  Beine den Rahmen gegen die Deckhaut. Der Akku liegt zwischen vier Winkeln unter der Platine.
+
+Was hält was: Glas auf dem Rahmen, Rahmen unter der Deckhaut, Modulplatine zwischen den Backen und der
+festen Seite des Rahmens, Platine zwischen den Pfosten von unten und Beinen und Pfosten von oben, alles
+zusammen durch die vier Rastarme des Bodens (0,2 mm Vorspannung nehmen die Toleranzen der Kette auf).
+
+Schnitte mit Maßen: `enclosure/out/detail_sections.png`. Bilder: `enclosure/out/render_*.png`, darunter
+`render_clamp.png` (Rahmen mit Modul), `render_frame.png`, `render_keys.png`, `render_keys_module.png` und
+`render_keys_top.png` (die Tasten, blau hervorgehoben), `render_exploded.png`, `render_print_bed.png`
+(alle Teile in Drucklage). Studiobilder für Präsentationen: `python3 render.py --studio`.
 
 ### USB-C-Ende: Stecker und Tasten
 
-Um die Buchse liegt eine 1 mm tiefe Mulde mit 45°-Flanken (28 × 11,6 mm). Darin:
+Die Stirnwand hat eine Öffnung von 28,4 mm Breite. Darin sitzen links und rechts die beiden Tasten und
+dazwischen die Buchse; darunter schließt die Zunge des Bodens.
 
-- **Öffnung für den USB-C-Stecker**, 13,4 × 7,5 mm, auf der Achse der Buchse. Die Buchse sitzt wegen des
-  Glasüberstands 6,55 mm hinter der Außenfläche; ein Steckerblech ist nur 6,65 mm lang, also muss der
-  Kunststoffgriff des Steckers mit hinein. Ganz eingesteckt endet er 4,68 mm unter der Außenfläche. Die
-  USB-IF erlaubt Griffe bis 12,35 × 6,5 mm; es bleiben 0,53 mm je Seite und 0,50 mm oben und unten. Dickere
-  Stecker (manche gewebeummantelte Kabel) passen nicht.
-- **Zwei Tasten**, 3 × 6 mm, links und rechts der Buchse. Blick auf das USB-C-Ende, Display oben:
-  **links BOOT, rechts RST**. Jede Taste ist ein flacher Schieber, der in einem Tunnel unter der Deckplatte
-  läuft und mit einer Nase unter den Platinenrand bis vor den Stößel des Tasters reicht (0,15 mm Luft). Die
-  Kappe steht 0,8 mm über dem Muldenboden und bleibt 0,2 mm unter der Außenfläche, damit in der Tasche nichts
-  versehentlich drückt. Schultern am Schieber verhindern, dass er nach außen herausfällt; nach innen hält ihn
-  der Taster. Zurück federt der Taster selbst.
+- **Platz für den USB-C-Stecker**, 14,2 × 7,9 mm, auf der Achse der Buchse. Die Buchse sitzt 6,55 mm hinter
+  der Außenfläche; ein Steckerblech ist nur 6,65 mm lang, also muss der Griff des Steckers mit hinein. Die
+  USB-IF erlaubt Griffe bis 12,35 × 6,5 mm; es bleiben 0,93 mm zu jeder Taste, 0,90 mm oben, 0,50 mm unten.
+- **Zwei Tasten**, je eine Fläche von 6,7 × 6,8 mm. Blick auf das USB-C-Ende, Display oben: **links BOOT,
+  rechts RST**. BOOT liegt 0,2 mm unter der Außenfläche und ist mit dem Finger zu drücken; **RST liegt
+  1,0 mm tief**, damit es in der Hand und in der Tasche nicht auslöst (Fingernagel oder Stift).
+- Die Modulplatine liegt am USB-C-Ende mit 0,15 mm Spiel am Rahmen an. So zieht ein Stecker beim Abziehen
+  das Modul nicht gegen die Tasten.
 
-Schnitte mit Maßen: `enclosure/out/detail_sections.png`. Studiobilder für Präsentationen (Boden mit Spiegelung
-oder heller Hintergrund, Kabel, die Seiten der Firmware auf dem Display): `python3 render.py --studio`,
-Ergebnis in `enclosure/out/studio_*.png`.
+### Die Tasten: mitgedruckt, ohne Loch und ohne loses Teil
+
+Die erste Fassung hatte zwei lose Schieber (3 × 6 mm) in Tunneln des Rahmens: vier Brücken, zwei Kleinteile.
+Jetzt ist jede Taste **ein Stück mit dem Rahmen**:
+
+- Der **Kopf** der Taste ist ein Klotz unter dem Glasrand. Außen trägt er die Fläche, auf die man drückt,
+  innen eine Nase, die unter den Platinenrand bis 0,2 mm vor den Stößel des Tasters reicht.
+- Der Kopf hängt an einer **Blattfeder** (0,84 mm dick, das sind zwei Bahnen der 0,4-mm-Düse; 6 mm hoch;
+  14 mm lang, im Zwei-Port-Gehäuse 9,1 mm). Sie läuft an der Stirnkante des Rahmens entlang bis zu ihrer
+  Wurzel nahe der Ecke; dahinter ein Schlitz von 1,0 mm, der an der Wurzel rund endet.
+- **Druck**: Feder und Kopf stehen in ganzer Höhe auf dem Druckbett. Die Feder biegt sich in der
+  Schichtebene, also längs der gelegten Bahnen und nicht quer zu den Schichten. Es gibt nur senkrechte Wände
+  und 45°-Flächen; der einzige waagrechte Überhang ist eine Kante von 0,6 mm unter jeder Nase.
+- Die Fläche nach außen wächst unter 45° aus dem Kopf. Die Wand des Körpers über der Öffnung ist innen
+  ebenso abgeschrägt; so endet die Taste in der Ebene der Wand, ohne dass etwas in der Luft beginnt.
+- **Anschlag**: Nach 0,8 mm Weg der Nase trifft die Feder einen Höcker am festen Teil. Die Kante des
+  Höckers am Druckbett ist gebrochen, damit die erste Schicht ihn nicht mit der Feder verschweißt.
+- Gerechnet (PLA, 3300 MPa): Federrate an der Nase 0,48 N/mm (zwei Ports: 1,25 N/mm). Der Taster schaltet
+  nach rund 0,5 mm (0,2 mm Luft und angenommene 0,3 mm Hub): Randdehnung der Feder 0,19 % (zwei Ports
+  0,36 %), am Anschlag 0,30 % (0,58 %). Die Feder ist weich gegen den Taster (der bei rund 1,6 N schaltet):
+  Ist die Nase 0,3 mm zu lang gedruckt, drückt sie mit 0,14 N (0,38 N) auf den Stößel und löst nicht aus.
+- Der Kopf dreht sich beim Drücken um einen Punkt auf der Feder (2,2° bis zum Schalten). Seine Innenseite
+  ist um dieses Maß schräg, sie steht am Anschlag parallel zur Platinenkante und 0,15 mm davor.
+
+Warum keine Taste, die erst beim ersten Druck freibricht: Ein freigebrochenes Teil ist lose und braucht
+einen Käfig, der es hält, und damit wieder Löcher und Überhänge. Sollbruchstege reißen bei PLA außerdem
+nicht verlässlich an der gewollten Stelle. Die Feder bleibt am Teil und braucht beides nicht.
 
 ### Zusammenbau
 
-1. Beide Tasten von innen in ihre Tunnel schieben, Kappe voran, bis die Schultern an der Wand anliegen.
-2. Körper mit der Oberseite nach oben. Modul von oben einsetzen, bis das Glas auf der Auflage liegt. Die
-   Tasten dabei ganz außen lassen; rutscht eine nach innen, liegt der Taster auf ihrer Nase auf.
-3. Körper umdrehen (Glas auf eine weiche Unterlage), Trägerplatine auf die Stifte drücken. Die Buchsen fahren
-   in ihre Fenster.
-4. Akku anstecken, Boden eindrücken, bis die fünf Arme einrasten.
+1. Modul von der Glasseite in den Rahmen drücken, Stifte voran, bis das Glas aufliegt. Die Backen weichen
+   aus und halten dann die Platine. Die Tasten sind schon am Rahmen.
+2. Körper mit der Oberseite nach unten legen. Rahmen mit Modul einsetzen: Das Glas geht in seine Öffnung,
+   die Tasten gleiten durch die Öffnung der Stirnwand.
+3. Trägerplatine auf die Stifte des Moduls drücken; sie liegt dann auf den Beinen des Rahmens und den
+   Pfosten des Körpers.
+4. Akku anstecken und zwischen die Winkel des Bodens legen. Boden eindrücken, bis die vier Arme einrasten.
 
-Der SD-Slot ist nicht nach außen geführt (USB-Stick-Modus der Firmware oder Boden abnehmen).
+Öffnen: an den beiden Kerben der Längsseiten aufhebeln. Das Modul kommt aus dem Rahmen, wenn man von unten
+gegen seine Platine drückt.
 
 ### Drucken (PLA, Bambu Lab, 0,4-mm-Düse)
 
-Ausgelegt für PLA, 0,4-mm-Düse, 0,2 mm Schichthöhe, **Stützen im Slicer aus**. In `enclosure/out/print/`
-liegen die Teile schon so, wie sie auf das Druckbett kommen:
+PLA, 0,4-mm-Düse, 0,2 mm Schichthöhe, **Stützen im Slicer aus**. In `enclosure/out/print/` liegen die Teile
+so, wie sie auf das Druckbett kommen:
 
 | Datei | Lage auf dem Bett | Größe (mm) |
 |---|---|---|
-| `body_print.stl` | Oberseite unten, mit den Abbrechrippen in der Glastasche | 83,8 × 118,6 × 32,4 |
-| `base_print.stl` | flach, die Federarme liegen in der Schichtebene | 80,3 × 115,0 × 11,6 |
-| `key_print_x2.stl` | zwei Tasten flach auf der Seite | je 8,0 × 7,7 × 3,0 |
+| `body_print.stl` | Oberseite unten | 83,8 × 118,6 × 33,9 |
+| `frame_print.stl` | Glasauflage unten, Tasten und Beine nach oben | 79,0 × 64,5 × 17,4 |
+| `base_print.stl` | flach, Zunge und Schwelle stehen nach oben | 80,3 × 118,6 × 20,6 |
 
-- **Im Slicer nicht neu ausrichten** und `body_print.stl` nicht in Einzelteile zerlegen: Die Rippen sind
-  eigene Körper in derselben Datei. Wandgenerator Arachne (Standard in Bambu Studio), drei Wände,
-  Bauteillüfter an.
-- **Glastasche**: 1,2 mm tief, das sind sechs Schichten. Unter den beiden breiten Auflagen an den Stirnseiten
-  stehen Rippen (0,5 mm dick, alle 2,5 mm), die eine Schicht unter der Auflage enden und 0,2 mm über ihre
-  Kante hinausreichen. Nach dem Druck mit Fingernagel oder Pinzette herausbrechen. Die schmalen Auflagen an
-  den Längsseiten (0,74 mm, knapp zwei Bahnen) druckt die Düse frei.
-- **Brücken**: Oberkanten der RJ45-Fenster 16,4 mm, Decke der USB-Öffnung 10,8 mm, Tastentunnel 3,4 mm,
-  Fußmulden im Boden 10,4 mm. Alles andere steht auf Material oder ist steiler als 45°.
-- Die Oberseite bekommt die Oberfläche der Druckplatte. Eine strukturierte PEI-Platte gibt eine gleichmäßig
-  matte Fläche.
+- Im Slicer nicht neu ausrichten. Drei Wände, 15 % Füllung, Bauteillüfter an.
+- Wo die erste Schicht auf dem Bett breitgedrückt wird und es auf das Maß ankommt, ist die Kante gebrochen:
+  eine Fase von 0,3 mm um die Glasöffnung, 0,5 mm um den Rahmen. Die Schlitze hinter den Federbacken sind
+  0,8 mm breit, die hinter den Blattfedern der Tasten 1,0 mm; schmiert der Slicer sie zu, den
+  Elefantenfuß-Ausgleich einschalten. Nach dem Druck jede Taste einmal durchdrücken.
+- `python3 printcheck.py` rechnet die Druckbarkeit nach: Es schneidet jedes Teil in senkrechte Säulen
+  (0,2-mm-Raster) und prüft für jede Fläche, die über dem Bett in der Luft beginnt, was sie in der Schicht
+  darunter hält. Erlaubt sind Brücken bis 6 mm und freie Kanten bis 0,6 mm. Ergebnis: Im Körper bleiben nur
+  die vertieften Ziffern, im Rahmen zwei Kanten von 0,6 mm (unter den Nasen der Tasten), im Boden die
+  vertiefte Schrift.
+- Die Deckhaut über dem Display ist die erste Schicht auf der Druckplatte: Eine strukturierte PEI-Platte
+  gibt ihr eine gleichmäßig matte Fläche.
 - **PLA wird ab etwa 55 °C weich.** Das Gerät nicht im Auto in der Sonne liegen lassen. PETG geht mit
-  denselben Dateien; die Arme sind dann weicher (kleinere Kräfte, größere Reserve).
-- `python3 printcheck.py` rechnet das nach: Es schneidet jedes Teil in senkrechte Säulen (0,2-mm-Raster) und
-  prüft für jede Fläche, die über dem Bett in der Luft beginnt, was sie in der Schicht darunter hält (Brücke
-  mit Material auf beiden Seiten bis 18 mm, einseitige Auflage bis 1,0 mm, Rippe). Ergebnis für alle Teile:
-  druckbar ohne Stützen.
+  denselben Dateien.
 
-**Der erste Druck ist eine Probe:** Spiel der Glastasche (`glass_clr`), Rastnase (`bump`) und Tastenspiel
-(`key_clr`, `key_gap`) stehen oben in `case.py`. Gedruckt ist noch nichts.
-
-Für eine Nachprüfung im CAD (STEP-Dateien, Koordinaten, Sollmaße, Annahmen): `enclosure/PRUEFUNG.md`.
+**Auch dieser Stand ist nur gerechnet.** Was der nächste Druck zeigen muss, mit dem Maß in `case.py`:
+Sitz des Glases in der Öffnung (`glass_clr`), Klemmkraft der Backen (`jaw_bite`), Rastkraft (`bump`),
+Gefühl und Weg der Tasten (`key_leaf_t`, `key_leaf_l`, `key_gap`), Passung von Schwelle und Zunge (`cut_clr`).
 
 ### Was `case.py` prüft
 
-Boolesche Durchdringung, jeweils 0 mm³ gefordert: Körper gegen Modul (Hüllmodell und Herstellermodell),
-Körper und Boden gegen Trägerplatine, Modul beim Einsetzen von oben, Trägerplatine beim Herausziehen, Boden
-beim Eindrücken (nur die fünf Nasen dürfen berühren), Tasten in Ruhe und 0,6 mm gedrückt, Tasten beim
-Einschieben, Modul beim Einsetzen an den Tasten vorbei, USB-C-Stecker mit dem größten erlaubten Griff
-eingesteckt und auf dem Weg hinein. Dazu: Die Tastennase trifft den Stößel des Herstellermodells.
+Boolesche Durchdringung, jeweils 0 mm³ gefordert: Körper, Rahmen, Boden, Modul (Hüllmodell und
+Herstellermodell), Platine und Akku paarweise; beim Rahmen gegen das Modul nur der Biss der beiden Backen.
+Dazu, dass sich berührt, was halten soll (Glas auf dem Rahmen, Rahmen unter der Deckhaut, Beine und Pfosten
+auf der Platine, Platine zwischen den Anschlägen). Montagewege: Modul in den Rahmen, Rahmen in den Körper
+(die Tasten gleiten die Öffnung hinauf), Platine, Boden mit Akku. Tasten: in Ruhe, nach 0,5 mm und am
+Anschlag (der Kopf um seinen Drehpunkt gedreht) gegen festen Rahmen, Körper, Boden und Modul; die Nase
+trifft den Stößel des Herstellermodells; Dehnung und Kraft der Blattfeder. USB-C-Stecker mit dem größten
+erlaubten Griff, eingesteckt und auf dem Weg hinein, auch bei gedrückten Tasten.
 
 ### Variante für den Zwei-Port-Prototyp
 
-`case.py --hat` baut dasselbe Gehäuse um die vorhandene Zwei-Port-Platine (50 × 50 mm, nicht isoliert, mit
-Steckbrücken am Modul): außen 56,8 × 81,0 × 35,8 mm, Oberseite und USB-C-Ende unverändert. Die Platine liegt
-unten, das Modul hoch darüber, damit die 14 mm langen Stecker der Drähte Platz haben; der Akku steckt
-dazwischen in einer Tasche. Weil das Modul dort in keiner Buchsenleiste steckt, tragen es zwei Pfosten des
-Bodens und eine Wiege auf der Platine an seinen M2-Abstandsbolzen. Alles Weitere: `hat/README.md`.
-
-### Akku sichern (Vier-Port-Gehäuse)
-
-Unter der Trägerplatine stehen Lötstifte. Den Akku mit doppelseitigem Klebeband auf den Boden kleben, damit
-er nicht dagegen wandert.
+`python3 case.py --hat` baut dasselbe Gehäuse um die vorhandene Platine „RS232 CONSOLE HAT v3.0“ (50 × 50 mm,
+Steckbrücken am Modul): außen 56,8 × 88,2 × 35,8 mm. Die Platine liegt unten, das Modul oben, der Akku flach
+auf dem Boden hinter der Platine. Beschreibung: `hat/README.md`, Ausgabe in `enclosure/out_hat/`.
 
 ## Bestellen bei PCBWay
 
@@ -271,9 +318,10 @@ Inseln. KiCad-DRC: 0 unverbundene Anschlüsse, 0 elektrische Fehler, 19 Silkscre
 5. **MT3608**: 0,6 V · (1 + 270k/36k) = 5,1 V. Spule L1 mit mindestens 1 A Sättigungsstrom.
 6. **Akku**: Polung am Stecker mit dem Multimeter prüfen. Q5 schützt die Platine, nicht den Akku.
 7. **Buchsenleisten**: 8,5 mm hoch. Damit liegt die Platinenunterseite des Moduls 11,0 mm über der
-   Trägerplatine; das Gehäuse lässt 0,3 mm Luft, damit zuerst das Glas aufliegt.
-8. **Taster**: Der Hub des TS24CA war nicht aus einem Datenblatt zu bestätigen (üblich rund 0,25 mm); die
-   Taste hat 0,6 mm Weg. Am gedruckten Teil prüfen, dass RST und BOOT sicher schalten und nicht hängen.
+   Trägerplatine; das Gehäuse lässt 0,3 mm Luft, damit zuerst das Glas auf dem Rahmen aufliegt.
+8. **Taster**: Hub und Schaltkraft des TS24CA waren nicht aus einem Datenblatt zu bestätigen (üblich rund
+   0,25 mm und 1,6 N); die Nase hat 0,2 mm Luft und 0,8 mm Weg bis zum Anschlag. Am gedruckten Teil
+   prüfen, dass RST und BOOT sicher schalten, von selbst zurückkommen und in Ruhe nicht gedrückt sind.
 9. **USB-C**: Mit den eigenen Kabeln prüfen, ob der Griff in die Öffnung passt.
 
 Nicht gemessen: die Optokoppler-Schaltung (nach Datenblattwerten ausgelegt). Der Autorouter kennt keine
@@ -287,7 +335,13 @@ Längenregeln (bei 115 200 Baud belanglos). Maße der USB-C-Stecker nach dem Com
   untereinander getrennt sind.
 - **Halbleiterrelais zum Kreuzen** statt Lötbrücken (Wunsch): Ein Analogschalter auf der Insel hätte eine
   weitere Leitung über die Trenngrenze gebraucht und verträgt keine ±15 V; die Relais trennen selbst.
-- **Modul von oben eingesetzt**: Nur so kann das Glas auf einer Auflage liegen und bündig sein.
-- **Tasten als lose Schieber** statt Federzungen in der Wand: Eine Zunge müsste beim Druck des Körpers frei
-  in der Luft beginnen oder quer zu den Schichten biegen.
-- **Kappen unter der Außenfläche**: RST und BOOT sollen in der Werkzeugtasche nicht auslösen.
+- **Glas bündig** (Wunsch), nicht hinter einem Rahmen. Über dem Glas kann deshalb nichts halten; das Modul
+  wird an den Kanten seiner Platine geklemmt. Am Modul gibt es keine Fläche, hinter die ein Haken greifen
+  könnte (Platine, Abstandshalter und Anzeige sind gleich breit).
+- **Rahmen als eigenes Teil**: Die Auflage des Glases wäre im Körper eine Fläche, die beim Druck in der
+  Luft beginnt. Als eigenes Teil liegt sie beim Druck auf dem Bett.
+- **Offene Stirnseiten, vom Boden geschlossen**: So muss kein Fenster überbrückt werden.
+- **Tasten als Federzungen des Rahmens** (Wunsch: mitgedruckt, ohne Löcher und Überhänge), nicht als
+  Zungen in der Wand des Körpers: Dort müsste eine Zunge quer zu den Schichten biegen oder ihr Schlitz
+  überbrückt werden. Im Rahmen liegt die Feder in der Schichtebene und steht auf dem Druckbett.
+- **Tasten unter der Außenfläche**, RST tiefer als BOOT: Sie sollen in der Werkzeugtasche nicht auslösen.

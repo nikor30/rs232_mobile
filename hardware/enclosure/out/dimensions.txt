@@ -1,5 +1,9 @@
-outer 83.80 x 118.63 x 32.40 mm
-z: bottom -13.80, base -13.20..-11.20, carrier -1.60..0, top plate 15.60, ledge 17.40, top 18.60
-glass pocket x 20.20..57.80, y 55.03..114.33, depth 1.20
-USB-C: axis x 39.00 z 9.63, receptacle rim y 110.18, plug stop y 105.40, well 13.4 x 7.5, bay floor y 115.73, outer face y 116.73
-keys: axis z 10.40, x RST 29.53, BOOT 48.45, cap 3.0 x 6.0, 0.8 above the bay floor, stroke 0.6
+outer 83.80 x 118.63 x 33.90 mm
+z: bottom -15.30, base -14.70..-12.70, board -1.60..0, frame 11.40..17.40, top plate from 15.60, skin from 17.40, top 18.60
+glass opening x 20.20..57.80, y 55.03..114.33, skin 1.20 thick
+frame x -0.30..78.30, y 52.03..114.13; module board x 21.49..56.51, y 60.78..109.00; jaws at x 57.11, pads 0.40 into the board's place
+USB-C: axis x 39.00 z 9.63, receptacle rim y 110.18, plug stop y 105.40, passage 13.4 x 7.5, outer face y 116.73
+opening in the USB-C end x 24.80..53.20 up to z 13.78, tongue of the base up to z 5.88
+jack slot x 2.15..75.65 up to z 13.90, sill of the base up to z -0.30
+keys (part of the frame): plunger axis z 10.40, x RST 29.53, BOOT 48.45; RST: paddle x 25.20..31.90, z 6.28..13.88, face y 115.73, leaf 14.0 x 0.84; BOOT: paddle x 46.10..52.80, z 6.28..13.08, face y 116.53, leaf 14.0 x 0.84; nose 0.2 before the plunger, stop after 0.8
+battery 40.0 x 30.0 x 7.8: x 19.00..59.00, y 77.83..107.83, z -12.60..-4.80
